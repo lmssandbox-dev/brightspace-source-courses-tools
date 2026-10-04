@@ -10,9 +10,9 @@ courseCsv parses and validates the input. activityDates provides single-activity
 
 client validates actual Source Courses and replica offerings, updates course active state while preserving supported fields, and submits native LP sourceCourses/{sourceId}/deploy requests. Version-specific payload fields are checked. Read-back verifies status and preserved settings.
 
-jobs parses mapping CSVs, performs read-only validation, prepares replicas, submits grouped deployments and executes separately confirmed activation. view renders mapping validation, saved results, confirmation forms and CSV reports.
+jobs parses mapping CSVs, performs read-only validation, prepares replicas, submits batches of at most 100 replicas per source, and automatically reactivates accepted replicas. Uploads support 10,000 mappings / 5 MB. view renders mapping validation, saved results, confirmation forms and CSV reports.
 
-A deployment ID confirms initiation, not copy completion. Unexpected or lost responses remain uncertain and are never resubmitted automatically. No copy-job-token inference, automatic copy polling or timed activation is implemented. Users verify completion in Brightspace before activating all mapped replicas.
+A deployment ID confirms initiation, not copy completion. Unexpected or lost responses remain uncertain and are never resubmitted automatically. No copy-job-token inference is used. Activation follows acceptance and can occur while copying is queued or running. Failed and uncertain submissions are excluded from automatic activation. Copy logs are checked only when requested, and do not prove completion merely because activation succeeded.
 
 ## Shared infrastructure: src/shared
 
@@ -24,13 +24,13 @@ A deployment ID confirms initiation, not copy completion. Unexpected or lost res
 - store.js: existing bulk_date_jobs, bulk_date_chunks and bulk_date_locks collections, ownership, confirmations and leases.
 - routes.js: shared signed workflow actions, date bulk forms and delegation to the replication view.
 
-One worker lease coordinates both workflows. Historical Source/replica reservations are no longer enforced; the worker lease still serializes app execution. The namespace and endpoints remain unchanged. The database is now configured as `brightspace_source_courses_tools`, starting empty without migrating old records.
+One worker lease coordinates both workflows. Historical Source/replica reservations are no longer enforced; the worker lease still serializes app execution. The namespace and endpoints remain unchanged. The database is now configured as `brightspace_source_courses_tools`, without migration of old database records.
 
 Forms bind action, workflow, job, expiry and LTI session. Ownership is checked before access. Atomic confirmations prevent duplicate queueing. Saves are fenced by worker and running state. Interrupted work is retained for inspection. Activation retries preserve deployment results and reconcile current active states without redeploying. The activation action removes preview expiry and records the reactivation request.
 
 HTML is escaped and CSV cells neutralize spreadsheet formula injection. API credentials are not returned in diagnostic output. Brightspace LTI installation governs user access; API permissions are those of the Service User.
 
-Single-activity diagnostics/CLI do not participate in bulk course reservations; use them only when no overlapping bulk job is running.
+The application does not enforce historical course reservations. Users can start another deployment; this may reset replicas while earlier copies are still queued or running.
 
 ## Browser presentation
 

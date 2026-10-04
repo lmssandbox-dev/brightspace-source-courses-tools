@@ -1,26 +1,32 @@
 # Brightspace Source Courses Tools — Delivery Status
 
-## Completed
+## Implemented locally
 
-- Application branding and folder renamed to Brightspace Source Courses Tools.
-- Left sidebar navigation and simplified upload UI.
-- 10,000-row / 5 MB date uploads, chunked checkpoints and paginated results.
-- Named time zone selection, saved zone context and clock-change validation.
+- Application branding, sidebar navigation, and simplified date and deployment forms.
+- 10,000-row / 5 MB CSV support for both workflows; deployment requests contain up to 100 replicas per source batch.
+- Named time zones and date conversion validation; bulk date discovery, updates, read-back checks and CSV reports.
+- Three deployment steps: Upload Mappings → Review & Deploy → Re-activate.
+- Just-in-time batch deactivation, deployment submission, and automatic reactivation of accepted replicas.
+- Isolated failures continue; authentication, exhausted rate-limit retries and repeated service failures stop further batches.
+- Sanitized deployment diagnostics in stored results, screens and reports.
+- No historical job reservations or manual copy-completion requirement.
+- On-demand “Check copy results now” in Job History and job details; signed owner-scoped requests, duplicate prevention, bounded batches, durable progress and lease recovery.
+- Reports retain saved copy-log snapshots, timestamps, and pending-current-check indicators. History access and CSV download do not trigger API checks.
+- Previous automatic 24-hour monitoring removed. A worker dispatch timer processes only explicitly queued checks; completed checks do not repeat.
+- Latest full local test run: 201 tests passed.
 
-- Activity discovery, normalization and native writers for Assignments, Quizzes and Discussion Topics.
-- User-validated live preview/apply/read-back/unchanged behavior and CSV bulk date updates.
-- Source mapping CSV, read-only preview, replica deactivation/verification, native deployment submission and saved results.
-- Separate manual completion confirmation followed by activation/verification, including replicas initially inactive.
-- One app with date-management and replication interface sections, organized into dates, replication and shared feature folders.
+## Confirmed by the user in Brightspace
 
-## Remaining
+- Live activity date updates and read-back behavior.
+- Source Course deployments succeeded after enabling missing course-copy permissions for the OAuth-linked Service User. OAuth scopes alone were insufficient.
 
-1. Deploy the reorganized source to the existing Render service and verify LTI launch, both sections and existing job history.
-2. Test Source Course replication with explicitly approved source/replica IDs: preview without writes, prepare/deploy, verify actual completion in Brightspace, then manual activation and unchanged retry.
-3. Verify the D2L-based interface in the deployed LTI frame; local browser and regression checks are complete.
+## Remaining live validation
 
-No second service, database or LTI installation is required. Copy completion remains manually confirmed.
+1. Redeploy the latest project to Render and verify the three-step automatic-reactivation flow with the two test replicas.
+2. Use a tenant-supported LE version of at least 1.91 and grant the Service User permission to read course-copy logs.
+3. Request one copy check and inspect actual Source Course deployment logs, progress and exported snapshots. Validate matching before treating logs as evidence of copy completion.
+4. Test restart recovery and representative large workloads. Local synthetic tests include 3,000 sources and 5,000 replicas; this scale has not been validated live.
 
-The large-upload and time-zone improvements have automated local coverage; live deployment validation remains pending.
+Copy logs expose text messages and copy-job IDs, not a structured result directly correlated to the deployment ID. Missing or ambiguous logs remain unconfirmed. Monitoring neither blocks deployment nor automatically re-submits copies.
 
-- Before deployment, set Render MONGODB_URL to the fresh `brightspace_source_courses_tools` database and verify a new LTI launch. The old database is retained without migration.
+One Render service and the `brightspace_source_courses_tools` MongoDB database are used. Queued background checks require the service to be running.

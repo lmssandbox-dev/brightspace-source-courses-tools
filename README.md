@@ -22,7 +22,7 @@ Upload a second CSV with headers `SourceOrgUnitId,ReplicaOrgUnitId`. Both IDs ar
 
 Limit: 10,000 rows / 5 MB. Each source is split into batches of at most 100 replicas per deployment request. Duplicate mappings are processed once. Conflicting sources for a replica, self-deployment and source/replica overlap block the preview. If preparation fails, already-deactivated replicas remain inactive with saved results. Inspect them before restoring service; there is no automatic rollback. Activation retry checks current state and does not redeploy.
 
-Finish source date changes before replication. Saved deployment history does not reserve courses or block new jobs. Live Source Course deployment/activation acceptance is still pending; no live replication was executed during the file reorganization.
+Finish source date changes before replication. Saved deployment history does not reserve courses or block new jobs. The user confirmed live Source Course deployment after enabling the linked Service User’s course-copy permissions. The latest automatic-reactivation and on-demand checking changes still require live validation.
 
 ## Project layout
 
@@ -66,9 +66,9 @@ The frontend was checked locally with synthetic jobs and no Brightspace writes. 
 
 ### Large date jobs
 
-Date-job records use immutable chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Planning checkpoints every 50 work items; execution saves before and after each activity. A restarted worker resumes resolution/discovery and skips saved results. An in-flight write is flagged as uncertain, never automatically repeated. Systemic API failures still stop writes. Replication supports 10,000 mappings / 5 MB and retains its existing recovery rules.
+Date-job records use immutable chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Planning checkpoints every 50 work items; execution saves before and after each activity. A restarted worker resumes resolution/discovery and skips saved results. An in-flight write is flagged as uncertain, never automatically repeated. Systemic API failures still stop writes. Replication supports 10,000 mappings / 5 MB; interrupted submissions remain available for inspection and are not automatically resubmitted.
 
-Result tables show 100 records per page; the CSV report includes all records. Processing remains sequential to bound API traffic. The complete job is loaded into worker memory, so size the server for the activity ceiling; chunking removes the single MongoDB document limit but is not a streaming worker. Historical immutable chunks are retained and need a retention policy before sustained high-volume production use. Large jobs have been tested locally with synthetic data, not at 10,000-course scale against a live Brightspace tenant.
+Date-job screens show compact summaries; the CSV report includes all records. Processing remains sequential to bound API traffic. The complete job is loaded into worker memory, so size the server for the activity ceiling; chunking removes the single MongoDB document limit but is not a streaming worker. Historical immutable chunks are retained and need a retention policy before sustained high-volume production use. Large jobs have been tested locally with synthetic data, not at 10,000-course scale against a live Brightspace tenant.
 
 ## Application identity
 
@@ -82,7 +82,7 @@ Before deploying, change the database path in Render's `MONGODB_URL` to `/bright
 
 Keep LTI_KEY, OAuth credentials and Brightspace settings unchanged. This fresh database has no old job history, sessions or LTI records. The app registers its configured Brightspace platform at startup. Verify a fresh LTI launch after deployment; database-backed signing keys may be regenerated, so pinned platform keys may need updating. Render configuration and live database creation have not been performed by this source change.
 
-Deployment execution continues after isolated validation, preparation, rejection, partial-success, or uncertain outcomes. Uncertain POSTs are never retried. Authentication failure (401), exhausted rate-limit retries (429), or three consecutive service/permission failures stop further batches. Explicit 429 responses allow two retries respecting Retry-After up to 60 seconds; longer waits stop rather than retry early. Persistence and lease failures always interrupt processing. The results screen and CSV distinguish submitted, failed, uncertain and not-attempted replicas. Activation excludes failed/not-attempted replicas; any left inactive during preparation require inspection. Submission still requires manual copy-completion confirmation in Brightspace.
+Deployment execution continues after isolated validation, preparation, rejection, partial-success, or uncertain outcomes. Uncertain POSTs are never retried. Authentication failure (401), exhausted rate-limit retries (429), or three consecutive service/permission failures stop further batches. Explicit 429 responses allow two retries respecting Retry-After up to 60 seconds; longer waits stop rather than retry early. Persistence and lease failures always interrupt processing. The results screen and CSV distinguish submitted, failed, uncertain and not-attempted replicas. Activation excludes failed/not-attempted replicas; any left inactive during preparation require inspection. No manual copy-completion confirmation is required. Automatic activation is restricted to accepted submissions.
 
 Deployment errors retain HTTP status, selected sanitized Brightspace error messages, and request/correlation identifiers when returned. These appear in replica results and dedicated CSV columns. Raw responses, request configuration, authorization headers, and cookies are not stored. Existing jobs retain only previously captured diagnostics.
 
@@ -95,3 +95,9 @@ Copy-log checks are on demand. In Job History, click **Check copy results now** 
 A lightweight worker dispatch timer checks only explicitly queued requests every 10 seconds. Each pass reads up to 10 replicas sequentially. MongoDB stores a run identifier, progress cursor, lease, timestamps, and results; expired leases can resume after restart. A completed pass is not scheduled again. Previous automatic schedule fields are ignored. Opening history and downloading a CSV never request fresh logs. Render must be running for queued work to progress.
 
 Reports retain the latest saved snapshot, per-replica timestamps and pending-current-check indicators. Old results are preserved until replaced. The API provides text logs rather than a structured result linked to the Source Course deployment ID. Missing logs do not mean failure; ambiguous copy IDs or pagination remain unconfirmed. No copy checks reserve courses or prevent a new deployment. New submissions can reset replicas while earlier copies are still queued/running.
+
+## Service User permissions and troubleshooting
+
+Client Credentials authentication uses the Service User linked to the OAuth registration. Both OAuth scopes and that Service User’s Brightspace permissions must allow the operation. Interactive OAuth in Postman may have different permissions. In this installation, deployment returned HTTP 403 until course-copy permissions were enabled for the linked Service User, despite the deployment scope and Source Course deployment permission already being present. The minimum permission set was not isolated because several permissions were enabled together.
+
+Source-name lookup uses GET `/d2l/api/lp/{version}/orgstructure/{id}` and requires `organizations:organization:read` plus organizational-structure access. A forbidden optional name lookup falls back to the source ID without blocking deployment. Existing saved warnings remain historical; test changed permissions with a new preview. Copy-log checking separately requires a supported LE version of at least 1.91 and Service User access to copy-course logs.
