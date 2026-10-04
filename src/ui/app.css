@@ -17,3 +17,7 @@ main{max-width:1440px;padding:24px 32px 52px}.app-header{padding:18px 32px}.side
 .success-confirmation{background:#edf8f1;border-color:#a8d5b8;border-left-color:#27834b;color:#205b36}.success-confirmation h2{color:#205b36}.success-confirmation p{margin-bottom:0}
 
 .date-upload-actions{justify-content:flex-end}
+
+.warning-confirmation{background:#fff7e9;border-color:#e6c68a;border-left-color:#b87800;color:#714900}.neutral-confirmation{background:#eef2f6;border-color:#cbd4de;border-left-color:#647687;color:#344654}
+
+.deployment-outcomes{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}.deployment-outcomes strong{display:block;font-size:28px}.deployment-outcomes span{display:block}@media(max-width:760px){.deployment-outcomes{grid-template-columns:repeat(2,1fr)}}

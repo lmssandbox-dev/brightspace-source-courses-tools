@@ -17,11 +17,11 @@ Read-only discovery and the single-activity preview/apply form remain available 
 Upload a second CSV with headers `SourceOrgUnitId,ReplicaOrgUnitId`. Both IDs are required on each row. Repeat the source ID for multiple replicas. Sources must be actual Source Course org units; replicas must already exist as Course Offerings. Replicas may initially be active or inactive.
 
 1. Validate deployment mappings performs reads only and saves a plan.
-2. Confirm Prepare and deploy. Every replica is deactivated and read back before any native deployment is submitted. Brightspace resets the target content as part of deployment. Submission IDs and results are saved.
+2. Confirm Prepare and deploy. Each batch is validated, deactivated and read back immediately before its deployment is submitted. Other batches remain untouched until their turn. Brightspace resets the target content as part of deployment. Submission IDs and results are saved.
 3. Wait for copying to finish in Brightspace. You can close the browser. Submitted means accepted, not finished; the app does not poll copy completion or activate after a timer.
 4. Return through My deployment jobs. Check every copy, resolve failures/uncertain outcomes, and confirm Activate replicas. All mapped replicas are activated, including those originally inactive, with read-back verification.
 
-Limit: 100 rows / 16 KB. Duplicate mappings are processed once. Conflicting sources for a replica, self-deployment and source/replica overlap block the preview. If preparation fails, already-deactivated replicas remain inactive with saved results. Inspect them before restoring service; there is no automatic rollback. Activation retry checks current state and does not redeploy.
+Limit: 10,000 rows / 5 MB. Each source is split into batches of at most 100 replicas per deployment request. Duplicate mappings are processed once. Conflicting sources for a replica, self-deployment and source/replica overlap block the preview. If preparation fails, already-deactivated replicas remain inactive with saved results. Inspect them before restoring service; there is no automatic rollback. Activation retry checks current state and does not redeploy.
 
 Finish source date changes before replication. Saved unresolved deployments reserve involved courses against overlapping bulk jobs in this application. Live Source Course deployment/activation acceptance is still pending; no live replication was executed during the file reorganization.
 
@@ -67,7 +67,7 @@ The frontend was checked locally with synthetic jobs and no Brightspace writes. 
 
 ### Large date jobs
 
-Date-job records use immutable chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Planning checkpoints every 50 work items; execution saves before and after each activity. A restarted worker resumes resolution/discovery and skips saved results. An in-flight write is flagged as uncertain, never automatically repeated. Systemic API failures still stop writes. Replication retains its 100-row / 16 KB limits and existing recovery rules.
+Date-job records use immutable chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Planning checkpoints every 50 work items; execution saves before and after each activity. A restarted worker resumes resolution/discovery and skips saved results. An in-flight write is flagged as uncertain, never automatically repeated. Systemic API failures still stop writes. Replication supports 10,000 mappings / 5 MB and retains its existing recovery rules.
 
 Result tables show 100 records per page; the CSV report includes all records. Processing remains sequential to bound API traffic. The complete job is loaded into worker memory, so size the server for the activity ceiling; chunking removes the single MongoDB document limit but is not a streaming worker. Historical immutable chunks are retained and need a retention policy before sustained high-volume production use. Large jobs have been tested locally with synthetic data, not at 10,000-course scale against a live Brightspace tenant.
 
@@ -82,3 +82,7 @@ The app now requires `brightspace_source_courses_tools`. No data is migrated fro
 Before deploying, change the database path in Render's `MONGODB_URL` to `/brightspace_source_courses_tools`. Preserve the credentials, cluster host and query options. The MongoDB user needs access to the new database. For local execution, set MONGODB_URL using `.env.example`; the existing local `.env` has no MONGODB_URL entry.
 
 Keep LTI_KEY, OAuth credentials and Brightspace settings unchanged. This fresh database has no old job history, sessions or LTI records. The app registers its configured Brightspace platform at startup. Verify a fresh LTI launch after deployment; database-backed signing keys may be regenerated, so pinned platform keys may need updating. Render configuration and live database creation have not been performed by this source change.
+
+Deployment execution continues after isolated validation, preparation, rejection, partial-success, or uncertain outcomes. Uncertain POSTs are never retried. Authentication failure (401), exhausted rate-limit retries (429), or three consecutive service/permission failures stop further batches. Explicit 429 responses allow two retries respecting Retry-After up to 60 seconds; longer waits stop rather than retry early. Persistence and lease failures always interrupt processing. The results screen and CSV distinguish submitted, failed, uncertain and not-attempted replicas. Activation excludes failed/not-attempted replicas; any left inactive during preparation require inspection. Submission still requires manual copy-completion confirmation in Brightspace.
+
+Deployment errors retain HTTP status, selected sanitized Brightspace error messages, and request/correlation identifiers when returned. These appear in replica results and dedicated CSV columns. Raw responses, request configuration, authorization headers, and cookies are not stored. Existing jobs retain only previously captured diagnostics.

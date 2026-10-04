@@ -8,6 +8,6 @@ function installDateUploadLimit(app){
  const original=layer.handle;
  // Percent encoding can triple the 5 MB CSV size; allow bounded form overhead.
  const larger=express.urlencoded({extended:false,limit:16*1024*1024,parameterLimit:20});
- layer.handle=(req,res,next)=>req.method==='POST'&&req.path==='/bulk/preview'?larger(req,res,next):original(req,res,next);
+ layer.handle=(req,res,next)=>req.method==='POST'&&['/bulk/preview','/deploy/preview'].includes(req.path)?larger(req,res,next):original(req,res,next);
 }
 module.exports={installDateUploadLimit};

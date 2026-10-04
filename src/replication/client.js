@@ -1,11 +1,28 @@
 'use strict';
 const { id }=require('../shared/id');
-function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion}) {
+const {deploymentDiagnostics}=require('./diagnostics');
+function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion,delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=Date.now}) {
   const base=new URL(baseUrl);
   const version=/^\d+\.\d+$/.test(lpVersion||'')?lpVersion:null;
   const root=version?`${base.origin}/d2l/api/lp/${version}`:null;
   function configured(){const [major,minor]=(version||'0.0').split('.').map(Number);if(base.protocol!=='https:'||major<1||(major===1&&minor<53))throw Object.assign(Error('Source deployment requires LP 1.53 or later.'),{code:'LP_VERSION_UNSUPPORTED'});}
   const safeNumber=value=>{const n=Number(id(value));if(!Number.isSafeInteger(n))throw Error('ID exceeds JSON number precision');return n;};
+  // Only an explicit rate-limit rejection may be retried; never retry an ambiguous write.
+  async function rateLimited(request,beforeRetry){
+    for(let attempt=0;;attempt++){
+      try{return await request();}catch(error){
+        const status=error?.response?.status??error?.status;
+        if(status!==429||attempt>=2)throw error;
+        const header=error.response?.headers?.['retry-after'];
+        const wait=header==null?1000*2**attempt:/^\d+(\.\d+)?$/.test(String(header))?Number(header)*1000:Date.parse(header)-now();
+        if(!Number.isFinite(wait)||wait>60000)throw error;
+        await delay(Math.max(0,wait));
+        if(beforeRetry){try{await beforeRetry();}catch(error){throw Object.assign(error,{persistenceFailure:true});}}
+      }
+    }
+  }
+  const read=url=>rateLimited(()=>api.read(url));
+  const errorInfo=error=>({httpStatus:error?.httpStatus??error?.status??error?.response?.status??null});
   function validationFailure(error,stage,orgUnitId,code){
     const status=error?.status??error?.response?.status;
     const httpStatus=Number.isInteger(status)?status:null;
@@ -15,7 +32,7 @@ function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion}) {
     return Object.assign(new Error(`${label} for ${orgUnitId} failed (LP ${version||'invalid'}${httpStatus?`, HTTP ${httpStatus}`:''}). ${detail}`),{code:'REPLICATION_VALIDATION',stage,orgUnitId,httpStatus,reason:code});
   }
   async function validationRead(path,stage,orgUnitId){
-    try{configured();return await api.read(`${root}/${path}`);}
+    try{configured();return await read(`${root}/${path}`);}
     catch(error){throw validationFailure(error,stage,orgUnitId);}
   }
   return {
@@ -42,24 +59,25 @@ function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion}) {
       configured();const orgUnitId=id(value),url=`${root}/courses/${orgUnitId}`;
       if(typeof desired!=='boolean')throw Error('Invalid active state');
       let row,payload,token;
-      const failure=(message,writeAttempted=false,verifiedActive=null)=>({status:'failed',writeAttempted,verifiedActive,error:{message}});
+      const failure=(message,writeAttempted=false,verifiedActive=null,info={})=>({status:'failed',writeAttempted,verifiedActive,error:{...info,message}});
       try{
-        row=await api.read(url);
+        row=await read(url);
         if(id(row.Identifier)!==orgUnitId||typeof row.IsActive!=='boolean')throw Error();
         if(row.IsActive===desired)return {status:'unchanged',writeAttempted:false,verifiedActive:desired};
         payload=courseStatusPayload(row,desired,version);
-        token=await oauth.getAccessToken();
-      }catch{return failure('Could not read complete course settings or obtain authorization. No status update was sent.');}
+        try{token=await oauth.getAccessToken();}catch{throw {status:401};}
+      }catch(error){return failure('Could not read complete course settings or obtain authorization. No status update was sent.',false,null,errorInfo(error));}
       // Persist intent before sending; storage failures must propagate to stop the worker.
       if(beforeWrite)await beforeWrite();
-      try{await http({method:'PUT',url,timeout:15000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},data:payload});}catch{ /* Resolve uncertain transport outcomes through read-back, never repeat PUT. */ }
+      let writeError;
+      try{await rateLimited(()=>http({method:'PUT',url,timeout:15000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},data:payload}),beforeWrite);}catch(error){if(error.persistenceFailure)throw error;writeError=error; /* Resolve uncertain transport outcomes through read-back, never repeat PUT. */ }
       try{
-        const verified=await api.read(url);
+        const verified=await read(url);
         if(id(verified.Identifier)!==orgUnitId)throw Error();
         const actual=courseStatusPayload(verified,desired,version);
-        if(verified.IsActive!==desired||JSON.stringify(actual)!==JSON.stringify(payload))return failure('Course status or preserved settings did not verify. Inspect the offering in Brightspace.',true,verified.IsActive);
+        if(verified.IsActive!==desired||JSON.stringify(actual)!==JSON.stringify(payload))return failure('Course status or preserved settings did not verify. Inspect the offering in Brightspace.',true,verified.IsActive,errorInfo(writeError));
         return {status:'updated',writeAttempted:true,verifiedActive:desired};
-      }catch{return failure('Status update outcome could not be verified. Inspect the offering in Brightspace.',true);}
+      }catch(error){return failure('Status update outcome could not be verified. Inspect the offering in Brightspace.',true,null,errorInfo(writeError||error));}
     },
     async deploy(sourceId,targetIds,beforeSend){
       configured();const source=id(sourceId),targets=[...new Set(targetIds.map(id))];
@@ -68,22 +86,25 @@ function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion}) {
       // Fetch credentials before recording the POST attempt. A transport loss after POST is uncertain.
       let token;try{token=await oauth.getAccessToken();}catch{return {status:'failed',writeAttempted:false,error:{httpStatus:401,message:'Token exchange failed; deployment was not sent.'},targets:targets.map(orgUnitId=>({orgUnitId,status:'failed'}))};}
       if(beforeSend)await beforeSend();
+      let received;
       try{
-        const response=await http({method:'POST',url:`${root}/sourceCourses/${source}/deploy`,timeout:30000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},data});
+        const response=await rateLimited(()=>http({method:'POST',url:`${root}/sourceCourses/${source}/deploy`,timeout:30000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},data}),beforeSend);
+        received=response;
         if(response.status===200 && Number.isSafeInteger(response.data)&&response.data>0){return {status:'submitted',writeAttempted:true,deploymentId:String(response.data),targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}
         const body=response.data;
         if(response.status===207 && body && Array.isArray(body.FailedOrgUnitsIds)){
           const failed=body.FailedOrgUnitsIds.map(id);
           if(failed.some(x=>!targets.includes(x)))throw Error('Unexpected failed target');
           const deploymentId=body.SourceCourseDeployId==null?null:id(body.SourceCourseDeployId);
-          return {status:'submittedWithErrors',writeAttempted:true,deploymentId,targets:targets.map(orgUnitId=>({orgUnitId,status:failed.includes(orgUnitId)?'failed':deploymentId?'submitted':'uncertain'})),error:{message:'Brightspace reported partial success. Check each target in Brightspace before any new deployment.'}};
+          return {status:'submittedWithErrors',writeAttempted:true,deploymentId,targets:targets.map(orgUnitId=>({orgUnitId,status:failed.includes(orgUnitId)?'failed':deploymentId?'submitted':'uncertain'})),error:{...deploymentDiagnostics(response,token),message:'Brightspace reported partial success. Check each target in Brightspace before any new deployment.'}};
         }
         throw Error('Unexpected deployment response');
       }catch(error){
+        if(error.persistenceFailure)throw error;
         const httpStatus=error.response?.status;
         // A received non-success response is documented as not initiating deployment.
-        const rejected=Number.isInteger(httpStatus)&&httpStatus>=400;
-        return {status:rejected?'failed':'uncertain',writeAttempted:true,error:{...(httpStatus?{httpStatus}:{}),message:rejected?'Brightspace rejected deployment; no deployment was initiated.':'Deployment outcome is unknown. Check Brightspace before retrying; do not submit again blindly.'},targets:targets.map(orgUnitId=>({orgUnitId,status:rejected?'failed':'uncertain'}))};
+        const rejected=Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<500;
+        return {status:rejected?'failed':'uncertain',writeAttempted:true,error:{...deploymentDiagnostics(error.response||received,token),message:rejected?'Brightspace rejected deployment; no deployment was initiated.':'Deployment outcome is unknown. Check Brightspace before retrying; do not submit again blindly.'},targets:targets.map(orgUnitId=>({orgUnitId,status:rejected?'failed':'uncertain'}))};
       }
     }
   };

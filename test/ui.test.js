@@ -30,7 +30,7 @@ test('submitted replication never claims copy completion or polls it and preserv
 test('date review retains course-level blocking errors and does not offer Apply on failure',()=>{
  const job={_id:'j',status:'failed',dates:{},rows:[],courses:[{orgUnitId:'20',name:'Course',status:'invalid',message:'Discovery incomplete'}],tasks:[]};
  const html=createDateView({writeEnabled:()=>true}).render({},job,helpers);
- assert.match(html,/Discovery incomplete/);assert.match(html,/<details class="panel" open><summary>Course validation/);assert.doesNotMatch(html,/action="\/apply"/);
+ assert.match(html,/Discovery incomplete/);assert.match(html,/Needs Attention/);assert.doesNotMatch(html,/Course validation/);assert.doesNotMatch(html,/action="\/apply"/);
 });
 
 // ltijs registers its launch route during setup, before later app middleware.
@@ -92,3 +92,15 @@ test('queued and running date screens omit details and retain automatic refresh'
  if(status==='queued')assert.match(html,/Cancel this job/);
  }
 });
+
+ test('all date job outcomes share a compact layout with truthful status and report access',()=>{
+ for(const status of ['cancelled','failed','interrupted','completedWithErrors','completed','ready','validating','planning','queued','running']){
+ const job={_id:'j',status,dates:{},rows:[],courses:[],tasks:[],expiresAt:Date.now()+60000,message:'Example <issue>'};
+ const html=page(createDateView({writeEnabled:()=>true}).render({},job,helpers),{ltik:'session'});
+ assert.match(html,/Download CSV report/);
+ assert.doesNotMatch(html,/Review your date updates|CSV validation|Course validation|Job details|My recent jobs|Page 1 of|>Workspace</);
+ if(['cancelled','failed','interrupted','completedWithErrors','completed'].includes(status)){
+ assert.match(html,/&lt;issue&gt;/);assert.doesNotMatch(html,/success-confirmation|action="\/apply"/);
+ }
+ }
+ });
