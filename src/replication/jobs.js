@@ -100,7 +100,6 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
    job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
    job.reactivationFinishedAt=now();
-   job.nextCopyCheckAt=now();
    if(outcomes.every(r=>r.status==='submitted'))job.status=job.tasks.every(t=>t.targets.every(r=>['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
    job.message=(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Accepted replicas were automatically reactivated where possible. Copy completion is separate and is not confirmed by activation. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
 

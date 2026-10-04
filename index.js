@@ -189,7 +189,7 @@ for (const action of ['preview','apply','status','cancel','history','report']) {
   lti.app.post(`/bulk/${action}`, bulkDates[action]);
 }
 
-for (const action of ['preview','apply','status','cancel','history','report','review','activate']) {
+for (const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies']) {
   lti.app.post(`/deploy/${action}`, deploymentRoutes[action]);
 }
 

@@ -32,10 +32,10 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
     return true;
   }
   const handlers={form,historyButton:res=>button(res,'history','',kind==='dates'?'View Date Jobs':'View Deployment Jobs')};
-  for(const action of ['preview','apply','status','cancel','history','report','review','activate'])handlers[action]=async(req,res)=>{
+  for(const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies'])handlers[action]=async(req,res)=>{
     if(!authorize(req,res,action))return;
     try {
-      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
+      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')+(kind==='sourceDeployment'?button(res,'checkCopies',j._id,['queued','running'].includes(j.copyCheck?.status)?'View copy-check progress':'Check copy results now'):'' )]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
       if(action==='preview'){
         let dates,timeZone;
         res.locals.dateForm=req.body;
@@ -47,6 +47,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         return res.send(render(res,job));
       }
       const job=await jobs.get(req.body.jobId,owner(res));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
+      if(action==='checkCopies'){if(kind!=='sourceDeployment'||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
       if(action==='apply') {
         if(kind==='sourceDeployment'&&req.body.confirmReset!=='yes')return res.status(400).send('Confirm the reset of the listed replicas before deployment.');
         if(!(view?view.canApply():job.tasks.every(t=>writeEnabled(t.activity.type))))return res.status(403).send('A required write scope is unavailable.');

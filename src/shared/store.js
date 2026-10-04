@@ -1,4 +1,6 @@
 'use strict';
+const {randomUUID}=require('node:crypto');
+const {targetStatus}=require('../replication/outcomes');
 const { MongoClient } = require('mongodb');
 const {reservesCourses}=require('../replication/outcomes');
 const {encodeDateJob,decodeDateJob,DIRTY,CHUNK_SIZE}=require('./dateChunks');
@@ -17,15 +19,24 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1}}).sort({createdAt:-1}).limit(100).toArray();},
+    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1,copyCheck:1}}).sort({createdAt:-1}).limit(100).toArray();},
     async blocked(ids,excludeId) {
       const {jobs}=await collections();
       const pending=await jobs.find({namespace,_id:{$ne:excludeId},kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','activationWithErrors','failed','queued','running']}}).toArray();
       return pending.some(job=>job.tasks.some(t=>reservesCourses(t) && [t.sourceId,...t.targets.map(r=>r.orgUnitId)].some(id=>ids.includes(id))));
     },
+    async requestCopyCheck(_id,owner){
+      const {jobs}=await collections();const job=await jobs.findOne({_id,owner,namespace,kind:'sourceDeployment'});
+      if(!job||['queued','running','planning','validating'].includes(job.status))return false;
+      if(['queued','running'].includes(job.copyCheck?.status))return true;
+      const total=job.tasks.flatMap(t=>t.targets.filter(r=>['submitted','uncertain'].includes(targetStatus(t,r)))).length;
+      if(!total)return false;
+      const result=await jobs.updateOne({_id,owner,namespace,status:job.status,'copyCheck.status':{$nin:['queued','running']}},{$set:{copyCheck:{runId:randomUUID(),status:'queued',requestedAt:now(),processed:0,total},copyMonitorCursor:0},$unset:{nextCopyCheckAt:''}});
+      return result.modifiedCount===1||Boolean(await jobs.findOne({_id,owner,namespace,'copyCheck.status':{$in:['queued','running']}}));
+    },
     async claimCopyMonitor(){
       const {jobs}=await collections();
-      return (await jobs.findOneAndUpdate({namespace,kind:'sourceDeployment',automaticReactivation:true,status:{$nin:['queued','running','planning','validating']},nextCopyCheckAt:{$lte:now()},reactivationFinishedAt:{$gt:now()-24*60*60*1000}},{$set:{nextCopyCheckAt:now()+10*60*1000}},{sort:{nextCopyCheckAt:1},returnDocument:'after'})).value;
+      return (await jobs.findOneAndUpdate({namespace,kind:'sourceDeployment',status:{$nin:['queued','running','planning','validating']},'copyCheck.status':{$in:['queued','running']},$or:[{'copyCheck.leaseUntil':{$exists:false}},{'copyCheck.leaseUntil':{$lte:now()}}]},{$set:{'copyCheck.status':'running','copyCheck.leaseUntil':now()+10*60*1000,'copyCheck.leaseId':randomUUID()}},{sort:{'copyCheck.lastBatchAt':1,'copyCheck.requestedAt':1},returnDocument:'after'})).value;
     },
     async nextCopySubmission(jobId,sourceId,targetId,since){
       const {jobs}=await collections();
@@ -34,9 +45,11 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       return times.length?Math.min(...times):null;
     },
     async saveCopyMonitor(job,updates,cursor,time){
-      const {jobs}=await collections();const fields={copyMonitorCheckedAt:time,copyMonitorCursor:cursor,nextCopyCheckAt:time+(cursor?10000:60000)};
-      for(const [id,result] of Object.entries(updates))fields[`copyMonitor.${id}`]=result;
-      await jobs.updateOne({_id:job._id,namespace,status:{$nin:['queued','running','planning','validating']}},{$set:fields});
+      const {jobs}=await collections();const done=cursor===0;
+      const fields={copyMonitorCheckedAt:time,copyMonitorCursor:cursor,'copyCheck.processed':done?job.copyCheck.total:cursor,'copyCheck.status':done?'completed':'queued','copyCheck.lastBatchAt':time,'copyCheck.leaseUntil':0};
+      if(done)fields['copyCheck.completedAt']=time;
+      for(const [id,result] of Object.entries(updates))fields[`copyMonitor.${id}`]={...result,runId:job.copyCheck.runId};
+      await jobs.updateOne({_id:job._id,namespace,'copyCheck.runId':job.copyCheck.runId,'copyCheck.leaseId':job.copyCheck.leaseId,status:{$nin:['queued','running','planning','validating']}},{$set:fields});
     },
     async review(_id,owner,time) {
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','failed','activationWithErrors']}},{$set:{status:'reviewed',reviewedAt:time,message:'User acknowledged checking deployment outcomes in Brightspace. Submission results are retained; this is not automatic completion verification.'}})).modifiedCount===1;

@@ -112,3 +112,9 @@ test('deployment resolution requires explicit review and is unavailable while pr
  assert.doesNotMatch(html,/confirmReviewed|Mark reviewed and release courses/);
  }
 });
+test('on-demand copy checks expose progress and snapshot timestamps without old schedule',()=>{
+ const job={_id:'j',status:'activated',copyCheck:{status:'running',runId:'new',processed:10,total:5000},rows:[{sourceId:'1',targetId:'2'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'2'}],result:{status:'submitted'}}],copyMonitor:{'2':{runId:'old',status:'Copy logs available',checkedAt:1000,details:'Previous log'}}};
+ const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,helpers),csv=view.report(job);
+ assert.match(html,/10 of 5000 replicas checked/);assert.match(html,/Pending current check/);assert.match(html,/View copy-check progress/);assert.doesNotMatch(html,/24 hours|window ended/);
+ assert.match(csv,/Pending current check/);assert.match(csv,/1970-01-01T00:00:01.000Z/);assert.match(csv,/Previous log/);
+});

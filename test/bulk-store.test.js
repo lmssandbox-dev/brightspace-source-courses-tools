@@ -49,3 +49,18 @@ test('chunked date recovery requeues checkpoints without rewriting tasks',async(
  await s.store.acquire('w');const changes=s.calls.filter(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
  assert.deepEqual(changes.map(c=>c.update.$set.status),['validating','queued']);assert.ok(changes.every(c=>!Object.hasOwn(c.update.$set,'tasks')));
 });
+test('copy-check claims require explicit requests and saves are fenced by run and lease',async()=>{
+ const s=setup();await s.store.claimCopyMonitor();
+ const claim=s.calls.find(c=>c.op==='claim');assert.deepEqual(claim.filter['copyCheck.status'],{$in:['queued','running']});assert.equal(claim.filter.nextCopyCheckAt,undefined);
+ await s.store.saveCopyMonitor({_id:'j',copyCheck:{runId:'run',leaseId:'lease',total:5000}}, {'101':{status:'Logs available',checkedAt:100}},0,100);
+ const save=s.calls.find(c=>c.op==='updateOne');assert.equal(save.filter['copyCheck.runId'],'run');assert.equal(save.filter['copyCheck.leaseId'],'lease');assert.equal(save.update.$set['copyCheck.status'],'completed');assert.equal(save.update.$set['copyCheck.processed'],5000);assert.equal(save.update.$set.nextCopyCheckAt,undefined);
+});
+test('copy checks deduplicate pending requests and require ownership',async()=>{
+ const job={_id:'j',owner:'owner',namespace:'n',kind:'sourceDeployment',status:'activated',tasks:[{targets:[{orgUnitId:'1'}],result:{status:'submitted'}}]};let mutations=0;
+ const collection={findOne:async f=>f.owner===job.owner?job:null,updateOne:async(f,u)=>{mutations++;Object.assign(job,u.$set);return {modifiedCount:1};}};
+ const store=createBulkStore({uri:'mongodb://localhost/brightspace_source_courses_tools',namespace:'n',mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})},now:()=>100});
+ assert.equal(await store.requestCopyCheck('j','other'),false);
+ assert.equal(await store.requestCopyCheck('j','owner'),true);const run=job.copyCheck.runId;
+ assert.equal(await store.requestCopyCheck('j','owner'),true);assert.equal(mutations,1);assert.equal(job.copyCheck.runId,run);
+ job.copyCheck.status='completed';assert.equal(await store.requestCopyCheck('j','owner'),true);assert.notEqual(job.copyCheck.runId,run);
+});
