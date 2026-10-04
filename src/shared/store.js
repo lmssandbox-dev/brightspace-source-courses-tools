@@ -16,7 +16,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1}}).sort({createdAt:-1}).limit(20).toArray();},
+    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1}}).sort({createdAt:-1}).limit(100).toArray();},
     async blocked(ids,excludeId) {
       const {jobs}=await collections();
       const pending=await jobs.find({namespace,_id:{$ne:excludeId},kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','activationWithErrors','failed','queued','running']}}).toArray();

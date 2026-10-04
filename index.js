@@ -170,7 +170,7 @@ const diagnostics = createDiagnostics({
   activityForm: res => workspace({
     dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
     selected:res.locals.uiSection||'dates',
-    history:`<div class="section-heading"><div><h2>Pick up where you left off</h2><p>Review saved results, download reports, or return to a deployment waiting for activation.</p></div></div><div class="history-grid"><section class="panel"><span class="eyebrow">Activity dates</span><h3>Date update jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">Source replication</span><h3>Deployment jobs</h3><p>Check submission results and activate replicas after copy completion.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
+    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Check source course deployment requests and activate course replicas after copy completion.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
   client: discovery,

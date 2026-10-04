@@ -31,11 +31,11 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
     if(!valid(res,req.body?.ticket,action,action==='preview'||action==='history'?'':req.body?.jobId)){res.status(403).send('Form expired or invalid. Relaunch through Brightspace.');return false;}
     return true;
   }
-  const handlers={form,historyButton:res=>button(res,'history','',kind==='dates'?'View date jobs':'View replication jobs')};
+  const handlers={form,historyButton:res=>button(res,'history','',kind==='dates'?'View Date Jobs':'View Deployment Jobs')};
   for(const action of ['preview','apply','status','cancel','history','report','review','activate'])handlers[action]=async(req,res)=>{
     if(!authorize(req,res,action))return;
     try {
-      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity date jobs':'Source replication jobs'}</h1><p>Your latest 20 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
+      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Source replication jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
       if(action==='preview'){
         let dates,timeZone;
         res.locals.dateForm=req.body;
