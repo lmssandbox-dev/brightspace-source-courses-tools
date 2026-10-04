@@ -127,7 +127,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
-          const blocked=store.blocked?await store.blocked(involved,job._id):false;
+          const blocked=false; // Deployment history and copy monitoring never reserve courses.
           if(blocked){job.status='failed';job.message='A source or target has a deployment awaiting review in Brightspace. Review that job before modifying these courses.';}
           else if(job.kind==='sourceDeployment')await deployment[job.operation==='activate'?'activate':'execute'](job,save,()=>store.renew(worker));
           else await execute(job);

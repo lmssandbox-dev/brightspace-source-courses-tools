@@ -20,6 +20,7 @@ const { createBulkStore } = require('./src/shared/store');
 const { createBulkDates } = require('./src/shared/routes');
 const { createHash } = require('node:crypto');
 const { createSourceDeploymentClient } = require('./src/replication/client');
+const {createCopyMonitor}=require('./src/replication/monitor');
 const { createDeploymentJobs } = require('./src/replication/jobs');
 const { createDeploymentView } = require('./src/replication/view');
 const lti = require('ltijs').Provider;
@@ -160,6 +161,7 @@ const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256'
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:axios,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
+const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled});
 const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,
   courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient})});
@@ -170,7 +172,7 @@ const diagnostics = createDiagnostics({
   activityForm: res => workspace({
     dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
     selected:res.locals.uiSection||'dates',
-    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Check source course deployment requests and activate course replicas after copy completion.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
+    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
   client: discovery,
@@ -204,6 +206,8 @@ const start = async () => {
     await lti.deploy({ port });
     const bulkTimer = setInterval(() => { void bulkJobs.tick(); }, 2000);
     bulkTimer.unref();
+    const copyTimer=setInterval(()=>{void copyMonitor.tick();},10000);
+    copyTimer.unref();
     if (!BS_DEPLOYMENT_ID?.trim()) {
       console.log('Setup mode: launches are blocked until BS_DEPLOYMENT_ID is configured. Key endpoints remain available.');
     }

@@ -35,7 +35,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
   for(const action of ['preview','apply','status','cancel','history','report','review','activate'])handlers[action]=async(req,res)=>{
     if(!authorize(req,res,action))return;
     try {
-      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Source replication jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
+      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
       if(action==='preview'){
         let dates,timeZone;
         res.locals.dateForm=req.body;
@@ -53,7 +53,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         if(!await jobs.confirm(job._id,owner(res)))return res.status(409).send('Job expired, was already confirmed, or is not ready.');
       }
       if(action==='activate'){
-        if(kind!=='sourceDeployment'||req.body.confirmCompleted!=='yes')return res.status(400).send('Confirm that copying has finished for all replicas in Brightspace before activation.');
+        if(kind!=='sourceDeployment')return res.status(400).send('Reactivation is available only for deployment jobs.');
         if(!view.canApply())return res.status(403).send('Required scopes are unavailable.');
         if(!await jobs.activate(job._id,owner(res)))return res.status(409).send('Activation is already queued or this job is not eligible.');
       }

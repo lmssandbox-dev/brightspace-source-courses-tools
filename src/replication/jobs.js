@@ -1,7 +1,7 @@
 'use strict';
 const {parse}=require('csv-parse/sync');
 const {id}=require('../shared/id');
-const {canActivateTarget}=require('./outcomes');
+const {canActivateTarget,targetStatus}=require('./outcomes');
 const invalid=message=>Object.assign(new Error(message),{code:'INVALID_CSV'});
 function parseDeploymentCsv(text){
  if(typeof text!=='string'||Buffer.byteLength(text)>5*1024*1024)throw invalid('Use a UTF-8 CSV of at most 5 MB.');
@@ -45,7 +45,7 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
   },
   async activate(job,save,renew){
    if(!enabled()){job.status='activationWithErrors';job.message='Required deployment/course update scopes are unavailable.';return;}
-   for(const task of job.tasks)for(const target of task.targets.filter(r=>canActivateTarget(task,r))){
+   for(const task of job.tasks)for(const target of task.targets.filter(r=>canActivateTarget(task,r)&&!['updated','unchanged'].includes(r.activation?.status))){
     target.activation={status:'running',writeAttempted:false};await save(job);
     target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await save(job);});
     await save(job);
@@ -55,6 +55,7 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
   },
   async execute(job,save,renew){
    if(!enabled()){job.status='failed';job.message='Configure manageCourses:deploy:manage and orgunits:course:update before deploying.';return;}
+   job.automaticReactivation=true;
    let halted=false,serviceFailures=0;
    const recordFailure=error=>{
     const status=error?.httpStatus??error?.status??error?.response?.status;
@@ -80,8 +81,17 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
     if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');await save(job);continue;}
     try{for(const target of task.targets)if((await client.target(target.orgUnitId)).isActive!==false)throw {httpStatus:409};}
     catch(error){recordFailure(error);task.result=notSent(task,'Replica inactivity could not be confirmed. No deployment was sent for this batch.');await save(job);continue;}
+    task.submittedAt=now();
     task.result={status:'running',writeAttempted:false};await save(job);
     task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await save(job);});
+    await save(job);
+    // Reactivation follows acceptance, not completion of the asynchronous copy.
+    for(const target of task.targets){
+     if(targetStatus(task,target)!=='submitted')continue;
+     target.activation={status:'running',writeAttempted:false};await save(job);
+     target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await save(job);});
+     await save(job);
+    }
     if(task.result.status==='submitted')serviceFailures=0;
     else if(task.result.status==='submittedWithErrors')serviceFailures=0;
     else recordFailure(task.result.error);
@@ -89,7 +99,10 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
    }
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
    job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
-   job.message=(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Check copy completion in Brightspace before activating replicas. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
+   job.reactivationFinishedAt=now();
+   job.nextCopyCheckAt=now();
+   if(outcomes.every(r=>r.status==='submitted'))job.status=job.tasks.every(t=>t.targets.every(r=>['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
+   job.message=(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Accepted replicas were automatically reactivated where possible. Copy completion is separate and is not confirmed by activation. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
 
   }
  };

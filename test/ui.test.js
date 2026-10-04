@@ -22,10 +22,10 @@ test('workspace renders the selected sidebar panel and omits development tools',
  assert.match(page('content'),/Brightspace Source Courses Tools/);assert.doesNotMatch(page('content'),/<footer>/);
  assert.doesNotMatch(page('content',{ltik:'secret'}),/href="[^\"]*secret/);
 });
-test('submitted replication never claims copy completion or polls it and preserves activation confirmation',()=>{
+test('submitted replication exposes monitoring and reactivation without claiming completion',()=>{
  const job={_id:'j',status:'submitted',rows:[],tasks:[{sourceId:'10',sourceName:'<script>bad</script>',targets:[{orgUnitId:'20',name:'Replica',isActive:true,deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};
  const html=createDeploymentView({enabled:()=>true}).render({},job,helpers);
- assert.match(html,/Check copy completion/);assert.match(html,/name="confirmCompleted" value="yes" required/);assert.match(html,/not verified completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.match(html,/&lt;script&gt;/);
+ assert.match(html,/Copy monitoring/);assert.match(html,/Retry reactivation/);assert.match(html,/not verified completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.match(html,/&lt;script&gt;/);
 });
 test('date review retains course-level blocking errors and does not offer Apply on failure',()=>{
  const job={_id:'j',status:'failed',dates:{},rows:[],courses:[{orgUnitId:'20',name:'Course',status:'invalid',message:'Discovery incomplete'}],tasks:[]};
@@ -109,7 +109,6 @@ test('deployment resolution requires explicit review and is unavailable while pr
  const view=createDeploymentView({enabled:()=>true});
  for(const status of ['failed','submittedWithErrors','interrupted','submitted','outcomeUnknown','activationWithErrors','running','queued','activated','reviewed']){
  const html=view.render({}, {_id:'j',status,rows:[],tasks:[]},helpers);
- if(['running','queued','activated','reviewed'].includes(status))assert.doesNotMatch(html,/action="\/deploy\/review"/);
- else {assert.match(html,/name="confirmReviewed" value="yes" required/);assert.match(html,/Mark reviewed and release courses/);}
+ assert.doesNotMatch(html,/confirmReviewed|Mark reviewed and release courses/);
  }
 });

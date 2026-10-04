@@ -17,18 +17,33 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1}}).sort({createdAt:-1}).limit(100).toArray();},
+    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1}}).sort({createdAt:-1}).limit(100).toArray();},
     async blocked(ids,excludeId) {
       const {jobs}=await collections();
       const pending=await jobs.find({namespace,_id:{$ne:excludeId},kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','activationWithErrors','failed','queued','running']}}).toArray();
       return pending.some(job=>job.tasks.some(t=>reservesCourses(t) && [t.sourceId,...t.targets.map(r=>r.orgUnitId)].some(id=>ids.includes(id))));
+    },
+    async claimCopyMonitor(){
+      const {jobs}=await collections();
+      return (await jobs.findOneAndUpdate({namespace,kind:'sourceDeployment',automaticReactivation:true,status:{$nin:['queued','running','planning','validating']},nextCopyCheckAt:{$lte:now()},reactivationFinishedAt:{$gt:now()-24*60*60*1000}},{$set:{nextCopyCheckAt:now()+10*60*1000}},{sort:{nextCopyCheckAt:1},returnDocument:'after'})).value;
+    },
+    async nextCopySubmission(jobId,sourceId,targetId,since){
+      const {jobs}=await collections();
+      const newer=await jobs.find({namespace,kind:'sourceDeployment',_id:{$ne:jobId},tasks:{$elemMatch:{sourceId,submittedAt:{$gt:since},'targets.orgUnitId':targetId}}},{projection:{tasks:1}}).toArray();
+      const times=newer.flatMap(j=>j.tasks.filter(t=>t.sourceId===sourceId&&t.submittedAt>since&&t.targets.some(r=>r.orgUnitId===targetId)).map(t=>t.submittedAt));
+      return times.length?Math.min(...times):null;
+    },
+    async saveCopyMonitor(job,updates,cursor,time){
+      const {jobs}=await collections();const fields={copyMonitorCheckedAt:time,copyMonitorCursor:cursor,nextCopyCheckAt:time+(cursor?10000:60000)};
+      for(const [id,result] of Object.entries(updates))fields[`copyMonitor.${id}`]=result;
+      await jobs.updateOne({_id:job._id,namespace,status:{$nin:['queued','running','planning','validating']}},{$set:fields});
     },
     async review(_id,owner,time) {
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','failed','activationWithErrors']}},{$set:{status:'reviewed',reviewedAt:time,message:'User acknowledged checking deployment outcomes in Brightspace. Submission results are retained; this is not automatic completion verification.'}})).modifiedCount===1;
     },
     async activate(_id,owner,time) {
       const {jobs}=await collections();
-      return (await jobs.updateOne({_id,owner,namespace,kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','failed','activationWithErrors']},'tasks.targets.deactivation':{$exists:true}},{$set:{status:'queued',operation:'activate',completionConfirmedAt:time,updatedAt:time},$unset:{expiresAt:''}})).modifiedCount===1;
+      return (await jobs.updateOne({_id,owner,namespace,kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','failed','activationWithErrors']},'tasks.targets.deactivation':{$exists:true}},{$set:{status:'queued',operation:'activate',reactivationRequestedAt:time,updatedAt:time},$unset:{expiresAt:''}})).modifiedCount===1;
     },
     async confirm(_id,owner,time) {
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,status:'ready',expiresAt:{$gt:time}},{$set:{status:'queued',confirmedAt:time}})).modifiedCount===1;

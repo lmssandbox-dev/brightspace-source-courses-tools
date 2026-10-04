@@ -18,12 +18,11 @@ Upload a second CSV with headers `SourceOrgUnitId,ReplicaOrgUnitId`. Both IDs ar
 
 1. Validate deployment mappings performs reads only and saves a plan.
 2. Confirm Prepare and deploy. Each batch is validated, deactivated and read back immediately before its deployment is submitted. Other batches remain untouched until their turn. Brightspace resets the target content as part of deployment. Submission IDs and results are saved.
-3. Wait for copying to finish in Brightspace. You can close the browser. Submitted means accepted, not finished; the app does not poll copy completion or activate after a timer.
-4. Return through My deployment jobs. Check every copy, resolve failures/uncertain outcomes, and confirm Activate replicas. All mapped replicas are activated, including those originally inactive, with read-back verification.
+3. Accepted replicas are automatically reactivated and read back. Copy-log monitoring runs separately; Job History retains submission, activation, and monitoring results. Activation does not prove copying finished.
 
 Limit: 10,000 rows / 5 MB. Each source is split into batches of at most 100 replicas per deployment request. Duplicate mappings are processed once. Conflicting sources for a replica, self-deployment and source/replica overlap block the preview. If preparation fails, already-deactivated replicas remain inactive with saved results. Inspect them before restoring service; there is no automatic rollback. Activation retry checks current state and does not redeploy.
 
-Finish source date changes before replication. Saved unresolved deployments reserve involved courses against overlapping bulk jobs in this application. Live Source Course deployment/activation acceptance is still pending; no live replication was executed during the file reorganization.
+Finish source date changes before replication. Saved deployment history does not reserve courses or block new jobs. Live Source Course deployment/activation acceptance is still pending; no live replication was executed during the file reorganization.
 
 ## Project layout
 
@@ -86,3 +85,13 @@ Keep LTI_KEY, OAuth credentials and Brightspace settings unchanged. This fresh d
 Deployment execution continues after isolated validation, preparation, rejection, partial-success, or uncertain outcomes. Uncertain POSTs are never retried. Authentication failure (401), exhausted rate-limit retries (429), or three consecutive service/permission failures stop further batches. Explicit 429 responses allow two retries respecting Retry-After up to 60 seconds; longer waits stop rather than retry early. Persistence and lease failures always interrupt processing. The results screen and CSV distinguish submitted, failed, uncertain and not-attempted replicas. Activation excludes failed/not-attempted replicas; any left inactive during preparation require inspection. Submission still requires manual copy-completion confirmation in Brightspace.
 
 Deployment errors retain HTTP status, selected sanitized Brightspace error messages, and request/correlation identifiers when returned. These appear in replica results and dedicated CSV columns. Raw responses, request configuration, authorization headers, and cookies are not stored. Existing jobs retain only previously captured diagnostics.
+
+## Automatic reactivation and copy-log monitoring
+
+The deployment workflow is Upload Mappings → Review & Deploy → Re-activate. Each accepted replica is automatically activated after submission, while copying may still be queued or running. Rejected or uncertain submissions are not automatically activated. History never reserves courses or blocks a fresh deployment; repeating deployment may reset a replica whose previous copy is still running.
+
+A separate server timer checks `GET /d2l/api/le/{version}/ccb/logs` (LE 1.91+, requiring Service User access to copy-course logs). It polls up to 10 replica lookups per tick, rotates through jobs, persists its cursor and results in MongoDB, and stops automatic checks after 24 hours. The process must remain running for checks to occur. Monitoring errors do not stop deployments. New deployments have a saved submission timestamp; old jobs are not automatically enrolled in monitoring.
+
+Logs are filtered by source, target and submission time, with a newer saved submission providing an upper bound. These filters are not proof of identity: concurrent external/UI copies can still overlap. Multiple copy-job IDs or paginated results are marked ambiguous. The API supplies message text, not a deployment-correlated structured completion result, so the app displays sanitized logs without claiming success based on keywords. Missing logs remain unconfirmed. The deployment ID must not be treated as a copy-job ID. Validate this endpoint against actual Source Course deployment logs before relying on it operationally.
+
+This workflow supersedes the manual completion/activation and historical reservation behavior described earlier in this document.

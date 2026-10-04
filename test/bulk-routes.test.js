@@ -40,7 +40,7 @@ test('deployment form requires reset confirmation and rejects cross-workflow tic
  const dates=setup();const wrong=response();await dates.routes.preview({body:{ticket:pick(form,'preview')}},wrong);assert.equal(wrong.code,403);
 });
 
-test('manual activation requires signed completion confirmation and queues only once',async()=>{
+test('reactivation retry requires a signed session and queues only once',async()=>{
  const {createDeploymentView}=require('../src/replication/view');
  const job={_id:'j',kind:'sourceDeployment',status:'submitted',rows:[],tasks:[{sourceId:'10',targets:[{orgUnitId:'20',deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};
  let activations=0;const jobs={create:async()=>job,get:async()=>job,activate:async()=>{if(job.status!=='submitted')return false;activations++;job.status='queued';job.operation='activate';return true;}};
@@ -48,7 +48,6 @@ test('manual activation requires signed completion confirmation and queues only 
  const pick=(html,action)=>html.match(new RegExp(`<form[^>]*action="/deploy/${action}"[^>]*>([\\s\\S]*?)</form>`))?.[1].match(/name="ticket" value="([^"]+)"/)[1];
  const res=response();await routes.preview({body:{ticket:pick(routes.form(res),'preview'),csv:'x'}},res);
  const body={jobId:'j',ticket:pick(res.body,'activate')};assert.ok(body.ticket);
- const no=response();await routes.activate({body},no);assert.equal(no.code,400);assert.equal(activations,0);
  const wrong=response('other');await routes.activate({body:{...body,confirmCompleted:'yes'}},wrong);assert.equal(wrong.code,403);
  const yes=response();await routes.activate({body:{...body,confirmCompleted:'yes'}},yes);assert.equal(activations,1);assert.doesNotMatch(yes.body,/action="\/deploy\/cancel"/);
  const repeat=response();await routes.activate({body:{...body,confirmCompleted:'yes'}},repeat);assert.equal(repeat.code,409);

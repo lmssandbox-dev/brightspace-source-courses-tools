@@ -40,7 +40,7 @@ function workflow({badTarget=false,result='submitted',enabled=true}={}){
 }
 test('deployment planner is read-only; valid mappings group replicas by source',async()=>{
  const s=workflow();await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'ready');assert.equal(s.job.tasks.length,2);assert.equal(s.job.tasks[0].targets.length,2);assert.ok(s.calls.every(c=>typeof c==='string'));
- await s.engine.execute(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'submitted');assert.equal(s.calls.filter(c=>typeof c==='object').length,2);
+ await s.engine.execute(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');assert.equal(s.calls.filter(c=>typeof c==='object').length,2);
 });
 test('invalid targets block preview and revalidation or missing scope prevent all POSTs',async()=>{
  const s=workflow({badTarget:true});await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'failed');
@@ -77,10 +77,10 @@ test('incomplete settings and storage failure prevent course PUT; changed settin
  }
  assert.throws(()=>courseStatusPayload({...course(),ShowAddressBook:undefined},false,'1.54'));
 });
-test('prepare verifies only the current batch inactive before deploy and never activates automatically',async()=>{
+test('prepare verifies only the current batch inactive before deploy and automatically reactivates accepted replicas',async()=>{
  const s=workflow();await s.engine.plan(s.job,async()=>{});assert.equal(s.calls.includes('deactivate'),false);
  await s.engine.execute(s.job,async()=>{},async()=>{});
- assert.equal(s.calls.filter(c=>c==='deactivate').length,3);assert.equal(s.calls.includes('activate'),false);
+ assert.equal(s.calls.filter(c=>c==='deactivate').length,3);assert.equal(s.calls.includes('activate'),true);
  const firstPost=s.calls.findIndex(c=>typeof c==='object');assert.equal(s.calls.slice(0,firstPost).filter(c=>c==='deactivate').length,2);
  const submissions=structuredClone(s.job.tasks.map(t=>t.result));
  await s.engine.activate(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');assert.equal(s.calls.filter(c=>c==='activate').length,3);assert.deepEqual(s.job.tasks.map(t=>t.result),submissions);
@@ -133,14 +133,14 @@ function batchScenario(outcomes,{preparationError,validationError}={}){
  const events=[],job={tasks:outcomes.map((_,i)=>({sourceId:String(i+1),targets:[{orgUnitId:String(i+101)}]}))};
  const engine=createDeploymentJobs({enabled:()=>true,client:{
  source:async id=>{if(validationError&&id==='1')throw validationError;},target:async()=>({isActive:false}),
- setActive:async(id,desired,before)=>{await before();events.push(`prepare:${id}`);if(preparationError&&id==='101')return {status:'failed',error:preparationError};return {status:'updated',verifiedActive:desired};},
+ setActive:async(id,desired,before)=>{await before();events.push(`${desired?'activate':'prepare'}:${id}`);if(preparationError&&id==='101')return {status:'failed',error:preparationError};return {status:'updated',verifiedActive:desired};},
  deploy:async(id,targets,before)=>{await before();events.push(`deploy:${id}`);const outcome=outcomes[Number(id)-1];return {...outcome,targets:targets.map(orgUnitId=>({orgUnitId,status:outcome.status}))};}
  }});
  return {job,events,run:()=>engine.execute(job,async()=>{},async()=>{}),engine};
 }
 test('isolated rejection and uncertain outcome continue; batches prepare just in time',async()=>{
  const s=batchScenario([{status:'failed',error:{httpStatus:400}},{status:'uncertain',error:{httpStatus:null}},{status:'submitted'}]);await s.run();
- assert.deepEqual(s.events,['prepare:101','deploy:1','prepare:102','deploy:2','prepare:103','deploy:3']);
+ assert.deepEqual(s.events,['prepare:101','deploy:1','prepare:102','deploy:2','prepare:103','deploy:3','activate:103']);
  assert.equal(s.job.status,'outcomeUnknown');
 });
 test('isolated validation and preparation failures leave other batches available',async()=>{
@@ -174,7 +174,7 @@ test('long Retry-After never retries early and storage failure during retry stop
 test('activation excludes failed and not-attempted replicas',async()=>{
  const s=batchScenario([{status:'failed',error:{httpStatus:400}},{status:'submitted'}]);await s.run();s.events.length=0;
  await s.engine.activate(s.job,async()=>{},async()=>{});
- assert.deepEqual(s.events,['prepare:102']);assert.equal(s.job.tasks[0].targets[0].activation,undefined);
+ assert.deepEqual(s.events,[]);assert.equal(s.job.tasks[0].targets[0].activation,undefined);
 });
 test('results and CSV keep separate outcomes for batches sharing a source',()=>{
  const {createDeploymentView}=require('../src/replication/view');
@@ -190,7 +190,7 @@ test('3,000 sources and 5,000 replicas continue after the first batch is rejecte
  const mappings=Array.from({length:5000},(_,i)=>`${i%3000+1},${i+10001}`);
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n'+mappings.join('\n')),tasks:[]};
  await jobs.plan(job,async()=>{});await jobs.execute(job,async()=>{},async()=>{});
- assert.equal(submissions,3000);assert.equal(prepared,5000);assert.equal(job.status,'submittedWithErrors');
+ assert.equal(submissions,3000);assert.equal(prepared,9998);assert.equal(job.status,'submittedWithErrors');
  assert.equal(job.tasks.flatMap(t=>t.result.targets).filter(r=>r.status==='submitted').length,4998);
 });
 

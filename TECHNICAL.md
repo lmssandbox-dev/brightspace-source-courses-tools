@@ -24,9 +24,9 @@ A deployment ID confirms initiation, not copy completion. Unexpected or lost res
 - store.js: existing bulk_date_jobs, bulk_date_chunks and bulk_date_locks collections, ownership, confirmations and leases.
 - routes.js: shared signed workflow actions, date bulk forms and delegation to the replication view.
 
-One worker lease coordinates both workflows. Source/replica reservations protect unresolved deployment batches against overlapping bulk writes. The namespace and endpoints remain unchanged. The database is now configured as `brightspace_source_courses_tools`, starting empty without migrating old records.
+One worker lease coordinates both workflows. Historical Source/replica reservations are no longer enforced; the worker lease still serializes app execution. The namespace and endpoints remain unchanged. The database is now configured as `brightspace_source_courses_tools`, starting empty without migrating old records.
 
-Forms bind action, workflow, job, expiry and LTI session. Ownership is checked before access. Atomic confirmations prevent duplicate queueing. Saves are fenced by worker and running state. Interrupted work is retained for inspection. Activation retries preserve deployment results and reconcile current active states without redeploying. The activation action removes preview expiry and records manual completion confirmation.
+Forms bind action, workflow, job, expiry and LTI session. Ownership is checked before access. Atomic confirmations prevent duplicate queueing. Saves are fenced by worker and running state. Interrupted work is retained for inspection. Activation retries preserve deployment results and reconcile current active states without redeploying. The activation action removes preview expiry and records the reactivation request.
 
 HTML is escaped and CSV cells neutralize spreadsheet formula injection. API credentials are not returned in diagnostic output. Brightspace LTI installation governs user access; API permissions are those of the Service User.
 
@@ -43,3 +43,5 @@ Esbuild bundles the browser module and styles into public/assets/app.js and app.
 ## Time zones and navigation
 
 The sidebar switches between date management, deployment and history while preserving entered form values. `src/dates/timeZone.js` validates named time zones and converts local inputs to UTC, rejecting nonexistent and ambiguous local times. Date jobs retain the selected zone for reviews and results; reports keep UTC date columns and include the selected zone. Existing jobs without a saved zone default to America/Sao_Paulo.
+
+Deployment execution now reactivates accepted replicas automatically per batch. `src/replication/monitor.js` polls copy logs independently with bounded reads, durable scheduling and a 24-hour window. It does not infer completion from text logs or block new deployments. See README for matching and API-version limitations.

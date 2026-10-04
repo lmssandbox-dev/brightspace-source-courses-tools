@@ -4,7 +4,7 @@ function targetStatus(task,target){
  if(['submitted','failed','uncertain'].includes(status))return status;
  return 'notAttempted';
 }
-function canActivateTarget(task,target){return Boolean(target.deactivation)&&['submitted','uncertain'].includes(targetStatus(task,target));}
+function canActivateTarget(task,target){return Boolean(target.deactivation)&&targetStatus(task,target)==='submitted';}
 function reservesCourses(task){
  const result=task.result,status=result?.error?.httpStatus;
  // Explicit client-error rejection means no copy was initiated. Preparation
