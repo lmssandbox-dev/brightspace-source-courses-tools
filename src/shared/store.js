@@ -1,5 +1,6 @@
 'use strict';
 const { MongoClient } = require('mongodb');
+const {reservesCourses}=require('../replication/outcomes');
 const {encodeDateJob,decodeDateJob,DIRTY,CHUNK_SIZE}=require('./dateChunks');
 const { interruptJob } = require('./jobs');
 const { databaseConfig } = require('./database');
@@ -20,7 +21,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
     async blocked(ids,excludeId) {
       const {jobs}=await collections();
       const pending=await jobs.find({namespace,_id:{$ne:excludeId},kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','activationWithErrors','failed','queued','running']}}).toArray();
-      return pending.some(job=>job.tasks.some(t=>(t.targets.some(r=>r.deactivation) || (t.result?.writeAttempted && !['failed','skipped'].includes(t.result.status))) && [t.sourceId,...t.targets.map(r=>r.orgUnitId)].some(id=>ids.includes(id))));
+      return pending.some(job=>job.tasks.some(t=>reservesCourses(t) && [t.sourceId,...t.targets.map(r=>r.orgUnitId)].some(id=>ids.includes(id))));
     },
     async review(_id,owner,time) {
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted']}},{$set:{status:'reviewed',reviewedAt:time,message:'User acknowledged checking deployment outcomes in Brightspace. Submission results are retained; this is not automatic completion verification.'}})).modifiedCount===1;

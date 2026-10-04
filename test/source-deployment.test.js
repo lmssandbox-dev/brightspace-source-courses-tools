@@ -216,3 +216,13 @@ test('diagnostics omit HTML and transport internals, bound messages and tolerate
  const plain=deploymentDiagnostics({status:403,data:'Denied Bearer abc123 user@example.com access_token=secret'});
  assert.doesNotMatch(plain.responseDetails,/abc123|user@example.com|=secret/);
 });
+
+test('explicitly rejected deployments release reservations while uncertain and accepted copies remain protected',()=>{
+ const {reservesCourses}=require('../src/replication/outcomes');
+ const task={sourceId:'1',targets:[{orgUnitId:'101',deactivation:{status:'updated'}}],result:{status:'failed',writeAttempted:true,error:{httpStatus:403},targets:[{orgUnitId:'101',status:'failed'}]}};
+ assert.equal(reservesCourses(task),false);
+ for(const status of ['submitted','uncertain','running'])assert.equal(reservesCourses({...task,result:{...task.result,status}}),true);
+ assert.equal(reservesCourses({...task,result:{...task.result,error:{httpStatus:503}}}),true);
+ assert.equal(reservesCourses({...task,result:{...task.result,targets:[{orgUnitId:'101',status:'submitted'}]}}),true);
+ assert.equal(reservesCourses({...task,result:undefined}),true);
+});
