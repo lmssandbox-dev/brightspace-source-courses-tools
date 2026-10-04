@@ -104,3 +104,12 @@ test('queued and running date screens omit details and retain automatic refresh'
  }
  }
  });
+
+test('deployment resolution requires explicit review and is unavailable while processing',()=>{
+ const view=createDeploymentView({enabled:()=>true});
+ for(const status of ['failed','submittedWithErrors','interrupted','submitted','outcomeUnknown','activationWithErrors','running','queued','activated','reviewed']){
+ const html=view.render({}, {_id:'j',status,rows:[],tasks:[]},helpers);
+ if(['running','queued','activated','reviewed'].includes(status))assert.doesNotMatch(html,/action="\/deploy\/review"/);
+ else {assert.match(html,/name="confirmReviewed" value="yes" required/);assert.match(html,/Mark reviewed and release courses/);}
+ }
+});
