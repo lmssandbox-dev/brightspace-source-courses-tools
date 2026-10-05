@@ -25,7 +25,7 @@ test('workspace renders the selected sidebar panel and omits development tools',
 test('submitted replication exposes monitoring and reactivation without claiming completion',()=>{
  const job={_id:'j',status:'submitted',rows:[],tasks:[{sourceId:'10',sourceName:'<script>bad</script>',targets:[{orgUnitId:'20',name:'Replica',isActive:true,deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};
  const html=createDeploymentView({enabled:()=>true}).render({},job,helpers);
- assert.match(html,/Copy monitoring/);assert.match(html,/Retry reactivation/);assert.match(html,/not verified completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.match(html,/&lt;script&gt;/);
+ assert.match(html,/Copy monitoring/);assert.match(html,/Retry reactivation/);assert.match(html,/not verified completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.doesNotMatch(html,/Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs/);
 });
 test('date review retains course-level blocking errors and does not offer Apply on failure',()=>{
  const job={_id:'j',status:'failed',dates:{},rows:[],courses:[{orgUnitId:'20',name:'Course',status:'invalid',message:'Discovery incomplete'}],tasks:[]};
@@ -117,4 +117,15 @@ test('on-demand copy checks expose progress and snapshot timestamps without old 
  const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,helpers),csv=view.report(job);
  assert.match(html,/10 of 5000 replicas checked/);assert.match(html,/Pending current check/);assert.match(html,/View copy-check progress/);assert.doesNotMatch(html,/24 hours|window ended/);
  assert.match(csv,/Pending current check/);assert.match(csv,/1970-01-01T00:00:01.000Z/);assert.match(csv,/Previous log/);
+});
+
+test('large deployment pages stay compact and keep details in reports',()=>{
+ const view=createDeploymentView({enabled:()=>true});
+ const tasks=[{sourceId:'1',targets:Array.from({length:5000},(_,i)=>({orgUnitId:String(i+10),name:'Replica '+i,activation:{status:'updated'}})),result:{status:'submitted'}}];
+ for(const status of ['planning','ready','running','activated','failed','cancelled']){
+ const html=view.render({}, {_id:'j',status,expiresAt:Date.now()+100000,rows:[],tasks},helpers);
+ assert.ok(html.length<12000);
+ assert.doesNotMatch(html,/<table|Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs|section-heading/);
+ assert.match(html,/Conclusion/);
+ }
 });
