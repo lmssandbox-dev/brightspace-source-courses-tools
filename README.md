@@ -88,7 +88,7 @@ Deployment errors retain HTTP status, selected sanitized Brightspace error messa
 
 ## Automatic reactivation and copy-log monitoring
 
-The deployment workflow is Upload Mappings → Review & Deploy → Conclusion. Each accepted replica is automatically activated after submission, while copying may still be queued or running. Rejected or uncertain submissions are not automatically activated. History never reserves courses or blocks a fresh deployment; repeating deployment may reset a replica whose previous copy is still running.
+The deployment workflow is Upload Mappings → Review & Confirm → Deploy and Check. Each accepted replica is automatically activated after submission, while copying may still be queued or running. Rejected or uncertain submissions are not automatically activated. History never reserves courses or blocks a fresh deployment; repeating deployment may reset a replica whose previous copy is still running.
 
 Copy-log checks are on demand. In Job History, click **Check copy results now** to queue one background pass. The signed request is session- and owner-checked; repeated clicks while queued/running return progress without duplicating the run. Checks use `GET /d2l/api/le/{version}/ccb/logs` (LE 1.91+ and Service User permission to view copy logs).
 
