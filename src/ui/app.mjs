@@ -43,15 +43,3 @@ for(const link of document.querySelectorAll('[data-section]')){
  });
 }
 
-// Carry the explicitly requested dialog through progress refreshes until the sweep finishes.
-const copyDialog=document.querySelector('[data-copy-check-dialog]');
-if(copyDialog){
- const key='copy-check-dialog:'+copyDialog.dataset.job;
- let pending=false;
- try{if(copyDialog.dataset.open==='yes')sessionStorage.setItem(key,copyDialog.dataset.run);pending=sessionStorage.getItem(key)===copyDialog.dataset.run;}catch{}
- if(copyDialog.dataset.open==='yes'||pending){
-  copyDialog.showModal();
-  if(copyDialog.dataset.status==='completed'){try{sessionStorage.removeItem(key);}catch{}}
- }
- copyDialog.addEventListener('close',()=>{try{sessionStorage.removeItem(key);}catch{}});
-}
