@@ -39,3 +39,5 @@ One Render service and the `brightspace_source_courses_tools` MongoDB database a
 - Localized application text, dynamic summaries, validation messages, and report headings; preserved CSV input schemas and original report data/logs.
 - Verified Portuguese/Spanish switching, retained date input values, and language persistence across workflow navigation in an isolated local preview.
 - All 206 automated tests pass. Live Render/LTI verification remains a deployment check.
+
+Copy-check optimization: new manual checks query only submitted or uncertain replicas without saved successful-copy confirmation. Confirmed results and CSV evidence are retained per job. Each run snapshots its pending replica IDs and checks batches of 10, keeping progress stable as results arrive. Already queued legacy checks finish their original scan; new deployment jobs have independent results. When nothing remains to check, no API work is queued.

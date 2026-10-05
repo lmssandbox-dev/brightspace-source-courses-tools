@@ -9,7 +9,9 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
   if(busy)return;busy=true;
   try{
    const job=await store.claimCopyMonitor();if(!job)return;
-   const targets=job.tasks.flatMap(task=>task.targets.filter(target=>['submitted','uncertain'].includes(targetStatus(task,target))).map(target=>({task,target})));
+   // Freeze membership for each run so successes in earlier batches cannot shift the cursor.
+   const pendingIds=job.copyCheck?.targetIds?new Set(job.copyCheck.targetIds):null;
+   const targets=job.tasks.flatMap(task=>task.targets.filter(target=>['submitted','uncertain'].includes(targetStatus(task,target))&&(!pendingIds||pendingIds.has(String(target.orgUnitId)))).map(target=>({task,target})));
    const cursor=job.copyMonitorCursor||0,updates={};
    for(const {task,target} of targets.slice(cursor,cursor+10)){
     const result={checkedAt:now(),status:'Awaiting copy logs',details:''};

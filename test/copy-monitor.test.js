@@ -40,3 +40,17 @@ test('tenant full-copy success requires matching source and destination and an u
  }
  const s=setup({Objects:[{CopyCourseJobId:662,Message:'Todos os dados copiados com êxito do orgUnitId: 9532 para o orgUnitId: 8062'}],Next:'more'});await s.monitor.tick();assert.equal(s.saved.updates['8062'].status,'Unable to match copy logs');
 });
+
+test('incremental checks preserve confirmed results and keep batch membership stable',async()=>{
+ const s=setup({Objects:[]});
+ s.job.tasks[0].targets=Array.from({length:23},(_,i)=>({orgUnitId:String(i+1)}));
+ s.job.copyMonitor={'1':{status:'Copied successfully',details:'saved evidence'}};
+ s.job.copyCheck={targetIds:Array.from({length:22},(_,i)=>String(i+2))};
+ await s.monitor.tick();assert.equal(s.saved.cursor,10);assert.equal(s.saved.updates['1'],undefined);
+ for(const id of Object.keys(s.saved.updates))s.job.copyMonitor[id]={status:'Copied successfully'};
+ s.job.copyMonitorCursor=s.saved.cursor;await s.monitor.tick();
+ assert.deepEqual(Object.keys(s.saved.updates),Array.from({length:10},(_,i)=>String(i+12)));
+ s.job.copyMonitorCursor=s.saved.cursor;await s.monitor.tick();
+ assert.deepEqual(Object.keys(s.saved.updates),['22','23']);assert.equal(s.saved.cursor,0);
+ assert.equal(s.job.copyMonitor['1'].details,'saved evidence');
+});

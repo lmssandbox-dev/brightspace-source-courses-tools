@@ -29,9 +29,10 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const {jobs}=await collections();const job=await jobs.findOne({_id,owner,namespace,kind:'sourceDeployment'});
       if(!job||['queued','running','planning','validating'].includes(job.status))return false;
       if(['queued','running'].includes(job.copyCheck?.status))return true;
-      const total=job.tasks.flatMap(t=>t.targets.filter(r=>['submitted','uncertain'].includes(targetStatus(t,r)))).length;
-      if(!total)return false;
-      const result=await jobs.updateOne({_id,owner,namespace,status:job.status,'copyCheck.status':{$nin:['queued','running']}},{$set:{copyCheck:{runId:randomUUID(),status:'queued',requestedAt:now(),processed:0,total},copyMonitorCursor:0},$unset:{nextCopyCheckAt:''}});
+      const targetIds=job.tasks.flatMap(t=>t.targets.filter(r=>['submitted','uncertain'].includes(targetStatus(t,r))&&job.copyMonitor?.[r.orgUnitId]?.status!=='Copied successfully').map(r=>String(r.orgUnitId)));
+      const total=targetIds.length;
+      if(!total)return true;
+      const result=await jobs.updateOne({_id,owner,namespace,status:job.status,'copyCheck.status':{$nin:['queued','running']}},{$set:{copyCheck:{runId:randomUUID(),status:'queued',requestedAt:now(),processed:0,total,targetIds},copyMonitorCursor:0},$unset:{nextCopyCheckAt:''}});
       return result.modifiedCount===1||Boolean(await jobs.findOne({_id,owner,namespace,'copyCheck.status':{$in:['queued','running']}}));
     },
     async claimCopyMonitor(){

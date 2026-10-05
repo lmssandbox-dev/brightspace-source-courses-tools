@@ -41,7 +41,7 @@
   "Source Deployment": "Source Deployment",
   "Replicas are made inactive before deployment. Brightspace resets their content and starts a complete copy from the mapped source course.": "Replicas are made inactive before deployment. Brightspace resets their content and starts a complete copy from the mapped source course.",
   "Course Activation and Copy Completion": "Course Activation and Copy Completion",
-  "Replicas accepted for deployment are reactivated automatically. Use “Check copy results now” in Job History to review their copy logs.": "Replicas accepted for deployment are reactivated automatically. Use “Check copy results now” in Job History to review their copy logs.",
+  "Replicas accepted for deployment are reactivated automatically. To verify copy completion, open the job from Job History and select “Check copy results now”.": "Replicas accepted for deployment are reactivated automatically. To verify copy completion, open the job from Job History and select “Check copy results now”.",
   "Source Courses": "Source Courses",
   "Replicas": "Replicas",
   "Copied Successfully": "Copied Successfully",
