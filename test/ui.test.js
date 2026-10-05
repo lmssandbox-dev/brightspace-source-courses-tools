@@ -126,6 +126,6 @@ test('large deployment pages stay compact and keep details in reports',()=>{
  const html=view.render({}, {_id:'j',status,expiresAt:Date.now()+100000,rows:[],tasks},helpers);
  assert.ok(html.length<12000);
  assert.doesNotMatch(html,/<table|Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs|section-heading/);
- assert.match(html,/Deploy and Check/);
+ assert.match(html,/Deploy &amp; Check Copies/);
  }
 });
