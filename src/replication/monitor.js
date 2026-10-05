@@ -25,6 +25,12 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
       const ids=new Set(logs.map(log=>String(log.CopyCourseJobId)));
       if(logs.some(log=>log.CopyCourseJobId==null||typeof log.Message!=='string'))throw Error('shape');
       result.status=response.Next||ids.size>1?'Unable to match copy logs':logs.length?'Copy logs available — completion unconfirmed':'Awaiting copy logs';
+      // Recognize the full-copy completion message observed in the tenant report,
+      // never a component-level success or a message for a different mapping.
+      if(!response.Next&&ids.size===1&&logs.some(log=>{
+       const match=log.Message.trim().match(/^Todos os dados copiados com êxito do orgUnitId:\s*(\d+) para o orgUnitId:\s*(\d+)\.?$/u);
+       return match&&match[1]===String(task.sourceId)&&match[2]===String(target.orgUnitId);
+      }))result.status='Copied successfully';
       result.details=logs.slice(0,10).map(log=>`Copy job ${log.CopyCourseJobId}: ${deploymentDiagnostics({data:{Message:log.Message}}).responseDetails||'Message unavailable'}`).join(' | ').slice(0,4000);
       if(response.Next||ids.size>1)result.details='Multiple copy jobs or additional log pages found. The deployment cannot be matched conclusively. '+result.details;
       if(end&&!logs.length){result.status='Unable to confirm';result.details='A newer deployment was submitted for this replica; no matching earlier logs were found.';}

@@ -25,7 +25,7 @@ test('workspace renders the selected sidebar panel and omits development tools',
 test('submitted replication exposes monitoring and reactivation without claiming completion',()=>{
  const job={_id:'j',status:'submitted',rows:[],tasks:[{sourceId:'10',sourceName:'<script>bad</script>',targets:[{orgUnitId:'20',name:'Replica',isActive:true,deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};
  const html=createDeploymentView({enabled:()=>true}).render({},job,helpers);
- assert.match(html,/Copy monitoring/);assert.match(html,/Retry reactivation/);assert.match(html,/not verified completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.doesNotMatch(html,/Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs/);
+ assert.match(html,/Copy monitoring/);assert.match(html,/Retry reactivation/);assert.match(html,/Reactivation does not confirm copy completion/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.doesNotMatch(html,/Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs/);
 });
 test('date review retains course-level blocking errors and does not offer Apply on failure',()=>{
  const job={_id:'j',status:'failed',dates:{},rows:[],courses:[{orgUnitId:'20',name:'Course',status:'invalid',message:'Discovery incomplete'}],tasks:[]};

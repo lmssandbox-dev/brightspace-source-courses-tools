@@ -30,3 +30,13 @@ test('monitor polling is bounded and sanitizes log messages',async()=>{
  assert.equal(Object.keys(s.saved.updates).length,10);assert.equal(s.saved.cursor,10);
  assert.doesNotMatch(JSON.stringify(s.saved),/private-token|user@example.com/);
 });
+
+test('tenant full-copy success requires matching source and destination and an unambiguous job',async()=>{
+ for(const [message,expected] of [
+ ['Todos os dados copiados com êxito do orgUnitId: 9532 para o orgUnitId: 8062','Copied successfully'],
+ ['Todos os dados copiados com êxito do orgUnitId: 9532 para o orgUnitId: 8063','Copy logs available — completion unconfirmed'],
+ ['Configurações de curso copiadas com sucesso','Copy logs available — completion unconfirmed']]){
+ const s=setup({Objects:[{CopyCourseJobId:662,Message:message}]});await s.monitor.tick();assert.equal(s.saved.updates['8062'].status,expected);
+ }
+ const s=setup({Objects:[{CopyCourseJobId:662,Message:'Todos os dados copiados com êxito do orgUnitId: 9532 para o orgUnitId: 8062'}],Next:'more'});await s.monitor.tick();assert.equal(s.saved.updates['8062'].status,'Unable to match copy logs');
+});

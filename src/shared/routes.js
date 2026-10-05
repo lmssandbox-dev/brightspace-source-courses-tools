@@ -47,7 +47,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         return res.send(render(res,job));
       }
       const job=await jobs.get(req.body.jobId,owner(res));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
-      if(action==='checkCopies'){if(kind!=='sourceDeployment'||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
+      if(action==='checkCopies'){res.locals.showCopyCheckDialog=true;if(kind!=='sourceDeployment'||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
       if(action==='apply') {
         if(kind==='sourceDeployment'&&req.body.confirmReset!=='yes')return res.status(400).send('Confirm the reset of the listed replicas before deployment.');
         if(!(view?view.canApply():job.tasks.every(t=>writeEnabled(t.activity.type))))return res.status(403).send('A required write scope is unavailable.');
