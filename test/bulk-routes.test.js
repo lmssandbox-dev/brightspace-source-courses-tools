@@ -33,7 +33,7 @@ test('deployment form requires reset confirmation and rejects cross-workflow tic
  const routes=createBulkDates({jobs,deploymentId:'d',secret:'secret',kind:'sourceDeployment',view:createDeploymentView({enabled:()=>true}),now:()=>1000});
  const res=response(),form=routes.form(res);
  const pick=(html,action)=>html.match(new RegExp(`<form[^>]*action="/deploy/${action}"[^>]*>([\\s\\S]*?)</form>`))?.[1].match(/name="ticket" value="([^"]+)"/)[1];
- await routes.preview({body:{ticket:pick(form,'preview'),csv:'SourceOrgUnitId,ReplicaOrgUnitId\n10,20'}},res);
+ await routes.preview({body:{ticket:pick(form,'preview'),csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'}},res);
  assert.match(res.body,/reset all 1 replicas/);assert.match(res.body,/copying may still be queued or running/);
  const body={jobId:'deploy-job',ticket:pick(res.body,'apply')};const noConfirm=response();await routes.apply({body},noConfirm);assert.equal(noConfirm.code,400);assert.equal(confirms,0);
  await routes.apply({body:{...body,confirmReset:'yes'}},response());assert.equal(confirms,1);

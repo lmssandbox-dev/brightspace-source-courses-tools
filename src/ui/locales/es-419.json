@@ -264,5 +264,9 @@
   "Stopped after a systemic API failure.": "Se detuvo tras un error general de la API.",
   "Outcome is uncertain; inspect the activity before retrying.": "El resultado es incierto; revisa la actividad antes de reintentar.",
   "Confirm review in Brightspace.": "Confirma la revisión en Brightspace.",
-  "Job cannot be reviewed in its current state.": "No se puede revisar la tarea en su estado actual."
+  "Job cannot be reviewed in its current state.": "No se puede revisar la tarea en su estado actual.",
+  "Provide an ID or code for each source and replica. If both are provided, they must identify the same course.": "Indica un ID o código para cada origen y réplica. Si proporcionas ambos, deben identificar el mismo curso.",
+  "Headers must be SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode.": "Los encabezados deben ser SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode.",
+  "Provide an ID or code for each source and replica; source and replica must differ.": "Indica un ID o código para cada origen y réplica; deben ser diferentes.",
+  "Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.": "No se pudo localizar el origen o la réplica. Verifica que los ID y códigos coincidan, que los códigos sean únicos y que exista permiso de acceso a la API."
 }

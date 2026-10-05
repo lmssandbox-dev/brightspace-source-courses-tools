@@ -165,7 +165,7 @@ const lpVersion = process.env.D2L_LP_VERSION || '1.53';
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
 const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
-const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled});
+const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,resolveCode:code=>sourceClient.resolveCode(code)});
 const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,
   courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient})});
 const bulkDates = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,writeEnabled});

@@ -14,7 +14,7 @@ Read-only discovery and the single-activity preview/apply form remain available 
 
 ## 2. Source Course replication
 
-Upload a second CSV with headers `SourceOrgUnitId,ReplicaOrgUnitId`. Both IDs are required on each row. Repeat the source ID for multiple replicas. Sources must be actual Source Course org units; replicas must already exist as Course Offerings. Replicas may initially be active or inactive.
+Upload a second CSV with all four headers `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`. Each source and replica requires an ID or code; if both are supplied they must match. Leave unused cells empty. The old two-column format is rejected. Repeat the source ID for multiple replicas. Sources must be actual Source Course org units; replicas must already exist as Course Offerings. Replicas may initially be active or inactive.
 
 1. Validate deployment mappings performs reads only and saves a plan.
 2. Confirm Prepare and deploy. Each batch is validated, deactivated and read back immediately before its deployment is submitted. Other batches remain untouched until their turn. Brightspace resets the target content as part of deployment. Submission IDs and results are saved.
@@ -127,3 +127,7 @@ The custom database-name validation is in `src/shared/database.js`. Publish the 
 Environment setup is documented in [ENVIRONMENT.md](ENVIRONMENT.md), with all 17 variables, their sources/defaults, key generation, LTI versus OAuth key URLs, database isolation, scopes, and installation troubleshooting. Use [.env.example](.env.example) as the placeholder-only server configuration template.
 
 API rate safeguards and actual-cost reporting are described in ENVIRONMENT.md under “API pacing and measured costs”. The shared durable gate covers server tenant API traffic. Use `node scripts/api-cost-report.js` after a representative live test; no live measurements have been collected by local tests. Full-scale production capacity and interrupted deployment recovery remain operational validation items.
+
+Pacing tuning: the shared gate now targets 30,000 measured credits/minute with a 10,000-credit reserve, adaptive reset-aware spacing and a conservative 250 ms fallback when costs are missing. At 10 credits, start-to-start spacing is 20 ms; response latency counts toward it. Requests remain serialized and ambiguous writes are never replayed. This reduces artificial delay, but does not guarantee job completion during outages or make interrupted deployments automatically resumable.
+
+CSV templates: the date template downloads as `date-manager-template.csv`. Deployment accepts `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`; provide an ID, code, or matching pair for each side. Codes must resolve to exactly one accessible org unit, followed by source/replica type validation. Aliases are deduplicated after resolution; conflicting targets and source/target overlap block deployment. All four headers are required, even when code cells are empty. Legacy two-column CSV files are rejected; download the new template. Code lookup requires orgstructure read access.

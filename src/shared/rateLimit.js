@@ -18,7 +18,7 @@ function createMongoGate({uri,key,now=Date.now}){
    try{await c.updateOne({_id:key},{$setOnInsert:{until:0,nextAt:0}},{upsert:true});}catch(error){if(error.code!==11000)throw error;}
    const result=await c.findOneAndUpdate({_id:key,until:{$lte:time},nextAt:{$lte:time}},{$set:{owner,until:time+60000}},{returnDocument:'after'});
    if(result.value)return 0;
-   const row=await c.findOne({_id:key});return Math.max(250,Math.max(row.until,row.nextAt)-time);
+   const row=await c.findOne({_id:key});return Math.max(1,Math.max(row.until,row.nextAt)-time);
   },
   async release(nextAt,sample){
    const c=await collection();const update={$set:{until:0},$max:{nextAt}};
@@ -36,7 +36,7 @@ function createMongoGate({uri,key,now=Date.now}){
   async close(){await client.close();}
  };
 }
-function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,intervalMs=250,maxRetries=5}){
+function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,intervalMs=20,maxRetries=5}){
  let queue=Promise.resolve();
  const origin=new URL(baseUrl).origin;
  async function run(config){
@@ -44,6 +44,7 @@ function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,inter
   if(url.origin!==origin||!url.pathname.startsWith('/d2l/api/'))throw Error('Rate-limited transport only accepts tenant API URLs');
   for(let attempt=0;;attempt++){
    let wait;while((wait=await gate.acquire())>0)await delay(Math.min(wait,30000));
+   const startedAt=now();
    let response,error;
    try{response=await http({...config,timeout:Math.min(config.timeout||15000,30000),maxRedirects:0});}catch(e){error=e;}
    const headers=(response||error?.response)?.headers||{};
@@ -51,10 +52,16 @@ function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,inter
    const status=error?.response?.status;
    const reset=Math.max(seconds(read('retry-after'),now())||0,seconds(read('x-rate-limit-reset'),now())||0);
    const remaining=Number(read('x-rate-limit-remaining')??NaN),cost=Number(read('x-request-cost')??NaN);
-   // Keep 1,000 credits in reserve; pace expensive routes proportionally.
-   const pacing=Math.max(intervalMs,Number.isFinite(cost)&&cost>0?cost*25:intervalMs);
-   const pause=status===429?Math.max(reset,60000):Number.isFinite(remaining)&&remaining<Math.max(1000,Number.isFinite(cost)?cost:10)?Math.max(reset,60000):0;
-   await gate.release(now()+Math.max(pacing,pause?pause+1000:0),{route:String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/\/\d+(?=\/|$)/g,'/:id'),cost:Number.isFinite(cost)&&cost>=0?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,status:status||response?.status});
+   // Target at most 30,000 credits/minute; reserve 10,000 server credits.
+   // Space request starts, so network time already counts toward pacing.
+   const knownCost=Number.isFinite(cost)&&cost>0;
+   const reserve=10000;
+   const budgetSpacing=knownCost?Math.ceil(cost*60000/30000):250;
+   const adaptiveSpacing=knownCost&&Number.isFinite(remaining)&&remaining>reserve&&reset>0
+    ?Math.ceil(cost*reset/(remaining-reserve)):0;
+   const pacing=Math.max(intervalMs,budgetSpacing,adaptiveSpacing);
+   const pause=status===429?Math.max(reset,60000):Number.isFinite(remaining)&&remaining<=Math.max(reserve,knownCost?cost:10)?Math.max(reset,60000):0;
+   await gate.release(Math.max(startedAt+pacing,now()+(pause?pause+1000:0)),{route:String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/\/\d+(?=\/|$)/g,'/:id'),cost:Number.isFinite(cost)&&cost>=0?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,status:status||response?.status});
    if(!error)return response;
    // Only explicit rejection is replayed. Timeouts and ambiguous writes propagate.
    if(status!==429||attempt>=maxRetries)throw error;

@@ -4,10 +4,10 @@ const {createSourceDeploymentClient}=require('../src/replication/client');
 const {createDeploymentJobs,parseDeploymentCsv}=require('../src/replication/jobs');
 function client(options={}){const calls=[];return {calls,api:createSourceDeploymentClient({baseUrl:'https://tenant.example',lpVersion:options.version||'1.53',oauth:{getAccessToken:async()=>{if(options.authFail)throw Error('SECRET');return 'SECRET';}},api:{read:async url=>{calls.push({url});if(url.includes('reofferedCourses'))return {ReofferedCourses:[]};return {Identifier:url.split('/').at(-1),Name:'Course',Code:'C',IsActive:options.active??false};}},http:async config=>{calls.push(config);if(options.error)throw options.error;return options.response||{status:200,data:123};}})};}
 test('deployment CSV groups repeated sources, preserves IDs and rejects conflicting replica mappings',()=>{
- const rows=parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n10,20\n10,21\n10,20\n11,20\n30,30\n,\n40,50\n50,60');
+ const rows=parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,\n10,,21,\n10,,20,\n11,,20,\n30,,30,\n,,,\n40,,50,\n50,,60,');
  assert.deepEqual(rows.map(r=>r.status),['invalid','pending','duplicate','invalid','invalid','ignored','invalid','pending']);
  assert.equal(rows[1].sourceId,'10');assert.equal(rows[1].targetId,'21');
- for(const text of ['id,target\n1,2','SourceOrgUnitId,ReplicaOrgUnitId\n','SourceOrgUnitId,ReplicaOrgUnitId\n"bad','x'.repeat(16385)])assert.throws(()=>parseDeploymentCsv(text));
+ for(const text of ['id,target\n1,2','SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n','SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n"bad','x'.repeat(16385)])assert.throws(()=>parseDeploymentCsv(text));
 });
 test('source-specific validation, inactive targets and API version requirements',async()=>{
  const s=client();await s.api.source('10');assert.match(s.calls[0].url,/sourceCourses\/10\/reofferedCourses$/);await s.api.target('20');
@@ -35,7 +35,7 @@ test('lease/persistence failure prevents deployment POST',async()=>{
 });
 function workflow({badTarget=false,result='submitted',enabled=true}={}){
  const calls=[];const engine=createDeploymentJobs({enabled:()=>enabled,client:{source:async id=>{calls.push('source');return {orgUnitId:id,name:'Source'};},target:async id=>{calls.push('target');if(badTarget)throw Error();return {orgUnitId:id,name:'Replica',isActive:false};},setActive:async(id,active,before)=>{await before();calls.push(active?'activate':'deactivate');return {status:'updated',verifiedActive:active,writeAttempted:true};},deploy:async(source,targets,before)=>{await before();calls.push({source,targets});return {status:result,writeAttempted:true};}}});
- const job={kind:'sourceDeployment',rows:parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n10,20\n10,21\n11,22'),tasks:[]};
+ const job={kind:'sourceDeployment',rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,\n10,,21,\n11,,22,'),tasks:[]};
  return {engine,job,calls};
 }
 test('deployment planner is read-only; valid mappings group replicas by source',async()=>{
@@ -99,7 +99,7 @@ test('source validation succeeds when only optional name lookup is forbidden',as
  const calls=[];const c=createSourceDeploymentClient({baseUrl:'https://tenant.example',lpVersion:'1.53',api:{read:async url=>{calls.push(url);if(url.includes('reofferedCourses'))return {ReofferedCourses:[]};throw {status:403,message:'SECRET'};}}});
  const source=await c.source('9532');assert.equal(source.name,'Source Course 9532');assert.equal(source.orgUnitId,'9532');assert.match(source.warning,/HTTP 403/);assert.equal(calls.length,2);
  const engine=createDeploymentJobs({enabled:()=>true,client:{source:c.source,target:async orgUnitId=>({orgUnitId,name:'Replica',isActive:true})}});
- const job={rows:parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n9532,8062\n9532,8063'),tasks:[]};
+ const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n9532,,8062,\n9532,,8063,'),tasks:[]};
  await engine.plan(job,async()=>{});assert.equal(job.status,'ready');assert.equal(job.tasks[0].targets.length,2);assert.match(job.rows[0].message,/display name/);
 });
 test('source validation errors cannot be bypassed by optional metadata fallback',async()=>{
@@ -113,12 +113,12 @@ test('source validation errors cannot be bypassed by optional metadata fallback'
 test('replica validation reports the failing ID, version and status without raw errors',async()=>{
  const c=createSourceDeploymentClient({baseUrl:'https://tenant.example',lpVersion:'1.53',api:{read:async()=>{throw {status:404,message:'SECRET'};}}});
  const engine=createDeploymentJobs({enabled:()=>true,client:{source:async()=>({name:'Source'}),target:c.target}});
- const job={rows:parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n9532,8062'),tasks:[]};
+ const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n9532,,8062,'),tasks:[]};
  await engine.plan(job,async()=>{});assert.equal(job.status,'failed');assert.match(job.rows[0].message,/Replica.*8062.*LP 1.53, HTTP 404/);assert.doesNotMatch(job.rows[0].message,/SECRET/);
 });
 
 test('10,000 mappings are accepted and split into bounded deployment batches',async()=>{
- const csv='SourceOrgUnitId,ReplicaOrgUnitId\n'+Array.from({length:10000},(_,i)=>`1,${i+2}`).join('\n');
+ const csv='SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:10000},(_,i)=>`1,,${i+2},`).join('\n');
  const rows=parseDeploymentCsv(csv);assert.equal(rows.length,10000);
  assert.throws(()=>parseDeploymentCsv(csv+'\n1,10002'),/10,000/);
  assert.throws(()=>parseDeploymentCsv(' '.repeat(5*1024*1024+1)),/5 MB/);
@@ -187,8 +187,8 @@ test('results and CSV keep separate outcomes for batches sharing a source',()=>{
 test('3,000 sources and 5,000 replicas continue after the first batch is rejected',async()=>{
  let submissions=0,prepared=0;
  const jobs=createDeploymentJobs({enabled:()=>true,client:{source:async()=>({name:'Source'}),target:async orgUnitId=>({orgUnitId,name:'Replica',isActive:false}),setActive:async()=>{prepared++;return {status:'unchanged',verifiedActive:false};},deploy:async(source,targets)=>{const status=++submissions===1?'failed':'submitted';return {status,error:status==='failed'?{httpStatus:400}:undefined,targets:targets.map(orgUnitId=>({orgUnitId,status}))};}}});
- const mappings=Array.from({length:5000},(_,i)=>`${i%3000+1},${i+10001}`);
- const job={rows:parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n'+mappings.join('\n')),tasks:[]};
+ const mappings=Array.from({length:5000},(_,i)=>`${i%3000+1},,${i+10001},`);
+ const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+mappings.join('\n')),tasks:[]};
  await jobs.plan(job,async()=>{});await jobs.execute(job,async()=>{},async()=>{});
  assert.equal(submissions,3000);assert.equal(prepared,9998);assert.equal(job.status,'submittedWithErrors');
  assert.equal(job.tasks.flatMap(t=>t.result.targets).filter(r=>r.status==='submitted').length,4998);
@@ -226,3 +226,16 @@ test('explicitly rejected deployments release reservations while uncertain and a
  assert.equal(reservesCourses({...task,result:{...task.result,targets:[{orgUnitId:'101',status:'submitted'}]}}),true);
  assert.equal(reservesCourses({...task,result:undefined}),true);
 });
+
+test('four-column mappings resolve codes, reject mismatches and deduplicate aliases',async()=>{
+ const header='SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n';
+ const engine=createDeploymentJobs({enabled:()=>true,resolveCode:async code=>({SOURCE:'1',TARGET:'2',OTHER:'3'})[code]||Promise.reject(Error()),client:{source:async orgUnitId=>({orgUnitId,name:'source'}),target:async orgUnitId=>({orgUnitId,name:'target'})}});
+ const run=async csv=>{const job={rows:parseDeploymentCsv(header+csv),tasks:[]};await engine.plan(job,async()=>{});return job;};
+ const job=await run(',SOURCE,,TARGET\n1,,2,');assert.equal(job.status,'ready');assert.equal(job.tasks[0].targets.length,1);assert.equal(job.rows[1].status,'duplicate');
+ assert.equal((await run('3,SOURCE,2,TARGET')).status,'failed');
+ assert.equal((await run(',SOURCE,,TARGET\n,OTHER,,TARGET')).status,'failed');
+ assert.equal((await run(',SOURCE,,TARGET\n,TARGET,,OTHER')).status,'failed');
+ assert.equal((await run('1,SOURCE,2,TARGET')).status,'ready');
+});
+
+test('legacy two-column deployment CSV is rejected',()=>{assert.throws(()=>parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n1,2'),/Headers must be/);});

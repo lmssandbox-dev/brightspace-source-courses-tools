@@ -36,6 +36,13 @@ function createSourceDeploymentClient({api,http,oauth,baseUrl,lpVersion,delay=ms
     catch(error){throw validationFailure(error,stage,orgUnitId);}
   }
   return {
+    async resolveCode(code){
+      configured();const url=new URL(`${root}/orgstructure/`);url.searchParams.set('exactOrgUnitCode',code);
+      const matches=await api.list(url.href);
+      const ids=[...new Set(matches.filter(row=>row.Code===code).map(row=>id(row.Identifier)))];
+      if(ids.length!==1)throw Error('Course code must match exactly one accessible org unit');
+      return ids[0];
+    },
     async source(value){
       const orgUnitId=id(value);
       // This authoritative source-specific GET must succeed. Display metadata is optional.

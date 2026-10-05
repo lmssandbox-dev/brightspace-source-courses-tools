@@ -7,14 +7,23 @@ function parseDeploymentCsv(text){
  if(typeof text!=='string'||Buffer.byteLength(text)>5*1024*1024)throw invalid('Use a UTF-8 CSV of at most 5 MB.');
  let records;try{records=parse(text,{bom:true,trim:true,info:true,relax_column_count:true});}catch{throw invalid('Malformed CSV.');}
  const header=records.shift()?.record;
- if(!header||header.length!==2||!header.includes('SourceOrgUnitId')||!header.includes('ReplicaOrgUnitId'))throw invalid('Headers must be SourceOrgUnitId,ReplicaOrgUnitId.');
+ const extended=['SourceOrgUnitId','SourceOrgUnitCode','ReplicaOrgUnitId','ReplicaOrgUnitCode'];
+ const modern=header?.length===4&&extended.every(h=>header.includes(h));
+ if(!modern)throw invalid('Headers must be SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode.');
  if(records.length>10000)throw invalid('At most 10,000 mappings are supported.');
  const targets=new Map();
  const rows=records.map(({record,info})=>{
   const row={row:info.lines,status:'pending'};
   if(record.every(x=>!x.trim()))return {...row,status:'ignored',message:'Blank row ignored.'};
-  try{if(record.length!==2)throw Error();row.sourceId=id(record[header.indexOf('SourceOrgUnitId')]);row.targetId=id(record[header.indexOf('ReplicaOrgUnitId')]);if(row.sourceId===row.targetId||!Number.isSafeInteger(Number(row.targetId)))throw Error();}
-  catch{return {...row,status:'invalid',message:'Supply two positive IDs; source and replica must differ.'};}
+  try{
+   if(record.length!==header.length)throw Error();
+   const value=name=>record[header.indexOf(name)]||'';
+   row.sourceId=value('SourceOrgUnitId')?id(value('SourceOrgUnitId')):undefined;
+   row.targetId=value('ReplicaOrgUnitId')?id(value('ReplicaOrgUnitId')):undefined;
+   row.sourceCode=value('SourceOrgUnitCode');row.targetCode=value('ReplicaOrgUnitCode');
+   if((!row.sourceId&&!row.sourceCode)||(!row.targetId&&!row.targetCode)||(row.sourceId&&row.sourceId===row.targetId)||(row.targetId&&!Number.isSafeInteger(Number(row.targetId))))throw Error();
+  }catch{return {...row,status:'invalid',message:'Provide an ID or code for each source and replica; source and replica must differ.'};}
+  if(row.sourceCode||row.targetCode||!row.sourceId||!row.targetId)return row; // Resolve aliases before checking duplicate/conflicting mappings.
   const previous=targets.get(row.targetId);
   if(previous){if(previous.sourceId===row.sourceId)return {...row,status:'duplicate',message:`Duplicate of row ${previous.row}; deployed once.`};previous.status='invalid';previous.message='Replica is assigned to different sources.';return {...row,status:'invalid',message:previous.message};}
   targets.set(row.targetId,row);return row;
@@ -24,7 +33,7 @@ function parseDeploymentCsv(text){
  if(!rows.some(r=>r.status!=='ignored'))throw invalid('CSV contains no mappings.');
  return rows;
 }
-function createDeploymentJobs({client,enabled,now=Date.now}){
+function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
  return {
   parse:parseDeploymentCsv,
   async plan(job,save){
@@ -32,15 +41,31 @@ function createDeploymentJobs({client,enabled,now=Date.now}){
    for(const row of job.rows){
     if(row.status!=='pending')continue;
     try{
+     for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']]){
+      if(row[codeField]){
+       if(!resolveCode)throw Error('Code lookup unavailable');
+       const resolved=await resolveCode(row[codeField]);
+       if(row[idField]&&row[idField]!==resolved)throw Error('ID/code mismatch');
+       row[idField]=resolved;
+      }
+     }
+     if(row.sourceId===row.targetId)throw Error('Source and replica must differ');
+     const previous=job.rows.find(r=>r!==row&&r.status==='valid'&&r.targetId===row.targetId);
+     if(previous){
+      if(previous.sourceId!==row.sourceId){previous.status='invalid';previous.message='Replica is assigned to different sources.';throw Error('Conflicting mapping');}
+      row.status='duplicate';row.message=`Duplicate of row ${previous.row}; deployed once.`;continue;
+     }
      if(!sources.has(row.sourceId))sources.set(row.sourceId,await client.source(row.sourceId));
      const target=await client.target(row.targetId),source=sources.get(row.sourceId);
      row.sourceName=source.name;row.targetName=target.name;row.status='valid';if(source.warning)row.message=source.warning;
      let task=job.tasks.find(t=>t.sourceId===row.sourceId&&t.targets.length<100);
      if(!task){task={sourceId:row.sourceId,sourceName:source.name,targets:[],preview:{status:'ready'}};job.tasks.push(task);}
      task.targets.push(target);
-    }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check the configured IDs, API connectivity and read permissions.';}
+    }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.';}
     await save(job);
    }
+   const resolvedSources=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.sourceId));
+   for(const row of job.rows)if(row.status==='valid'&&resolvedSources.has(row.targetId)){row.status='invalid';row.message='A source in this file cannot also be a deployment target.';}
    job.status=job.rows.some(r=>r.status==='invalid')||!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
   },
   async activate(job,save,renew){
