@@ -24,7 +24,7 @@ A deployment ID confirms initiation, not copy completion. Unexpected or lost res
 - store.js: existing bulk_date_jobs, bulk_date_chunks and bulk_date_locks collections, ownership, confirmations and leases.
 - routes.js: shared signed workflow actions, date bulk forms and delegation to the replication view.
 
-One worker lease coordinates both workflows. Historical Source/replica reservations are no longer enforced; the worker lease still serializes app execution. The namespace and endpoints remain unchanged. The database is now configured as `brightspace_source_courses_tools`, without migration of old database records.
+One worker lease coordinates both workflows. Historical Source/replica reservations are no longer enforced; the worker lease still serializes app execution. The namespace and endpoints remain unchanged. The database is selected by the explicit MONGODB_URL path; `brightspace_source_courses_tools` remains a valid existing name. No old database records are migrated.
 
 Forms bind action, workflow, job, expiry and LTI session. Ownership is checked before access. Atomic confirmations prevent duplicate queueing. Saves are fenced by worker and running state. Interrupted work is retained for inspection. Activation retries preserve deployment results and reconcile current active states without redeploying. The activation action removes preview expiry and records the reactivation request.
 
@@ -58,3 +58,5 @@ Deployment presentation uses one four-counter row and a summary. Copy-check prog
 When changing visible wording, update all three catalogs and run `npm test` and `npm run build`. Localization tests cover catalog parity, placeholders, dynamic counts, unsupported locales, and preservation of CSV body data. User content and raw Brightspace diagnostics are not machine translated.
 
 Copy-check optimization: new manual checks query only submitted or uncertain replicas without saved successful-copy confirmation. Confirmed results and CSV evidence are retained per job. Each run snapshots its pending replica IDs and checks batches of 10, keeping progress stable as results arrive. Already queued legacy checks finish their original scan; new deployment jobs have independent results. When nothing remains to check, no API work is queued.
+
+Each independently deployed tenant can now select a dedicated database through the existing MONGODB_URL path. Both LTI storage and job storage use that URI. Explicit application names are required; system names, missing names, and dbName query overrides are rejected. Existing connection strings remain valid. Database creation occurs on first write, subject to MongoDB permissions. This does not migrate data or change any live Render configuration.

@@ -38,13 +38,13 @@ scripts/                 Local discovery and single-activity CLI tools
 test/                    Automated tests and JSON fixtures
 ```
 
-The folders separate features, not deployments. There is no second Render app, database or LTI installation to create. Keep `test/`, package.json and package-lock.json. README describes operation; TECHNICAL describes implementation; PLAN records remaining work.
+The folders separate features, not deployments. Both features share one Render service, database and LTI installation per Brightspace tenant. A separate prospect tenant uses a separate service and tenant-specific configuration. Keep `test/`, package.json and package-lock.json. README describes operation; TECHNICAL describes implementation; PLAN records remaining work.
 
 ## Configuration and deployment
 
 Use Node.js 22. Run `npm ci`, `npm test`, `npm run check`, then `npm start`. Upload the entire current project source to the existing Render service. Do not upload `.env`, private keys, `.local-tools` or node_modules. Do not overlay only selected renamed files: use this complete source layout.
 
-The existing `.env` is unchanged; no MONGODB_URL entry was found locally. For new environments use `.env.example`. MONGODB_URL must explicitly select `brightspace_source_courses_tools`. Keep LTI_KEY and the OAuth signing key/key ID stable across restarts. BS_CLIENT_ID and BS_DEPLOYMENT_ID must match the existing Brightspace installation. LTI controls who launches the app; API requests use the configured Service User's permissions through Client Credentials with Private Key JWT.
+The existing `.env` is unchanged; no MONGODB_URL entry was found locally. For new environments use `.env.example`. MONGODB_URL must explicitly name an application database; `brightspace_source_courses_tools` remains valid. Keep LTI_KEY and the OAuth signing key/key ID stable across restarts. BS_CLIENT_ID and BS_DEPLOYMENT_ID must match the existing Brightspace installation. LTI controls who launches the app; API requests use the configured Service User's permissions through Client Credentials with Private Key JWT.
 
 Existing endpoints stay the same: `/login` for OIDC login, `/` for target link, `/keys` for LTI public keys, `/.well-known/brightspace-jwks.json` for OAuth public keys, and `/ping` for health checks. No public endpoint writes Brightspace data.
 
@@ -76,11 +76,11 @@ Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-s
 
 ## Fresh database setup
 
-The app now requires `brightspace_source_courses_tools`. No data is migrated from `brightspace_activity_date_manager`, and the old database is not deleted. The new database is created on the first successful write.
+Each service selects its database using the path in `MONGODB_URL`; no additional variable is required. Names must contain 1–63 letters, digits, underscores or hyphens. System databases (`admin`, `local`, `config`) are rejected. No data is migrated from `brightspace_activity_date_manager`, and the old database is not deleted. The new database is created on the first successful write.
 
-Before deploying, change the database path in Render's `MONGODB_URL` to `/brightspace_source_courses_tools`. Preserve the credentials, cluster host and query options. The MongoDB user needs access to the new database. For local execution, set MONGODB_URL using `.env.example`; the existing local `.env` has no MONGODB_URL entry.
+For a prospect service, set its own database path in Render's `MONGODB_URL`, for example `/brightspace_prospect_demo`. Leave the existing service's URL unchanged. Preserve the credentials, cluster host and query options. The MongoDB user needs access to the new database. For local execution, set MONGODB_URL using `.env.example`; the existing local `.env` has no MONGODB_URL entry.
 
-Keep LTI_KEY, OAuth credentials and Brightspace settings unchanged. This fresh database has no old job history, sessions or LTI records. The app registers its configured Brightspace platform at startup. Verify a fresh LTI launch after deployment; database-backed signing keys may be regenerated, so pinned platform keys may need updating. Render configuration and live database creation have not been performed by this source change.
+When changing only the database for the same tenant, keep LTI_KEY, OAuth credentials and Brightspace settings unchanged. For a prospect tenant, configure its own LTI registration, OAuth application, Service User and signing credentials. This fresh database has no old job history, sessions or LTI records. The app registers its configured Brightspace platform at startup. Verify a fresh LTI launch after deployment; database-backed signing keys may be regenerated, so pinned platform keys may need updating. Render configuration and live database creation have not been performed by this source change.
 
 Deployment execution continues after isolated validation, preparation, rejection, partial-success, or uncertain outcomes. Uncertain POSTs are never retried. Authentication failure (401), exhausted rate-limit retries (429), or three consecutive service/permission failures stop further batches. Explicit 429 responses allow two retries respecting Retry-After up to 60 seconds; longer waits stop rather than retry early. Persistence and lease failures always interrupt processing. The CSV distinguishes submitted, failed, uncertain and not-attempted replicas; the screen shows a compact summary. Activation excludes failed/not-attempted replicas; any left inactive during preparation require inspection. No manual copy-completion confirmation is required. Automatic activation is restricted to accepted submissions.
 
@@ -119,3 +119,7 @@ Use the header language selector to choose English, Español (Latinoamérica), o
 Input CSV headers must remain unchanged. Course names, identifiers, report data, machine statuses, and original Brightspace logs retain their original values. Native file-picker and date-picker controls follow the browser language. English is the default and the fallback when JavaScript is unavailable.
 
 Copy-check optimization: new manual checks query only submitted or uncertain replicas without saved successful-copy confirmation. Confirmed results and CSV evidence are retained per job. Each run snapshots its pending replica IDs and checks batches of 10, keeping progress stable as results arrive. Already queued legacy checks finish their original scan; new deployment jobs have independent results. When nothing remains to check, no API work is queued.
+
+### Deploying custom database support
+
+The custom database-name validation is in `src/shared/database.js`. Publish the updated source to the repository and branch used by the prospect Render service, then deploy that revision. Changing an environment variable alone does not update application code. If startup still says it must select `/brightspace_source_courses_tools`, the service is running the older validation. Keep the intended custom database path and deploy the updated source. Local changes do not automatically modify Render.

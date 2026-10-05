@@ -1,12 +1,11 @@
 'use strict';
 
-const DATABASE_NAME = 'brightspace_source_courses_tools';
 
 function databaseConfig(uri) {
   // Inspect only the database path; never include credentials in an error.
   const match = typeof uri === 'string' && uri.match(/^mongodb(?:\+srv)?:\/\/[^/?#]+\/([^?#]*)(?:\?[^#]*)?$/);
-  if (!match || match[1] !== DATABASE_NAME) {
-    throw new Error(`MONGODB_URL must explicitly select /${DATABASE_NAME} before any ? options. Refusing to connect to another database.`);
+  if (!match || !/^[A-Za-z0-9_-]{1,63}$/.test(match[1]) || ['admin', 'local', 'config'].includes(match[1].toLowerCase())) {
+    throw new Error('MONGODB_URL must explicitly select an application database before any ? options. Use 1–63 letters, digits, underscores or hyphens; admin, local and config are reserved.');
   }
   const query = new URLSearchParams(uri.split('?')[1] || '');
   for (const name of query.keys()) {
