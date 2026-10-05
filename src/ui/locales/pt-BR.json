@@ -268,5 +268,6 @@
   "Provide an ID or code for each source and replica. If both are provided, they must identify the same course.": "Informe um ID ou código para cada origem e réplica. Se ambos forem informados, devem identificar o mesmo curso.",
   "Headers must be SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode.": "Os cabeçalhos devem ser SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode.",
   "Provide an ID or code for each source and replica; source and replica must differ.": "Informe um ID ou código para cada origem e réplica; origem e réplica devem ser diferentes.",
-  "Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.": "Falha ao localizar origem ou réplica. Verifique se IDs e códigos correspondem, se os códigos são únicos e se há permissão de acesso à API."
+  "Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.": "Falha ao localizar origem ou réplica. Verifique se IDs e códigos correspondem, se os códigos são únicos e se há permissão de acesso à API.",
+  "Loading your tools…": "Carregando suas ferramentas…"
 }

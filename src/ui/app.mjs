@@ -46,3 +46,6 @@ for(const link of document.querySelectorAll('[data-section]')){
 
 
 initLanguage();
+
+// Remove the initial, dependency-free launch indicator after enhancement and translation.
+document.querySelector('[data-launch-loading]')?.remove();
