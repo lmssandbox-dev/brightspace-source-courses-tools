@@ -25,7 +25,7 @@ test('workspace renders the selected sidebar panel and omits development tools',
 test('submitted replication exposes monitoring and reactivation without claiming completion',()=>{
  const job={_id:'j',status:'submitted',rows:[],tasks:[{sourceId:'10',sourceName:'<script>bad</script>',targets:[{orgUnitId:'20',name:'Replica',isActive:true,deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};
  const html=createDeploymentView({enabled:()=>true}).render({},job,helpers);
- assert.match(html,/Copy not confirmed/);assert.match(html,/Retry reactivation/);assert.match(html,/Unconfirmed copies/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.doesNotMatch(html,/Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs/);
+ assert.match(html,/Copies in Process/);assert.match(html,/Retry reactivation/);assert.match(html,/Unconfirmed copies/);assert.doesNotMatch(html,/setTimeout|<d2l-loading-spinner|<script>bad/);assert.doesNotMatch(html,/Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs/);
 });
 test('date review retains course-level blocking errors and does not offer Apply on failure',()=>{
  const job={_id:'j',status:'failed',dates:{},rows:[],courses:[{orgUnitId:'20',name:'Course',status:'invalid',message:'Discovery incomplete'}],tasks:[]};
@@ -115,7 +115,7 @@ test('deployment resolution requires explicit review and is unavailable while pr
 test('on-demand copy checks expose progress and snapshot timestamps without old schedule',()=>{
  const job={_id:'j',status:'activated',copyCheck:{status:'running',runId:'new',processed:10,total:5000},rows:[{sourceId:'1',targetId:'2'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'2'}],result:{status:'submitted'}}],copyMonitor:{'2':{runId:'old',status:'Copy logs available',checkedAt:1000,details:'Previous log'}}};
  const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,helpers),csv=view.report(job);
- assert.match(html,/10 of 5000 replicas checked/);assert.doesNotMatch(html,/<dialog|Copy Results|Deployment Results|Copy monitoring/);assert.match(html,/View copy-check progress/);assert.doesNotMatch(html,/24 hours|window ended/);
+ assert.match(html,/10 of 5000 replicas checked/);assert.doesNotMatch(html,/<dialog|Copy Results|Deployment Results|Copy monitoring/);assert.match(html,/Checking copy results in Brightspace/);assert.match(html,/Last saved results/);assert.match(html,/id="deploy-refresh" hidden/);assert.doesNotMatch(html,/View copy-check progress|Refresh submission status|Courses Copied and Reactivated/);assert.doesNotMatch(html,/24 hours|window ended/);
  assert.match(csv,/Pending current check/);assert.match(csv,/1970-01-01T00:00:01.000Z/);assert.match(csv,/Previous log/);
 });
 

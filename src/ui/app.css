@@ -24,3 +24,5 @@ main{max-width:1440px;padding:24px 32px 52px}.app-header{padding:18px 32px}.side
 
 .form-error{margin:0 0 24px;padding:20px 24px;border:1px solid #dfa5a5;border-left:5px solid #b42318;border-radius:8px;background:#fff1f0;color:#8a1c13}.form-error h2{font-size:20px;margin-bottom:8px}.form-error p{margin:6px 0;font-size:16px}.form-error p:last-child{margin-bottom:0}
 
+
+.deployment-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:760px){.deployment-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
