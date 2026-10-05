@@ -48,3 +48,11 @@ Deployment execution now reactivates accepted replicas automatically per batch. 
 
 
 Deployment presentation uses one four-counter row and a summary. Copy-check progress is inline, with a hidden signed status form for automatic refresh on conclusion pages. No dialog or per-replica HTML table is generated. History exposes only View job; its MongoDB projection computes total/copied counts without returning copy-log bodies, and routes select Copies in process / Copies concluded for submitted or activated jobs. Error/cancelled statuses are preserved. See README for exact labels and the limitations of message-based completion recognition.
+
+## Localization
+
+`src/ui/locales/en.json`, `es-419.json`, and `pt-BR.json` contain matching catalogs keyed by English UI text. Dynamic messages use numbered `{0}` placeholders; preserve the same placeholders in each translation. `src/ui/i18n.js` handles exact strings and full-string patterns, normalizes the supported locale allowlist, and translates only CSV report headings. Unknown strings fall back to their original text.
+
+`src/ui/language.mjs` translates text nodes and accessible labels after UI enhancement without replacing form elements. Original English strings are retained in WeakMaps so repeated language switches remain reversible. The header selector stores `brightspace-tools-language` in localStorage and propagates `uiLanguage` through hidden form inputs, including refresh and report forms. When browser storage is unavailable, the submitted locale carries the preference between rendered pages. No locale is stored on the job or inferred from the tenant. Native browser controls follow browser settings.
+
+When changing visible wording, update all three catalogs and run `npm test` and `npm run build`. Localization tests cover catalog parity, placeholders, dynamic counts, unsupported locales, and preservation of CSV body data. User content and raw Brightspace diagnostics are not machine translated.

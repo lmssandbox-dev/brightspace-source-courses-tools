@@ -32,3 +32,10 @@ Copy logs expose text messages and copy-job IDs, not a structured result directl
 One Render service and the `brightspace_source_courses_tools` MongoDB database are used. Queued background checks require the service to be running.
 
 - Current UI: consistent four counters, inline copy-check progress, no popup or replica tables; details in CSV. History has View job only and copy-progress/completion badges.
+
+## Localization completed
+
+- Added English, Latin American Spanish, and Brazilian Portuguese catalogs and a persistent header language selector.
+- Localized application text, dynamic summaries, validation messages, and report headings; preserved CSV input schemas and original report data/logs.
+- Verified Portuguese/Spanish switching, retained date input values, and language persistence across workflow navigation in an isolated local preview.
+- All 206 automated tests pass. Live Render/LTI verification remains a deployment check.

@@ -180,7 +180,7 @@ test('results and CSV keep separate outcomes for batches sharing a source',()=>{
  const {createDeploymentView}=require('../src/replication/view');
  const job={_id:'j',status:'submittedWithErrors',rows:[{sourceId:'1',targetId:'101'},{sourceId:'1',targetId:'102'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'101'}],result:{status:'submitted',deploymentId:'first'}},{sourceId:'1',targets:[{orgUnitId:'102'}],result:{status:'failed',error:{message:'Rejected'},targets:[{orgUnitId:'102',status:'failed'}]}}]};
  const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,{button:()=>'',controls:()=>'',now:()=>0});
- assert.match(html,/Deployment Results/);assert.match(html,/<strong>1<\/strong><span>Submitted/);assert.match(html,/<strong>1<\/strong><span>Failed/);
+ assert.match(html,/Deployment Needs Attention/);assert.match(html,/Copy in Process/);assert.doesNotMatch(html,/Deployment Results/);
  const report=view.report(job).split('\r\n');assert.match(report[1],/first/);assert.doesNotMatch(report[2],/first/);assert.match(report[2],/Rejected/);
 });
 
@@ -203,7 +203,7 @@ test('deployment diagnostics survive into UI and CSV without credentials or exec
  const {createDeploymentView}=require('../src/replication/view');const view=createDeploymentView({enabled:()=>true});
  const job={_id:'j',status:'failed',rows:[{sourceId:'1',targetId:'101'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'101'}],result}]};
  const html=view.render({},job,{button:()=>'',controls:()=>'',now:()=>0});const csv=view.report(job);
- assert.match(html,/HTTP 403/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>alert/);
+ assert.match(html,/Deployment Needs Attention/);assert.doesNotMatch(html,/<script>alert/);assert.match(csv,/403/);assert.match(csv,/Feature denied/);
  assert.match(csv,/Deployment HTTP status/);assert.match(csv,/Brightspace error details/);assert.match(csv,/request-123/);
  for(const output of [JSON.stringify(result),html,csv])for(const secret of [token,credential,'hidden-cookie','hidden-body-field'])assert.equal(output.includes(secret),false);
 });

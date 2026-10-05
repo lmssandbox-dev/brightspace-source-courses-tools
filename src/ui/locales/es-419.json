@@ -229,7 +229,7 @@
   "Last check: {0} of {1} replicas checked.": "Última verificación: {0} de {1} réplicas verificadas.",
   "{0} of {1} replicas checked. This page refreshes automatically. You can return through Job History.": "{0} de {1} réplicas verificadas. Esta página se actualiza automáticamente. Puedes volver desde el historial.",
   "I confirm Brightspace will reset all {0} replicas and replace their content from the mapped source courses.": "Confirmo que Brightspace restablecerá las {0} réplicas y reemplazará su contenido con el de los cursos de origen asignados.",
-  "Copy logs checked {0}": "Registros de copia verificados em {0}",
+  "Copy logs checked {0}": "Registros de copia verificados el {0}",
   "{0} loaded.": "{0} cargado.",
   "{0} activity": "{0} actividad",
   "{0} activities": "{0} actividades",

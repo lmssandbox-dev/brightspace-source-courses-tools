@@ -111,3 +111,9 @@ A requested check displays an inline spinner and progress, retains saved counter
 Completion recognition is deliberately narrow: a single unambiguous copy-job ID with no additional log page must include the observed Portuguese full-copy message `Todos os dados copiados com êxito do orgUnitId: SOURCE para o orgUnitId: TARGET`, with both IDs matching the requested mapping (an optional final period is accepted). Component-level success messages, unfamiliar/localized wording, missing logs, multiple copy jobs and paginated responses remain unconfirmed. This does not establish a deployment-ID-to-copy-job-ID equivalence; independently initiated copies within the same source/target time window can still be ambiguous. Existing snapshots require a new manual check to receive the recognized status.
 
 The completed heading is **✓ Courses Copied Successfully**. Before completion is confirmed, the submission message reports how many replicas initiated copy and prompts a copy check. Reports preserve per-replica submission, activation, diagnostics, copy-log messages, timestamps and check progress.
+
+## Interface languages
+
+Use the header language selector to choose English, Español (Latinoamérica), or Português (Brasil). The choice is remembered in this browser. Switching languages preserves entered form values and does not start a deployment or copy check. Both workflows, navigation, job summaries, application validation messages, and exported report headings support these languages.
+
+Input CSV headers must remain unchanged. Course names, identifiers, report data, machine statuses, and original Brightspace logs retain their original values. Native file-picker and date-picker controls follow the browser language. English is the default and the fallback when JavaScript is unavailable.
