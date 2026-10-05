@@ -7,13 +7,16 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
  const supported=atLeast(new URL(leRoot).pathname.split('/').at(-1),'1.91');
  return {async tick(){
   if(busy)return;busy=true;
+  let heartbeat,leaseLost=false;
   try{
    const job=await store.claimCopyMonitor();if(!job)return;
+   if(store.renewCopyMonitor){heartbeat=setInterval(()=>store.renewCopyMonitor(job).catch(()=>{leaseLost=true;}),60000);heartbeat.unref?.();}
    // Freeze membership for each run so successes in earlier batches cannot shift the cursor.
    const pendingIds=job.copyCheck?.targetIds?new Set(job.copyCheck.targetIds):null;
    const targets=job.tasks.flatMap(task=>task.targets.filter(target=>['submitted','uncertain'].includes(targetStatus(task,target))&&(!pendingIds||pendingIds.has(String(target.orgUnitId)))).map(target=>({task,target})));
    const cursor=job.copyMonitorCursor||0,updates={};
    for(const {task,target} of targets.slice(cursor,cursor+10)){
+    if(leaseLost)throw Error('Copy-check lease lost');
     const result={checkedAt:now(),status:'Awaiting copy logs',details:''};
     try{
      if(!supported)throw Error('version');
@@ -46,7 +49,7 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
    const next=cursor+10>=targets.length?0:cursor+10;
    await store.saveCopyMonitor(job,updates,next,now());
   }catch{ /* Monitoring never interrupts deployments; expired claims can be retried. */ }
-  finally{busy=false;}
+  finally{clearInterval(heartbeat);busy=false;}
  }};
 }
 module.exports={createCopyMonitor};

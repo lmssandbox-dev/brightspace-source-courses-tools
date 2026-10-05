@@ -97,7 +97,10 @@ const oauth = createBrightspaceAuth({
   http: axios
 });
 
-const d2lGet = createBrightspaceGet({ http: axios, oauth, baseUrl: BS_URL, retries: 2 });
+const {createRateLimitedHttp,createMongoGate,rateLimitKey}=require('./src/shared/rateLimit');
+const apiGate=createMongoGate({uri:MONGODB_URL,key:rateLimitKey(BS_URL,D2L_OAUTH2_CLIENT_ID)});
+const apiHttp=createRateLimitedHttp({http:axios,gate:apiGate,baseUrl:BS_URL});
+const d2lGet = createBrightspaceGet({ http: apiHttp, oauth, baseUrl: BS_URL, retries: 2 });
 
 // ===============================
 // Setup ltijs (LTI 1.3 Provider)
@@ -154,12 +157,12 @@ const discovery = createActivityDiscovery({
   discussions: createDiscussionsClient(brightspace)
 });
 const writers = Object.fromEntries(['assignment','quiz','discussionTopic'].map(type => [type,
-  createActivityWriter({api:brightspace,type,put:createActivityPut({http:axios,oauth,leRoot,type})})]));
+  createActivityWriter({api:brightspace,type,put:createActivityPut({http:apiHttp,oauth,leRoot,type})})]));
 const writeEnabled = type => hasScope(D2L_OAUTH2_SCOPES, {assignment:'dropbox:folders:write',quiz:'quizzing:quizzes:write',discussionTopic:'discussions:topics:manage'}[type]);
 const activityDates = createActivityDates({writers,deploymentId:BS_DEPLOYMENT_ID,writeEnabled});
 const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256').update(`${BS_URL}|${BS_DEPLOYMENT_ID}`).digest('hex')});
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
-const sourceClient = createSourceDeploymentClient({api:brightspace,http:axios,oauth,baseUrl:BS_URL,lpVersion});
+const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
 const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled});

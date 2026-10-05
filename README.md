@@ -123,3 +123,7 @@ Copy-check optimization: new manual checks query only submitted or uncertain rep
 ### Deploying custom database support
 
 The custom database-name validation is in `src/shared/database.js`. Publish the updated source to the repository and branch used by the prospect Render service, then deploy that revision. Changing an environment variable alone does not update application code. If startup still says it must select `/brightspace_source_courses_tools`, the service is running the older validation. Keep the intended custom database path and deploy the updated source. Local changes do not automatically modify Render.
+
+Environment setup is documented in [ENVIRONMENT.md](ENVIRONMENT.md), with all 17 variables, their sources/defaults, key generation, LTI versus OAuth key URLs, database isolation, scopes, and installation troubleshooting. Use [.env.example](.env.example) as the placeholder-only server configuration template.
+
+API rate safeguards and actual-cost reporting are described in ENVIRONMENT.md under “API pacing and measured costs”. The shared durable gate covers server tenant API traffic. Use `node scripts/api-cost-report.js` after a representative live test; no live measurements have been collected by local tests. Full-scale production capacity and interrupted deployment recovery remain operational validation items.

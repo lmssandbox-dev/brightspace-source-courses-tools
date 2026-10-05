@@ -39,6 +39,10 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const {jobs}=await collections();
       return (await jobs.findOneAndUpdate({namespace,kind:'sourceDeployment',status:{$nin:['queued','running','planning','validating']},'copyCheck.status':{$in:['queued','running']},$or:[{'copyCheck.leaseUntil':{$exists:false}},{'copyCheck.leaseUntil':{$lte:now()}}]},{$set:{'copyCheck.status':'running','copyCheck.leaseUntil':now()+10*60*1000,'copyCheck.leaseId':randomUUID()}},{sort:{'copyCheck.lastBatchAt':1,'copyCheck.requestedAt':1},returnDocument:'after'})).value;
     },
+    async renewCopyMonitor(job){
+      const {jobs}=await collections();const r=await jobs.updateOne({_id:job._id,namespace,'copyCheck.runId':job.copyCheck.runId,'copyCheck.leaseId':job.copyCheck.leaseId,'copyCheck.status':'running'},{$set:{'copyCheck.leaseUntil':now()+10*60*1000}});
+      if(r.matchedCount!==1)throw Error('Copy-check lease lost');
+    },
     async nextCopySubmission(jobId,sourceId,targetId,since){
       const {jobs}=await collections();
       const newer=await jobs.find({namespace,kind:'sourceDeployment',_id:{$ne:jobId},tasks:{$elemMatch:{sourceId,submittedAt:{$gt:since},'targets.orgUnitId':targetId}}},{projection:{tasks:1}}).toArray();
