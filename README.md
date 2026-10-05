@@ -88,7 +88,7 @@ Deployment errors retain HTTP status, selected sanitized Brightspace error messa
 
 ## Automatic reactivation and copy-log monitoring
 
-The deployment workflow is Upload Mappings → Review & Confirm → Deploy & Check Copies. Each accepted replica is automatically activated after submission, while copying may still be queued or running. Rejected or uncertain submissions are not automatically activated. History never reserves courses or blocks a fresh deployment; repeating deployment may reset a replica whose previous copy is still running.
+The deployment workflow is Upload Mappings → Review & Confirm → Deploy & Check Copy. Each accepted replica is automatically activated after submission, while copying may still be queued or running. Rejected or uncertain submissions are not automatically activated. History never reserves courses or blocks a fresh deployment; repeating deployment may reset a replica whose previous copy is still running.
 
 Copy-log checks are on demand. In Job History, choose **View job**, then click **Check copy results now** inside the job to queue one background pass. The signed request is session- and owner-checked; repeated clicks while queued/running return progress without duplicating the run. Checks use `GET /d2l/api/le/{version}/ccb/logs` (LE 1.91+ and Service User permission to view copy logs).
 
@@ -104,7 +104,7 @@ Source-name lookup uses GET `/d2l/api/lp/{version}/orgstructure/{id}` and requir
 
 ## Current deployment interface and completion recognition
 
-The steps are **Upload Mappings → Review & Confirm → Deploy & Check Copies**. The upload button is **2. Review & Confirm** and the confirmed deployment button is **3. Deploy & Check Copies**. Validation, review, execution and result pages share four counters: **Source Courses**, **Replicas**, **Copied Successfully**, and **Copy in Process**. Copy in Process counts submitted or uncertain replicas without a recognized full-copy success message; it is not a live queue-state measurement. Before submission, both copy counters are zero. Invalid mappings are reported through validation messages and the CSV, rather than a separate Need attention counter.
+The steps are **Upload Mappings → Review & Confirm → Deploy & Check Copy**. The upload button is **2. Review & Confirm** and the confirmed deployment button is **3. Deploy & Check Copy**. Validation, review, execution and result pages share four counters: **Source Courses**, **Replicas**, **Copied Successfully**, and **Copy in Process**. Copy in Process counts submitted or uncertain replicas without a recognized full-copy success message; it is not a live queue-state measurement. Before submission, both copy counters are zero. Invalid mappings are reported through validation messages and the CSV, rather than a separate Need attention counter.
 
 A requested check displays an inline spinner and progress, retains saved counters, and refreshes every 10 seconds while the check runs. There is no popup. The conclusion page offers Check copy results now and Download submission report; the redundant manual refresh button is omitted there. Detailed course lists are not rendered. Job History offers only View job. For submitted/activated jobs, its badge is Copies in process until every replica has a saved successful result, then Copies concluded. Cancelled and error statuses remain distinct.
 

@@ -4,6 +4,7 @@ const { deploymentGuard }=require('./deploymentGuard');
 const {DEFAULT_ZONE,validateZone,localDateToUtc}=require('../dates/timeZone');
 const {createDateView}=require('../dates/view');
 const {badge,table}=require('../ui/page');
+const {translateReport}=require('../ui/i18n');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>v?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(v)):'—';
 function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,view,kind='dates'}) {
@@ -60,7 +61,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       }
       if(action==='review'){if(kind!=='sourceDeployment'||req.body.confirmReviewed!=='yes')return res.status(400).send('Confirm review in Brightspace.');if(!await jobs.review(job._id,owner(res)))return res.status(409).send('Job cannot be reviewed in its current state.');}
       if(action==='cancel'&&!await jobs.cancel(job._id,owner(res)))return res.status(409).send('Job is already processing or finished.');
-      if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="bulk-job-results.csv"');return res.send(view?view.report(job):report(job));}
+      if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="bulk-job-results.csv"');return res.send(translateReport(view?view.report(job):report(job),req.body.uiLanguage));}
       return res.send(render(res,await jobs.get(job._id,owner(res)),Number(req.body.page)||1));
     } catch {return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
   };

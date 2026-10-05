@@ -115,7 +115,7 @@ test('deployment resolution requires explicit review and is unavailable while pr
 test('on-demand copy checks expose progress and snapshot timestamps without old schedule',()=>{
  const job={_id:'j',status:'activated',copyCheck:{status:'running',runId:'new',processed:10,total:5000},rows:[{sourceId:'1',targetId:'2'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'2'}],result:{status:'submitted'}}],copyMonitor:{'2':{runId:'old',status:'Copy logs available',checkedAt:1000,details:'Previous log'}}};
  const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,helpers),csv=view.report(job);
- assert.match(html,/10 of 5000 replicas checked/);assert.doesNotMatch(html,/<dialog|Copy Results|Deployment Results|Copy monitoring/);assert.match(html,/Checking copy results in Brightspace/);assert.match(html,/Last saved results/);assert.match(html,/id="deploy-refresh" hidden/);assert.doesNotMatch(html,/View copy-check progress|Refresh submission status|Courses Copied and Reactivated/);assert.doesNotMatch(html,/24 hours|window ended/);
+ assert.match(html,/10 of 5000 replicas checked/);assert.doesNotMatch(html,/<dialog|Copy Results|Deployment Results|Copy monitoring/);assert.match(html,/Checking copy results in Brightspace/);assert.match(html,/Checking for updates\. Dashboard totals will refresh automatically\./);assert.match(html,/id="deploy-refresh" hidden/);assert.doesNotMatch(html,/View copy-check progress|Refresh submission status|Courses Copied and Reactivated/);assert.doesNotMatch(html,/24 hours|window ended/);
  assert.match(csv,/Pending current check/);assert.match(csv,/1970-01-01T00:00:01.000Z/);assert.match(csv,/Previous log/);
 });
 
@@ -126,6 +126,6 @@ test('large deployment pages stay compact and keep details in reports',()=>{
  const html=view.render({}, {_id:'j',status,expiresAt:Date.now()+100000,rows:[],tasks},helpers);
  assert.ok(html.length<12000);
  assert.doesNotMatch(html,/<table|Sources and replicas|CSV validation|Job details and deployment IDs|My deployment jobs|section-heading/);
- assert.match(html,/Deploy &amp; Check Copies/);
+ assert.match(html,/Deploy &amp; Check Copy/);
  }
 });

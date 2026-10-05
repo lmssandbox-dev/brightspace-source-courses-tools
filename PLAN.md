@@ -5,7 +5,7 @@
 - Application branding, sidebar navigation, and simplified date and deployment forms.
 - 10,000-row / 5 MB CSV support for both workflows; deployment requests contain up to 100 replicas per source batch.
 - Named time zones and date conversion validation; bulk date discovery, updates, read-back checks and CSV reports.
-- Three deployment steps: Upload Mappings → Review & Confirm → Deploy & Check Copies.
+- Three deployment steps: Upload Mappings → Review & Confirm → Deploy & Check Copy.
 - Just-in-time batch deactivation, deployment submission, and automatic reactivation of accepted replicas.
 - Isolated failures continue; authentication, exhausted rate-limit retries and repeated service failures stop further batches.
 - Sanitized deployment diagnostics in stored results, screens and reports.
