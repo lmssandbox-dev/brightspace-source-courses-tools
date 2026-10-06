@@ -351,5 +351,7 @@
   "{0} destinations were copied successfully.": "{0} destinations were copied successfully.",
   "This job was cancelled. Review the report for any previously submitted copies.": "This job was cancelled. Review the report for any previously submitted copies.",
   "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Review the report for validation issues, failed copies, or unconfirmed submissions.",
-  "Review course mappings, selected components, and copy results.": "Review course mappings, selected components, and copy results."
+  "Review course mappings, selected components, and copy results.": "Review course mappings, selected components, and copy results.",
+  "Destination Courses": "Destination Courses",
+  "Copies in Process": "Copies in Process"
 }

@@ -351,5 +351,7 @@
   "{0} destinations were copied successfully.": "{0} destinos foram copiados com sucesso.",
   "This job was cancelled. Review the report for any previously submitted copies.": "Este trabalho foi cancelado. Consulte o relatório para verificar cópias enviadas anteriormente.",
   "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Consulte o relatório para verificar problemas de validação, falhas de cópia ou envios não confirmados.",
-  "Review course mappings, selected components, and copy results.": "Revise os mapeamentos de cursos, componentes selecionados e resultados das cópias."
+  "Review course mappings, selected components, and copy results.": "Revise os mapeamentos de cursos, componentes selecionados e resultados das cópias.",
+  "Destination Courses": "Cursos de Destino",
+  "Copies in Process": "Cópias em Andamento"
 }
