@@ -52,6 +52,6 @@ Pacing tuning: the shared gate now targets 30,000 measured credits/minute with a
 
 CSV templates: the date template downloads as `date-manager-template.csv`. Deployment accepts `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`; provide an ID, code, or matching pair for each side. Codes must resolve to exactly one accessible org unit, followed by source/replica type validation. Aliases are deduplicated after resolution; conflicting targets and source/target overlap block deployment. All four headers are required, even when code cells are empty. Legacy two-column CSV files are rejected; download the new template. Code lookup requires orgstructure read access.
 
-## Bulk Course Copy implementation
+## Bulk Course Copy to Source Course implementation
 
 Added the first sidebar workflow for Offering → existing Offering/Source Course copies. It supports a four-column ID/code CSV, all or selected component types, saved confirmation plans, durable native job tokens, on-demand cumulative status checks, translated compact pages, reports, and separate Job History. Reuses session/owner guards, worker leases and API rate limiting. It does not create/reset/reactivate courses. Restart recovery preserves uncertain outcomes without resubmitting. See README and ENVIRONMENT for usage, component dependencies, permissions, and required tenant acceptance tests. Live verification of this implementation and bulk-volume timing remain pending.

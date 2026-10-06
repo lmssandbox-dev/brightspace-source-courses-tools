@@ -335,5 +335,21 @@
   "Self assessments": "Autoevaluaciones",
   "Surveys": "Encuestas",
   "Tool names": "Nombres de herramientas",
-  "Widgets": "Widgets"
+  "Widgets": "Widgets",
+  "Bulk Course Copy to Source Course": "Copia de Cursos en Lote a Curso Fuente",
+  "Bulk Course Copy to Source Course, Activity Dates Manager and Source Courses Deployer": "Copia de Cursos en Lote a Curso Fuente, Gestor de Fechas de Actividades y Distribuidor de Cursos Fuente",
+  "Copy from a Course Offering into an existing Course Offering or Source Course.": "Copie desde una oferta de curso a una oferta de curso o curso fuente existente.",
+  "Copy all components or select the component types you need.": "Copie todos los componentes o seleccione los tipos de componentes que necesita.",
+  "Copy behavior": "Funcionamiento de la copia",
+  "Courses are not created, reset, or activated by this tool. Existing content may produce duplicates.": "Esta herramienta no crea, restablece ni activa cursos. El contenido existente puede generar duplicados.",
+  "Selected components will apply to all courses mapped in the CSV.": "Los componentes seleccionados se aplicarán a todos los cursos mapeados en el CSV.",
+  "✓ Copy Submitted": "✓ Copia enviada",
+  "Copy Cancelled": "Copia cancelada",
+  "Copy Needs Attention": "La copia requiere atención",
+  "All {0} destinations were copied successfully.": "Todos los {0} destinos se copiaron correctamente.",
+  "{0} destinations initiated copy. Check copy results to confirm completion.": "{0} destinos iniciaron la copia. Verifique los resultados para confirmar la finalización.",
+  "{0} destinations were copied successfully.": "{0} destinos se copiaron correctamente.",
+  "This job was cancelled. Review the report for any previously submitted copies.": "Este trabajo fue cancelado. Consulte el informe para verificar las copias enviadas anteriormente.",
+  "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Consulte el informe para verificar problemas de validación, copias fallidas o envíos no confirmados.",
+  "Review course mappings, selected components, and copy results.": "Revise los mapeos de cursos, componentes seleccionados y resultados de las copias."
 }

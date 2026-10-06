@@ -1,6 +1,6 @@
 # Brightspace Source Courses Tools
 
-A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
+A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy to Source Course, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
 
 ## 1. Activity dates
 
@@ -72,7 +72,7 @@ Date-job screens show compact summaries; the CSV report includes all records. Pr
 
 ## Application identity
 
-Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
+Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy to Source Course is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
 
 ## Fresh database setup
 
@@ -134,11 +134,11 @@ CSV templates: the date template downloads as `date-manager-template.csv`. Deplo
 
 LTI launch shows a lightweight blue loading indicator while frontend assets initialize. It starts when the app HTML arrives, not during Brightspace authentication or server cold start. It is removed after UI initialization and has an eight-second visual fallback; without JavaScript it is hidden so server-rendered content remains accessible.
 
-## Bulk Course Copy (first tool in the sidebar)
+## Bulk Course Copy to Source Course (first tool in the sidebar)
 
 Use this tool to copy **all components or a selection of component types** from a **Course Offering** into an **existing Course Offering or Source Course**. This is separate from Source Course deployment: it never creates courses, resets content, or changes activation. Source Courses are not accepted as origins. Offering → Source Course was confirmed by the operator in Postman; verify it in each new tenant before bulk use.
 
-Download `copy-template.csv` from the upload page. All four case-sensitive headers are required (their order may vary):
+Download `course-copy-template.csv` from the upload page. All four case-sensitive headers are required (their order may vary):
 
 ```csv
 OriginOrgUnitId,OriginOrgUnitCode,DestinationOrgUnitId,DestinationOrgUnitCode

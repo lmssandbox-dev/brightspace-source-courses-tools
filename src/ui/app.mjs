@@ -45,6 +45,14 @@ for(const link of document.querySelectorAll('[data-section]')){
 }
 
 
+// Keep component choices when switching modes, but display them only for selected copy.
+for(const form of document.querySelectorAll('form[action="/copy/preview"]')){
+ const selection=form.querySelector('[data-copy-selection]');
+ const update=()=>{selection.hidden=form.querySelector('input[name="copyMode"]:checked')?.value!=='selected';};
+ for(const radio of form.querySelectorAll('input[name="copyMode"]'))radio.addEventListener('change',update);
+ update();
+}
+
 initLanguage();
 
 // Remove the initial, dependency-free launch indicator after enhancement and translation.

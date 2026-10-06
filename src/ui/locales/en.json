@@ -335,5 +335,21 @@
   "Self assessments": "Self assessments",
   "Surveys": "Surveys",
   "Tool names": "Tool names",
-  "Widgets": "Widgets"
+  "Widgets": "Widgets",
+  "Bulk Course Copy to Source Course": "Bulk Course Copy to Source Course",
+  "Bulk Course Copy to Source Course, Activity Dates Manager and Source Courses Deployer": "Bulk Course Copy to Source Course, Activity Dates Manager and Source Courses Deployer",
+  "Copy from a Course Offering into an existing Course Offering or Source Course.": "Copy from a Course Offering into an existing Course Offering or Source Course.",
+  "Copy all components or select the component types you need.": "Copy all components or select the component types you need.",
+  "Copy behavior": "Copy behavior",
+  "Courses are not created, reset, or activated by this tool. Existing content may produce duplicates.": "Courses are not created, reset, or activated by this tool. Existing content may produce duplicates.",
+  "Selected components will apply to all courses mapped in the CSV.": "Selected components will apply to all courses mapped in the CSV.",
+  "✓ Copy Submitted": "✓ Copy Submitted",
+  "Copy Cancelled": "Copy Cancelled",
+  "Copy Needs Attention": "Copy Needs Attention",
+  "All {0} destinations were copied successfully.": "All {0} destinations were copied successfully.",
+  "{0} destinations initiated copy. Check copy results to confirm completion.": "{0} destinations initiated copy. Check copy results to confirm completion.",
+  "{0} destinations were copied successfully.": "{0} destinations were copied successfully.",
+  "This job was cancelled. Review the report for any previously submitted copies.": "This job was cancelled. Review the report for any previously submitted copies.",
+  "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Review the report for validation issues, failed copies, or unconfirmed submissions.",
+  "Review course mappings, selected components, and copy results.": "Review course mappings, selected components, and copy results."
 }

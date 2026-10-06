@@ -108,7 +108,7 @@ A synthetic 55,000-request test verifies serialization and pacing, not live thro
 
 Deployment CSV uploads require all four headers: `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`. The previous two-column format is rejected. Code-based mapping requires orgstructure read access; use the current downloadable template and leave unused ID/code cells empty.
 
-## Bulk Course Copy configuration and permissions
+## Bulk Course Copy to Source Course configuration and permissions
 
 No additional environment variables or Render services are required. The first sidebar tool uses the existing MONGODB_URL, namespace, OAuth client, service user, LTI session, shared rate limiter, D2L_LP_VERSION and D2L_LE_VERSION. Set D2L_LE_VERSION to a tenant-supported version **at least 1.97** (for example, the tested tenant uses 1.99). Earlier versions do not reliably distinguish COMPLETE from COMPLETE_WITH_ERRORS.
 

@@ -180,7 +180,7 @@ const diagnostics = createDiagnostics({
   activityForm: res => workspace({
     copy:copyRoutes.form(res),dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
     selected:res.locals.uiSection||'copy',
-    history:`<div class="history-grid"><section class="panel"><h3>Course Copy Jobs</h3>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
+    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Course</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
   client: discovery,
