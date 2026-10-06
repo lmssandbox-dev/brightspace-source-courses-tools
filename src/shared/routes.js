@@ -43,7 +43,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         try {if(kind==='dates'){timeZone=validateZone(req.body.timeZone??DEFAULT_ZONE);dates=Object.fromEntries(['start','due','end'].map(k=>[k,localDateToUtc(req.body[k],timeZone)]));}}
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Check your requested dates</h2><p>${escape(e.code==='INVALID_DATE'?e.message:'Enter valid dates and a time zone.')}</p></section>${form(res)}`);}
         let job;
-        try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components});}
+        try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components,validationMode:req.body.validationMode});}
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
         return res.send(render(res,job));
       }

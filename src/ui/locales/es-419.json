@@ -357,5 +357,12 @@
   "Validating course mappings": "Validando mapeos de cursos",
   "Submitting copy requests": "Enviando solicitudes de copia",
   "Loading course directory: {0} pages read.": "Cargando directorio de cursos: {0} páginas leídas.",
-  "Validating mappings: {0} of {1}.": "Validando mapeos: {0} de {1}."
+  "Validating mappings: {0} of {1}.": "Validando mapeos: {0} de {1}.",
+  "Mapping checks": "Verificación de mapeos",
+  "Direct submission": "Envío directo",
+  "IDs are used directly. Codes are resolved to IDs. Brightspace checks course type and access when you start copying; rejected rows appear in the report.": "Los ID se usan directamente. Los códigos se convierten en ID. Brightspace verifica el tipo de curso y el acceso al iniciar la copia; las filas rechazadas aparecen en el informe.",
+  "Verify courses before copying": "Verificar cursos antes de copiar",
+  "Check course type and access before confirmation. This takes longer for large files.": "Verifica el tipo de curso y el acceso antes de la confirmación. Esto tarda más con archivos grandes.",
+  "Direct submission: course type and access will be checked by Brightspace when copying starts.": "Envío directo: Brightspace verificará el tipo de curso y el acceso cuando comience la copia.",
+  "The app will prepare and submit batches, then automatically reactivate accepted replicas. Copying may still be queued or running.": "La aplicación preparará y enviará los lotes y reactivará automáticamente las réplicas aceptadas. La copia puede seguir en cola o en proceso."
 }

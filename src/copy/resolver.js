@@ -16,7 +16,7 @@ function createCopyResolver({api,root,sourceClient}){
   }
   return rows;
  }
- return async function prepare(rows,check,progress){
+ return async function prepare(rows,check,progress,{direct=false}={}){
   const originalCheck=check;check=async()=>{try{await originalCheck();}catch(e){e.persistenceFailure=true;throw e;}};
   const originalProgress=progress;progress=async(...args)=>{try{await originalProgress(...args);}catch(e){e.persistenceFailure=true;throw e;}};
   const codes=[...new Set(rows.filter(r=>r.status==='pending').flatMap(r=>[r.originCode,r.destinationCode]).filter(Boolean))];
@@ -45,11 +45,13 @@ function createCopyResolver({api,root,sourceClient}){
     if(value&&value!==resolved)throw Error('ID and code identify different org units.');value=resolved;
     idCache.set(value,Promise.resolve(record));
    }else{
+    if(direct){if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');return {orgUnitId:id(value),name:''};}
     if(!idCache.has(value))idCache.set(value,api.read(`${root}/orgstructure/${id(value)}`));
     record=await idCache.get(value);
    }
    if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');
    if(id(record.Identifier)!==value||typeof record.Name!=='string')throw Error('Invalid org-unit metadata');
+   if(direct)return {orgUnitId:value,name:record.Name};
    // Standard type codes only; custom or unrecognized types retain authoritative validation.
    const type=String(record.Type?.Code||'').replace(/[^a-z]/gi,'').toLowerCase();
    const offering=type==='courseoffering',source=type==='sourcecourse';

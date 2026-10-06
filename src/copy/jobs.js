@@ -1,6 +1,7 @@
 'use strict';
 const {parse}=require('csv-parse/sync');
 const {id}=require('../shared/id');
+const {pool}=require('../shared/pool');
 const COMPONENTS='AttendanceRegisters Awards Checklists Competencies CompletionTracking Content CourseAppearance CourseFiles Discussions DisplaySettings Dropbox Faq Forms Glossary Grades GradesSettings Groups Homepages IntelligentAgents LearningOutcomes Links LtiLink LtiTP Navbars News QuestionLibrary Quizzes ReleaseConditions Rubrics S3Model Schedule SelfAssessments Surveys ToolNames Widgets'.split(' ');
 const HEADERS=['OriginOrgUnitId','OriginOrgUnitCode','DestinationOrgUnitId','DestinationOrgUnitCode'];
 const invalid=message=>Object.assign(Error(message),{code:'INVALID_CSV'});
@@ -42,16 +43,16 @@ function createCopyJobs({client,now=Date.now}){
  return {parse:parseCopyCsv,selection,
   async plan(job,save,checkCancelled=async()=>{}){
    const destinations=new Map();
-   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);}):null;
+   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);},{direct:job.validationMode==='direct'}):null;
    const resolveRow=async(row,side)=>{
     if(!resolveMetadata)return resolve(row,side);
     const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;
    };
    let processed=job.rows.filter(r=>r.status!=='pending').length;
    job.progress={phase:'mappings',processed,total:job.rows.length};await save(job);
-   for(const row of job.rows){
+   await pool(job.rows,4,async row=>{
     await checkCancelled();
-    if(row.status!=='pending')continue;
+    if(row.status!=='pending')return;
     try{
      const origin=await resolveRow(row,'origin'),destination=await resolveRow(row,'destination');
      if(origin===destination)throw Error('Origin and destination must differ.');
@@ -60,10 +61,10 @@ function createCopyJobs({client,now=Date.now}){
      if(!previous){
      destinations.set(destination,row);row.status='valid';
      job.tasks.push({row:row.row,originId:origin,destinationId:destination});}
-    }catch(error){if(error.code==='JOB_CANCELLED')throw error;row.status='invalid';row.message=error.message;}
+    }catch(error){if(error.code==='JOB_CANCELLED'||error.persistenceFailure)throw error;row.status='invalid';row.message=error.message;}
     job.progress={phase:'mappings',processed:++processed,total:job.rows.length};
     if(job.progress.processed%25===0)await save(job);
-   }
+   });
    // Avoid order-dependent chains where a destination is also another mapping's origin.
    const origins=new Set(job.tasks.map(t=>t.originId));
    for(const row of job.rows)if(row.status==='valid'&&origins.has(row.destinationId)){row.status='invalid';row.message='A destination cannot also be an origin in the same job.';}
@@ -71,25 +72,25 @@ function createCopyJobs({client,now=Date.now}){
   },
   async execute(job,save,renew){
    if(job.operation==='check'){
-    for(const task of job.tasks){
-     const result=task.result;if(!result?.jobToken||terminalCopy.has(result.status))continue;
+    await pool(job.tasks,4,async(task,index)=>{
+     const result=task.result;if(!result?.jobToken||terminalCopy.has(result.status))return;
      await renew();
      try{result.status=await client.check(task.destinationId,result.jobToken);delete result.message;result.checkedAt=now();}
      catch{result.message='Status check unavailable. Saved results retained; try checking again.';}
-     await save(job);
-    }
+     await save(job,{tasks:[index]});
+    });
     finish(job);return;
    }
    let stop=false;
-   for(const task of job.tasks){
-    if(task.result)continue;
-    if(stop){task.result={status:'notAttempted',message:'Stopped after an authentication, transport, or server failure.'};continue;}
+   await pool(job.tasks,4,async(task,index)=>{
+    if(task.result)return;
+    if(stop){task.result={status:'notAttempted',message:'Stopped after an authentication, transport, or server failure.'};await save(job,{tasks:[index]});return;}
     // A durable checkpoint precedes each POST. A restart never repeats an in-flight copy.
-    await renew();task.result={status:'uncertain',message:'Submission outcome unconfirmed. Inspect Brightspace before creating another copy.'};await save(job);
+    await renew();task.result={status:'uncertain',message:'Submission outcome unconfirmed. Inspect Brightspace before creating another copy.'};await save(job,{tasks:[index]});
     const result=await client.copy(task.originId,task.destinationId,job.components,renew);
-    task.result=result;stop=result.status==='uncertain'||result.systemic;
-    await save(job);
-   }
+    task.result=result;stop ||= result.status==='uncertain'||Boolean(result.systemic);
+    await save(job,{tasks:[index]});
+   });
    finish(job);
   }
  };

@@ -7,7 +7,7 @@ function createCopyClient({api,http,oauth,leRoot,sourceClient,lpVersion}){
  const configured=()=>{if(!atLeast(version,'1.97'))throw Error('Bulk Course Copy requires LE API 1.97 or later.');};
  const path=value=>`${leRoot}/import/${id(value)}/copy/`;
  return {
-  prepareResolution:async(rows,check,progress)=>{configured();if(!/^\d+\.\d+$/.test(lpVersion||''))throw Error('Invalid LP version');const root=new URL(leRoot).origin+'/d2l/api/lp/'+lpVersion;return require('./resolver').createCopyResolver({api,root,sourceClient})(rows,check,progress);},
+  prepareResolution:async(rows,check,progress,options)=>{configured();if(!/^\d+\.\d+$/.test(lpVersion||''))throw Error('Invalid LP version');const root=new URL(leRoot).origin+'/d2l/api/lp/'+lpVersion;return require('./resolver').createCopyResolver({api,root,sourceClient})(rows,check,progress,options);},
   resolveCode:code=>sourceClient.resolveCode(code),
   async origin(value){configured();return sourceClient.target(value);},
   async destination(value){configured();try{return await sourceClient.target(value);}catch(e){if((e.httpStatus??e.status)!==404)throw e;return sourceClient.source(value);}},

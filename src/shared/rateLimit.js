@@ -1,42 +1,13 @@
 'use strict';
-const {randomUUID,createHash}=require('node:crypto');
-const {MongoClient}=require('mongodb');
+const {createHash}=require('node:crypto');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function seconds(value,now){
  if(value==null)return null;
  const n=Number(value);if(Number.isFinite(n)&&n>=0)return n*1000;
  const date=Date.parse(value);return Number.isFinite(date)?Math.max(0,date-now):null;
 }
-// All API paths share a durable gate. A failed database operation fails closed.
-function createMongoGate({uri,key,now=Date.now}){
- const client=new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready;
- const owner=randomUUID();
- async function collection(){ready ||= client.connect().catch(e=>{ready=null;throw e;});await ready;return client.db().collection('api_rate_limits');}
- return {
-  async acquire(){
-   const c=await collection(),time=now();
-   try{await c.updateOne({_id:key},{$setOnInsert:{until:0,nextAt:0}},{upsert:true});}catch(error){if(error.code!==11000)throw error;}
-   const result=await c.findOneAndUpdate({_id:key,until:{$lte:time},nextAt:{$lte:time}},{$set:{owner,until:time+60000}},{returnDocument:'after'});
-   if(result.value)return 0;
-   const row=await c.findOne({_id:key});return Math.max(1,Math.max(row.until,row.nextAt)-time);
-  },
-  async release(nextAt,sample){
-   const c=await collection();const update={$set:{until:0},$max:{nextAt}};
-   if(sample){
-    const prefix='costs.'+createHash('sha256').update(sample.route).digest('hex');
-    update.$set[prefix+'.route']=sample.route;update.$set[prefix+'.lastSeenAt']=now();
-    update.$inc={[prefix+'.requests']:1};
-    if(sample.cost!=null){update.$inc[prefix+'.observedRequests']=1;update.$inc[prefix+'.totalCredits']=sample.cost;update.$min={[prefix+'.minCost']:sample.cost};update.$max[prefix+'.maxCost']=sample.cost;update.$set[prefix+'.lastCost']=sample.cost;}
-    if(sample.remaining!=null)update.$set.lastRemainingCredits=sample.remaining;
-    update.$set.lastResetMs=sample.resetMs;
-    if(sample.status===429)update.$inc.rateLimitResponses=1;
-   }
-   const r=await c.updateOne({_id:key,owner},update);if(r.matchedCount!==1)throw Error('API rate-limit lease lost');
-  },
-  async close(){await client.close();}
- };
-}
 function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,intervalMs=20,maxRetries=5}){
+ if(gate.reserve)return require('./concurrentGate').createConcurrentHttp({http,gate,baseUrl,now,delay,maxRetries,seconds});
  let queue=Promise.resolve();
  const origin=new URL(baseUrl).origin;
  async function run(config){
@@ -70,4 +41,4 @@ function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,inter
  return config=>{const result=queue.then(()=>run(config));queue=result.catch(()=>{});return result;};
 }
 const rateLimitKey=(baseUrl,clientId)=>createHash('sha256').update(`${new URL(baseUrl).origin}|${clientId}`).digest('hex');
-module.exports={createRateLimitedHttp,createMongoGate,rateLimitKey,seconds};
+module.exports={createRateLimitedHttp,createMongoGate:require('./concurrentGate').createConcurrentGate,rateLimitKey,seconds};

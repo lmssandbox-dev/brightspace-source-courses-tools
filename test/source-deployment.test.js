@@ -81,7 +81,7 @@ test('prepare verifies only the current batch inactive before deploy and automat
  const s=workflow();await s.engine.plan(s.job,async()=>{});assert.equal(s.calls.includes('deactivate'),false);
  await s.engine.execute(s.job,async()=>{},async()=>{});
  assert.equal(s.calls.filter(c=>c==='deactivate').length,3);assert.equal(s.calls.includes('activate'),true);
- const firstPost=s.calls.findIndex(c=>typeof c==='object');assert.equal(s.calls.slice(0,firstPost).filter(c=>c==='deactivate').length,2);
+ for(const task of s.job.tasks){assert.ok(task.targets.every(t=>t.deactivation.verifiedActive===false));assert.ok(task.targets.every(t=>t.activation.verifiedActive===true));}
  const submissions=structuredClone(s.job.tasks.map(t=>t.result));
  await s.engine.activate(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');assert.equal(s.calls.filter(c=>c==='activate').length,3);assert.deepEqual(s.job.tasks.map(t=>t.result),submissions);
 });
@@ -140,7 +140,7 @@ function batchScenario(outcomes,{preparationError,validationError}={}){
 }
 test('isolated rejection and uncertain outcome continue; batches prepare just in time',async()=>{
  const s=batchScenario([{status:'failed',error:{httpStatus:400}},{status:'uncertain',error:{httpStatus:null}},{status:'submitted'}]);await s.run();
- assert.deepEqual(s.events,['prepare:101','deploy:1','prepare:102','deploy:2','prepare:103','deploy:3','activate:103']);
+ for(let i=1;i<=3;i++)assert.ok(s.events.indexOf(`prepare:${100+i}`)<s.events.indexOf(`deploy:${i}`));assert.ok(s.events.indexOf('activate:103')>s.events.indexOf('deploy:3'));
  assert.equal(s.job.status,'outcomeUnknown');
 });
 test('isolated validation and preparation failures leave other batches available',async()=>{
@@ -149,13 +149,13 @@ test('isolated validation and preparation failures leave other batches available
  assert.equal(s.job.tasks[0].result.targets[0].status,'notAttempted');assert.equal(s.job.tasks[1].result.status,'submitted');assert.equal(s.job.status,'submittedWithErrors');
  }
 });
-test('authentication and repeated outages stop without preparing later replicas',async()=>{
+test('authentication and repeated outages stop new groups while in-flight groups finish',async()=>{
  for(const status of [401,429]){
- const s=batchScenario([{status:'failed',error:{httpStatus:status}},{status:'submitted'}]);await s.run();
- assert.deepEqual(s.events,['prepare:101','deploy:1']);assert.equal(s.job.tasks[1].result.targets[0].status,'notAttempted');
+ const s=batchScenario([...Array.from({length:4},()=>({status:'failed',error:{httpStatus:status}})),{status:'submitted'}]);await s.run();
+ assert.equal(s.events.includes('prepare:105'),false);assert.equal(s.job.tasks[4].result.targets[0].status,'notAttempted');
  }
- const s=batchScenario([...Array.from({length:3},()=>({status:'uncertain',error:{httpStatus:503}})),{status:'submitted'}]);await s.run();
- assert.equal(s.events.includes('prepare:104'),false);assert.equal(s.job.tasks[3].result.status,'skipped');
+ const s=batchScenario([...Array.from({length:4},()=>({status:'uncertain',error:{httpStatus:503}})),{status:'submitted'}]);await s.run();
+ assert.equal(s.events.includes('prepare:105'),false);assert.equal(s.job.tasks[4].result.status,'skipped');
 });
 test('429 respects Retry-After and retries only explicit rejection with renewed intent',async()=>{
  let calls=0,hooks=0;const waits=[];
@@ -239,3 +239,28 @@ test('four-column mappings resolve codes, reject mismatches and deduplicate alia
 });
 
 test('legacy two-column deployment CSV is rejected',()=>{assert.throws(()=>parseDeploymentCsv('SourceOrgUnitId,ReplicaOrgUnitId\n1,2'),/Headers must be/);});
+
+test('parallel source groups preserve inactive-before-POST and active-before-next-batch ordering',async()=>{
+ const states=new Map(),inFlight=new Set(),events=[];let active=0,max=0;
+ const job={tasks:Array.from({length:10},(_,i)=>({sourceId:String(i%5+1),targets:[{orgUnitId:String(i+101)}]}))};
+ const engine=createDeploymentJobs({enabled:()=>true,client:{
+  source:async()=>{},target:async id=>({isActive:states.get(id)??true}),
+  setActive:async(id,value,before)=>{await before();states.set(id,value);events.push(`${id}:${value}`);return {status:'updated',verifiedActive:value};},
+  deploy:async(source,targets,before)=>{
+   assert.equal(inFlight.has(source),false);inFlight.add(source);active++;max=Math.max(max,active);
+   for(const id of targets)assert.equal(states.get(id),false);
+   await before();await new Promise(r=>setImmediate(r));events.push('post:'+targets[0]);active--;inFlight.delete(source);
+   return {status:'submitted',targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};
+  }
+ }});
+ await engine.execute(job,async(_j,dirty)=>assert.equal(dirty.tasks.length,1),async()=>{});
+ assert.equal(max,4);assert.equal(job.status,'activated');assert.ok([...states.values()].every(Boolean));
+ for(let source=0;source<5;source++)assert.ok(events.indexOf(`${source+101}:true`)<events.indexOf(`${source+106}:false`));
+});
+
+test('parallel deployment preview caches repeated codes and course reads and batches checkpoints',async()=>{
+ const codeReads=new Map();let sourceReads=0,targetReads=0,saves=0;
+ const engine=createDeploymentJobs({enabled:()=>true,resolveCode:async code=>{codeReads.set(code,(codeReads.get(code)||0)+1);return code==='SOURCE'?'1':code.slice(1);},client:{source:async()=>{sourceReads++;return {name:'Source'};},target:async orgUnitId=>{targetReads++;return {orgUnitId,name:'Replica'};}}});
+ const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:100},(_,i)=>`,SOURCE,,R${i%50+101}`).join('\n')),tasks:[]};
+ await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,1);assert.equal(targetReads,50);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,4);assert.equal(job.tasks[0].targets.length,50);
+});

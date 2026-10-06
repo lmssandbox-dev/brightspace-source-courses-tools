@@ -38,10 +38,10 @@ test('ambiguous responses and transport failures are uncertain without retry; de
  }
 });
 test('durable pre-POST checkpoint, systemic stop, and restart never replay a copy',async()=>{
- const j=job('1,,2,\n1,,3,');let calls=0,saves=0;
+ const j=job(Array.from({length:8},(_,i)=>`1,,${i+2},`).join('\n'));let calls=0,saves=0;
  const worker=createCopyJobs({client:client({copy:async()=>{assert.ok(saves>0);calls++;return {status:'uncertain'};}})});
- await worker.plan(j,async()=>{});await worker.execute(j,async()=>{saves++;},async()=>{});assert.equal(calls,1);assert.equal(j.tasks[1].result.status,'notAttempted');
- interruptJob(j);await worker.execute(j,async()=>{},async()=>{});assert.equal(calls,1);assert.equal(j.tasks[0].result.status,'uncertain');
+ await worker.plan(j,async()=>{});await worker.execute(j,async()=>{saves++;},async()=>{});assert.equal(calls,4);assert.equal(j.tasks[4].result.status,'notAttempted');
+ interruptJob(j);await worker.execute(j,async()=>{},async()=>{});assert.equal(calls,4);assert.equal(j.tasks[0].result.status,'uncertain');
 });
 test('status checks skip terminal results and retain tokens/status when checking fails',async()=>{
  const j=job('1,,2,\n1,,3,');const checked=[];const worker=createCopyJobs({client:client({check:async dest=>{checked.push(dest);throw Error();}})});await worker.plan(j,async()=>{});
@@ -66,4 +66,18 @@ test('cancelling validation stops before the next mapping without any copy submi
  await assert.rejects(()=>worker.plan(j,async()=>{},async()=>{if(++checked===2)throw Object.assign(Error('cancelled'),{code:'JOB_CANCELLED'});}),{code:'JOB_CANCELLED'});
  assert.equal(reads,1);assert.equal(j.tasks.length,1);assert.equal(j.rows[1].status,'pending');
  const html=createCopyView().render({}, {...j,status:'planning'}, {controls:()=>'',button:(_r,action)=>action==='cancel'?'CANCEL_VISIBLE':'',now:Date.now});assert.match(html,/CANCEL_VISIBLE/);
+});
+
+test('5,000 copies submit with at most four workers and checkpoint each intent and response',async()=>{
+ const j=job(Array.from({length:5000},(_,i)=>`1,,${i+2},`).join('\n'));let active=0,max=0,calls=0;const durable=new Map();
+ const worker=createCopyJobs({client:client({copy:async(_origin,destination)=>{assert.equal(durable.get(destination),'uncertain');active++;max=Math.max(max,active);await new Promise(resolve=>setImmediate(resolve));active--;calls++;return {status:'PENDING',jobToken:'t'+destination};}})});
+ await worker.plan(j,async()=>{});
+ await worker.execute(j,async(job,dirty)=>{assert.equal(dirty.tasks.length,1);const t=job.tasks[dirty.tasks[0]];durable.set(t.destinationId,t.result.status);},async()=>{});
+ assert.equal(max,4);assert.equal(active,0);assert.equal(calls,5000);assert.equal(j.status,'copiesInProcess');assert.ok([...durable.values()].every(s=>s==='PENDING'));
+});
+test('checkpoint failure drains active workers and never sends the uncheckpointed copy',async()=>{
+ const j=job('1,,2,\n1,,3,\n1,,4,\n1,,5,\n1,,6,');const sent=[];
+ const worker=createCopyJobs({client:client({copy:async(_o,d)=>{await new Promise(r=>setImmediate(r));sent.push(d);return {status:'PENDING',jobToken:d};}})});await worker.plan(j,async()=>{});
+ await assert.rejects(()=>worker.execute(j,async(_j,dirty)=>{if(dirty.tasks[0]===0)throw Error('storage');},async()=>{}),/storage/);
+ assert.equal(sent.includes('2'),false);assert.equal(sent.includes('6'),false);const done=sent.length;await new Promise(r=>setImmediate(r));assert.equal(sent.length,done);
 });

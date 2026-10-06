@@ -26,11 +26,17 @@ function interruptJob(job) {
 function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
   let busy=false;
   const worker=randomUUID();
-  const countCache=new WeakMap();
-  async function save(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
+  const countCache=new WeakMap(), saveQueues=new WeakMap();
+  function save(job,dirty) {
+    const pending=(saveQueues.get(job)||Promise.resolve()).then(()=>saveCheckpoint(job,dirty));
+    saveQueues.set(job,pending);return pending;
+  }
+  async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
-    job[DIRTY]=dirty;await store.save(job,worker);delete job[DIRTY]; }
+    job[DIRTY]=dirty;const started=now();
+    try {await store.save(job,worker);} finally {delete job[DIRTY];}
+    job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
     const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row]));
     let checkpoint=0;
@@ -103,8 +109,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.status=job.tasks.some(t=>['failed','skipped'].includes(t.result?.status))?'completedWithErrors':'completed';
   }
   return {
-    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components}) {
-      if(kind==='courseCopy'){const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
+      if(kind==='courseCopy'){if(validationMode&&!['direct','verified'].includes(validationMode))throw Object.assign(Error('Invalid validation mode'),{code:'INVALID_CSV'});const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),validationMode:validationMode||'verified',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
@@ -127,8 +133,10 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         held=await store.acquire(worker);if(!held)return;
         heartbeat=setInterval(()=>store.renew(worker).catch(()=>{}),10000);heartbeat.unref?.();
         job=await store.claim(worker);if(!job)return;
+        job.performance ||= {};const phase=job.status==='planning'?'preparation':job.operation==='check'?'check':'submission';
+        job.performance[phase+'StartedAt']=now();
         if(job.status==='planning') {
-          if(job.kind==='courseCopy')await courseCopy.plan(job,save,async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
+          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.
@@ -137,6 +145,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           else if(job.kind==='courseCopy')await courseCopy.execute(job,save,()=>store.renew(worker));
           else await execute(job);
         }
+        job.performance[phase+'FinishedAt']=now();job.performance[phase+'Ms']=now()-job.performance[phase+'StartedAt'];
         await save(job);
       } catch(error) {
         if(error.code==='JOB_CANCELLED')return;

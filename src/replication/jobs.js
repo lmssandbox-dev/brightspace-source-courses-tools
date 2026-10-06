@@ -1,6 +1,7 @@
 'use strict';
 const {parse}=require('csv-parse/sync');
 const {id}=require('../shared/id');
+const {pool}=require('../shared/pool');
 const {canActivateTarget,targetStatus}=require('./outcomes');
 const invalid=message=>Object.assign(new Error(message),{code:'INVALID_CSV'});
 function parseDeploymentCsv(text){
@@ -37,32 +38,40 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
  return {
   parse:parseDeploymentCsv,
   async plan(job,save){
-   const sources=new Map();
-   for(const row of job.rows){
-    if(row.status!=='pending')continue;
+   const sources=new Map(),codes=new Map(),replicas=new Map(),resolved=new Map();
+   let processed=job.rows.filter(row=>row.status!=='pending').length;
+   const cached=(map,key,load)=>{if(!map.has(key))map.set(key,Promise.resolve().then(load));return map.get(key);};
+   await pool(job.rows,4,async row=>{
+    if(row.status!=='pending')return;
     try{
-     for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']]){
-      if(row[codeField]){
-       if(!resolveCode)throw Error('Code lookup unavailable');
-       const resolved=await resolveCode(row[codeField]);
-       if(row[idField]&&row[idField]!==resolved)throw Error('ID/code mismatch');
-       row[idField]=resolved;
-      }
+     for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']])if(row[codeField]){
+      if(!resolveCode)throw Error('Code lookup unavailable');
+      const value=await cached(codes,row[codeField],()=>resolveCode(row[codeField]));
+      if(row[idField]&&row[idField]!==value)throw Error('ID/code mismatch');row[idField]=value;
      }
      if(row.sourceId===row.targetId)throw Error('Source and replica must differ');
-     const previous=job.rows.find(r=>r!==row&&r.status==='valid'&&r.targetId===row.targetId);
-     if(previous){
-      if(previous.sourceId!==row.sourceId){previous.status='invalid';previous.message='Replica is assigned to different sources.';throw Error('Conflicting mapping');}
-      row.status='duplicate';row.message=`Duplicate of row ${previous.row}; deployed once.`;continue;
-     }
-     if(!sources.has(row.sourceId))sources.set(row.sourceId,await client.source(row.sourceId));
-     const target=await client.target(row.targetId),source=sources.get(row.sourceId);
+     const source=await cached(sources,row.sourceId,()=>client.source(row.sourceId));
+     const target=await cached(replicas,row.targetId,()=>client.target(row.targetId));
      row.sourceName=source.name;row.targetName=target.name;row.status='valid';if(source.warning)row.message=source.warning;
-     let task=job.tasks.find(t=>t.sourceId===row.sourceId&&t.targets.length<100);
-     if(!task){task={sourceId:row.sourceId,sourceName:source.name,targets:[],preview:{status:'ready'}};job.tasks.push(task);}
-     task.targets.push(target);
+     resolved.set(row,{source,target});
     }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.';}
-    await save(job);
+    job.progress={phase:'mappings',processed:++processed,total:job.rows.length};
+    if(processed%25===0)await save(job);
+   });
+   const targets=new Map(),batches=new Map();
+   for(const row of job.rows){
+    if(row.status!=='valid')continue;
+    const previous=targets.get(row.targetId);
+    if(previous){
+     if(previous.sourceId===row.sourceId){row.status='duplicate';row.message=`Duplicate of row ${previous.row}; deployed once.`;}
+     else {previous.status=row.status='invalid';previous.message=row.message='Replica is assigned to different sources.';}
+     continue;
+    }
+    targets.set(row.targetId,row);
+    const {source,target}=resolved.get(row);
+    let task=batches.get(row.sourceId);
+    if(!task||task.targets.length>=100){task={sourceId:row.sourceId,sourceName:source.name,targets:[],preview:{status:'ready'}};batches.set(row.sourceId,task);job.tasks.push(task);}
+    task.targets.push({...target});
    }
    const resolvedSources=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.sourceId));
    for(const row of job.rows)if(row.status==='valid'&&resolvedSources.has(row.targetId)){row.status='invalid';row.message='A source in this file cannot also be a deployment target.';}
@@ -89,39 +98,44 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
     if(status===401||status===429||serviceFailures>=3)halted=true;
    };
    const notSent=(task,message)=>({status:'failed',writeAttempted:false,error:{message},targets:task.targets.map(t=>({orgUnitId:t.orgUnitId,status:'notAttempted'}))});
-   for(const task of job.tasks){
-    if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};await save(job);continue;}
+   const groups=new Map();
+   job.tasks.forEach((task,index)=>{const group=groups.get(task.sourceId)||[];group.push({task,index});groups.set(task.sourceId,group);});
+   async function submit(task,index){
+    const checkpoint=()=>save(job,{tasks:[index]});
+    if(task.result)return;
+    if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};await checkpoint();return;}
     // Validate only this batch before touching its replicas.
     try{await client.source(task.sourceId);for(const target of task.targets)await client.target(target.orgUnitId);}
-    catch(error){recordFailure(error);task.result=notSent(task,'Batch validation failed. No deployment was sent; review the source and replica access.');await save(job);continue;}
+    catch(error){recordFailure(error);task.result=notSent(task,'Batch validation failed. No deployment was sent; review the source and replica access.');await checkpoint();return;}
     let preparationFailed=false;
     for(const target of task.targets){
-     target.deactivation={status:'running',writeAttempted:false};await save(job);
-     target.deactivation=await client.setActive(target.orgUnitId,false,async()=>{await renew();target.deactivation.writeAttempted=true;await save(job);});
-     await save(job);
+     target.deactivation={status:'running',writeAttempted:false};await checkpoint();
+     target.deactivation=await client.setActive(target.orgUnitId,false,async()=>{await renew();target.deactivation.writeAttempted=true;await checkpoint();});
+     await checkpoint();
      if(!['updated','unchanged'].includes(target.deactivation.status)||target.deactivation.verifiedActive!==false){
       recordFailure(target.deactivation.error);preparationFailed=true;break;
      }
     }
-    if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');await save(job);continue;}
+    if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');await checkpoint();return;}
     try{for(const target of task.targets)if((await client.target(target.orgUnitId)).isActive!==false)throw {httpStatus:409};}
-    catch(error){recordFailure(error);task.result=notSent(task,'Replica inactivity could not be confirmed. No deployment was sent for this batch.');await save(job);continue;}
+    catch(error){recordFailure(error);task.result=notSent(task,'Replica inactivity could not be confirmed. No deployment was sent for this batch.');await checkpoint();return;}
     task.submittedAt=now();
-    task.result={status:'running',writeAttempted:false};await save(job);
-    task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await save(job);});
-    await save(job);
+    task.result={status:'running',writeAttempted:false};await checkpoint();
+    task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await checkpoint();});
+    await checkpoint();
     // Reactivation follows acceptance, not completion of the asynchronous copy.
     for(const target of task.targets){
      if(targetStatus(task,target)!=='submitted')continue;
-     target.activation={status:'running',writeAttempted:false};await save(job);
-     target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await save(job);});
-     await save(job);
+     target.activation={status:'running',writeAttempted:false};await checkpoint();
+     target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await checkpoint();});
+     await checkpoint();
     }
     if(task.result.status==='submitted')serviceFailures=0;
     else if(task.result.status==='submittedWithErrors')serviceFailures=0;
     else recordFailure(task.result.error);
-    await save(job);
+    await checkpoint();
    }
+   await pool([...groups.values()],4,async(group,_index,stopped)=>{for(const {task,index} of group){if(stopped())return;await submit(task,index);}});
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
    job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
    job.reactivationFinishedAt=now();

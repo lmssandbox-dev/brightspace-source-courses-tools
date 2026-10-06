@@ -74,3 +74,13 @@ test('native copy checks queue only pending tokens and preserve expiry-independe
  assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(writes,1);
  job.status='copiesConcluded';job.tasks[1].result.status='COMPLETE';assert.equal(await store.requestCopyCheck('copy','owner'),false);assert.equal(writes,1);
 });
+
+test('copy/deployment checkpoints persist only selected task paths with worker fencing',async()=>{
+ const {DIRTY}=require('../src/shared/dateChunks');
+ for(const kind of ['courseCopy','sourceDeployment']){
+  const s=setup(),job={_id:'j',kind,status:'running',rows:Array.from({length:5000},()=>({code:'private'})),tasks:[{result:{status:'PENDING',jobToken:'keep'}},{result:{status:'uncertain'}}],courses:[],totals:{total:2}};
+  job[DIRTY]={tasks:[1]};const saved=s.store.save(job,'w');job.tasks[1].result.status='changed after snapshot';await saved;
+  const write=s.calls.find(c=>c.name==='bulk_date_jobs').update.$set;
+  assert.equal(write.tasks,undefined);assert.equal(write.rows,undefined);assert.equal(write.courses,undefined);assert.equal(write['tasks.0'],undefined);assert.equal(write['tasks.1'].result.status,'uncertain');assert.ok(JSON.stringify(write).length<500);
+ }
+});

@@ -2,6 +2,7 @@
 const {deploymentDiagnostics}=require('./diagnostics');
 const {atLeast}=require('../shared/client');
 const {targetStatus}=require('./outcomes');
+const {pool}=require('../shared/pool');
 function createCopyMonitor({store,api,leRoot,now=Date.now}){
  let busy=false;
  const supported=atLeast(new URL(leRoot).pathname.split('/').at(-1),'1.91');
@@ -15,7 +16,7 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
    const pendingIds=job.copyCheck?.targetIds?new Set(job.copyCheck.targetIds):null;
    const targets=job.tasks.flatMap(task=>task.targets.filter(target=>['submitted','uncertain'].includes(targetStatus(task,target))&&(!pendingIds||pendingIds.has(String(target.orgUnitId)))).map(target=>({task,target})));
    const cursor=job.copyMonitorCursor||0,updates={};
-   for(const {task,target} of targets.slice(cursor,cursor+10)){
+   await pool(targets.slice(cursor,cursor+10),4,async({task,target})=>{
     if(leaseLost)throw Error('Copy-check lease lost');
     const result={checkedAt:now(),status:'Awaiting copy logs',details:''};
     try{
@@ -45,7 +46,7 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
      if(status!==404){result.status='Monitoring unavailable';result.details=!supported?'Copy logs require LE 1.91 or later.':status===403?'The Service User needs permission to view course-copy logs.':status?`Copy log lookup returned HTTP ${status}.`:'Copy log lookup failed or returned an unexpected response.';}
     }
     updates[target.orgUnitId]=result;
-   }
+   });
    const next=cursor+10>=targets.length?0:cursor+10;
    await store.saveCopyMonitor(job,updates,next,now());
   }catch{ /* Monitoring never interrupts deployments; expired claims can be retried. */ }

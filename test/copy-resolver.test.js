@@ -50,3 +50,14 @@ test('inventory checkpoint failures abort instead of issuing fallback reads',asy
  let reads=0;const resolver=createCopyResolver({root,api:{read:async()=>{reads++;return page([]);}},sourceClient:forbidden});
  await assert.rejects(()=>resolver(Array.from({length:250},(_,i)=>row('','C'+i)),async()=>{},async()=>{throw Error('storage unavailable');}),/storage unavailable/);assert.equal(reads,1);
 });
+
+test('direct ID-only validation makes zero API requests for 5,000 mappings',async()=>{
+ const rows=Array.from({length:5000},(_,i)=>({status:'pending',originId:String(i+1),destinationId:String(i+10001)}));
+ const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async()=>assert.fail('ID validation must not call API')}})(rows,async()=>{},async()=>{},{direct:true});
+ for(const row of rows){assert.equal((await resolve(row,'origin')).orgUnitId,row.originId);assert.equal((await resolve(row,'destination')).orgUnitId,row.destinationId);}
+});
+test('direct code validation resolves aliases without detail calls, still rejects mismatched IDs',async()=>{
+ let reads=0;const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async()=>{reads++;return page([unit(2,'B','Custom')]);}}})([row()],async()=>{},async()=>{},{direct:true});
+ assert.equal((await resolve({originCode:'B'},'origin')).orgUnitId,'2');
+ await assert.rejects(()=>resolve({originCode:'B',originId:'3'},'origin'),/different/);assert.equal(reads,1);
+});

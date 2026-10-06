@@ -106,10 +106,16 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       return decodeDateJob((await jobs.findOneAndUpdate({namespace,status:'validating'},{$set:{status:'planning',worker,updatedAt:now()}},{sort:{createdAt:1},returnDocument:'after'})).value,chunks,namespace);
     },
     async save(job,worker) {
+      const dirty=job[DIRTY];
+      let snapshot=job;
+      if(job.kind!=='dates'&&dirty){
+        const {rows,tasks,courses,...metadata}=job;snapshot=JSON.parse(JSON.stringify(metadata));
+        for(const field of ['rows','tasks','courses'])for(const index of dirty[field]||[])snapshot[`${field}.${index}`]=JSON.parse(JSON.stringify(job[field][index]));
+      }
       await this.renew(worker);
-      if(job.kind!=='dates'&&Buffer.byteLength(JSON.stringify(job))>8*1024*1024)throw new Error('Job exceeds storage limit.');
+      if(job.kind!=='dates'&&Buffer.byteLength(JSON.stringify(snapshot))>8*1024*1024)throw new Error('Job exceeds storage limit.');
       const {jobs,chunks}=await collections();
-      const encoded=job.kind==='dates'?await encodeDateJob(job,chunks,namespace,job.dateChunks):job;
+      const encoded=job.kind==='dates'?await encodeDateJob(job,chunks,namespace,job.dateChunks):snapshot;
       await this.renew(worker);
       const {_id,...data}=encoded;
       if(encoded.storageVersion===2&&job[DIRTY]&&job.dateChunks){
