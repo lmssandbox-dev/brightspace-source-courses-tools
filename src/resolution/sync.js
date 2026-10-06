@@ -98,6 +98,6 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
    throw error;
   }finally{clearInterval(heartbeat);busy=false;}
  }
- return {run,async tick(){if(enabled)try{await run();}catch{/* Logged; old published directory remains usable. */}}};
+ return {run,async tick(){try{if(enabled||(await store.status())?.manualRequested)await run();}catch{/* Logged; old published directory remains usable. */}}};
 }
 module.exports={createDirectorySync,nextNight,selectExtracts,selectSchema,datasetSummary,planSync};

@@ -384,5 +384,12 @@
   "Check the results": "Check the results",
   "Keep in mind": "Keep in mind",
   "Review first": "Review first",
-  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course."
+  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.",
+  "Sync org units": "Sync org units",
+  "Requesting org unit sync…": "Requesting org unit sync…",
+  "Org unit sync requested. It will run in the background.": "Org unit sync requested. It will run in the background.",
+  "An org unit sync is already pending or running.": "An org unit sync is already pending or running.",
+  "Please wait a minute before requesting another sync.": "Please wait a minute before requesting another sync.",
+  "Relaunch through Brightspace to sync org units.": "Relaunch through Brightspace to sync org units.",
+  "Could not request the sync. Please try again.": "Could not request the sync. Please try again."
 }

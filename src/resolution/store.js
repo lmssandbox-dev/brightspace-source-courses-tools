@@ -26,6 +26,13 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   },
   async remember(code,matches,verifiedAt){if(!matches.length)return;const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]}}}],{upsert:true});},
   async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},
+  async requestSync(){
+   const state=(await db()).collection('org_resolution_state');
+   try{await state.updateOne({_id:metaId},{$setOnInsert:{namespace,nextRunAt:0,leaseUntil:0}},{upsert:true});}catch(e){if(e.code!==11000)throw e;}
+   const result=await state.updateOne({_id:metaId,leaseUntil:{$lte:now()},$or:[{manualRequestedAt:{$lte:now()-60000}},{manualRequestedAt:{$exists:false}}]},{$set:{manualRequested:true,manualRequestedAt:now(),nextRunAt:0}});
+   if(result.matchedCount===1)return 'queued';
+   const current=await state.findOne({_id:metaId});return current?.leaseUntil>now()||current?.manualRequested?'running':'cooldown';
+  },
   async claim(force=false){const d=await db(),state=d.collection('org_resolution_state');try{await state.updateOne({_id:metaId},{$setOnInsert:{namespace,nextRunAt:0,leaseUntil:0}},{upsert:true});}catch(e){if(e.code!==11000)throw e;}
    const token=randomUUID();const r=await state.findOneAndUpdate({_id:metaId,leaseUntil:{$lte:now()},...(!force?{nextRunAt:{$lte:now()}}:{})},{$set:{token,leaseUntil:now()+120000,startedAt:now(),status:'running'}},{returnDocument:'after'});return r?.value?token:null;
   },
@@ -47,7 +54,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    const r=await state.updateOne({_id:metaId,token,leaseUntil:{$gt:now()},$or:[{asOf:{$lte:asOf}},{asOf:{$exists:false}}]},update);
    if(r.matchedCount!==1)throw Object.assign(Error('Snapshot not published'),{code:'RESOLUTION_PUBLISH_REJECTED'});
   },
-  async finish(token,nextRunAt,error){await (await db()).collection('org_resolution_state').updateOne({_id:metaId,token},{$set:{status:error?'failed':'ready',lastError:error?{name:/^[A-Za-z0-9_]{1,80}$/.test(error.name||'')?error.name:'Error',code:/^[A-Za-z0-9_:-]{1,100}$/.test(String(error.code||''))?String(error.code):'',status:Number.isInteger(error.status??error.response?.status)?(error.status??error.response?.status):null}:null,finishedAt:now(),nextRunAt,leaseUntil:0},$unset:{token:''}});},
+  async finish(token,nextRunAt,error){await (await db()).collection('org_resolution_state').updateOne({_id:metaId,token},{$set:{status:error?'failed':'ready',lastError:error?{name:/^[A-Za-z0-9_]{1,80}$/.test(error.name||'')?error.name:'Error',code:/^[A-Za-z0-9_:-]{1,100}$/.test(String(error.code||''))?String(error.code):'',status:Number.isInteger(error.status??error.response?.status)?(error.status??error.response?.status):null}:null,finishedAt:now(),nextRunAt,leaseUntil:0},$unset:{token:'',manualRequested:''}});},
   async cleanup(generation,fullAt){
    const d=await db(),state=d.collection('org_resolution_state'),meta=await state.findOne({_id:metaId}),cutoff=now()-86400000;
    // Retention starts at replacement, not import time: a weekly-old snapshot can still have readers.

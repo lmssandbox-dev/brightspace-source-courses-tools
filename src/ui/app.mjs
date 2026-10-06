@@ -5,7 +5,7 @@ import '@brightspace-ui/core/components/loading-spinner/loading-spinner.js';
 import './app.css';
 
 // Enhance real HTML buttons: native validation, submitter name/value and signed POSTs remain intact.
-for (const native of document.querySelectorAll('button:not([data-sidebar-native])')) {
+for (const native of document.querySelectorAll('button:not([data-sidebar-native]):not([data-org-sync])')) {
  const button=document.createElement('d2l-button');
  button.textContent=native.textContent;button.primary=native.classList.contains('primary');button.disabled=native.disabled;
  button.addEventListener('click',()=>native.click());
@@ -57,3 +57,21 @@ initLanguage();
 
 // Remove the initial, dependency-free launch indicator after enhancement and translation.
 document.querySelector('[data-launch-loading]')?.remove();
+
+// Request a durable background refresh without navigating away or losing form inputs.
+const orgSync=document.querySelector('[data-org-sync]');
+if(orgSync){
+ const feedback=document.querySelector('[data-org-sync-feedback]');let timer;
+ orgSync.addEventListener('click',async()=>{
+  orgSync.disabled=true;orgSync.setAttribute('aria-busy','true');clearTimeout(timer);
+  feedback.hidden=false;message(feedback,'Requesting org unit sync…');
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
+  try{
+   const response=await fetch('/org-directory/sync',{signal:controller.signal,method:'POST',credentials:'same-origin',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({ltik:orgSync.dataset.ltik,ticket:orgSync.dataset.ticket})});
+   const result=await response.json();
+   const labels={queued:'Org unit sync requested. It will run in the background.',running:'An org unit sync is already pending or running.',cooldown:'Please wait a minute before requesting another sync.',expired:'Relaunch through Brightspace to sync org units.',unauthorized:'Relaunch through Brightspace to sync org units.',unavailable:'Could not request the sync. Please try again.'};
+   message(feedback,labels[result.state]||labels.unavailable);
+  }catch{message(feedback,'Could not request the sync. Please try again.');}
+  finally{clearTimeout(timeout);orgSync.disabled=false;orgSync.removeAttribute('aria-busy');timer=setTimeout(()=>{feedback.hidden=true;},8000);}
+ });
+}

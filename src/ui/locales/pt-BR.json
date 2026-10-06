@@ -384,5 +384,12 @@
   "Check the results": "Confira os resultados",
   "Keep in mind": "Lembre-se",
   "Review first": "Revise primeiro",
-  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copie todos ou alguns componentes de uma oferta de curso para uma oferta de curso ou curso de origem existente."
+  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copie todos ou alguns componentes de uma oferta de curso para uma oferta de curso ou curso de origem existente.",
+  "Sync org units": "Sincronizar unidades organizacionais",
+  "Requesting org unit sync…": "Solicitando sincronização…",
+  "Org unit sync requested. It will run in the background.": "Sincronização solicitada. Será executada em segundo plano.",
+  "An org unit sync is already pending or running.": "Já existe uma sincronização pendente ou em andamento.",
+  "Please wait a minute before requesting another sync.": "Aguarde um minuto antes de solicitar outra sincronização.",
+  "Relaunch through Brightspace to sync org units.": "Abra novamente pelo Brightspace para sincronizar.",
+  "Could not request the sync. Please try again.": "Não foi possível solicitar a sincronização. Tente novamente."
 }
