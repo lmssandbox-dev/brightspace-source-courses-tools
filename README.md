@@ -199,3 +199,5 @@ Run `node scripts/sync-org-units.js` to initialize/refresh after granting the Se
 
 
 Directory sync now downloads a full plus newer differentials for initial setup (and once when upgrading a legacy cache). Later runs download only unprocessed differentials; a newer full rebuilds the baseline. There is no fixed 36-hour interval assumption. The extract ledger and directory publish together after success. Incremental runs use a bounded local MongoDB staging copy for atomic publication, so they reduce API downloads but still require staging storage and database I/O. See [RESOLUTION.md](RESOLUTION.md) for continuity checks and operational details. No environment or CSV changes are required.
+
+Use the sync icon beside Language to request an org-unit directory refresh without leaving your current form. Hover for its label. A short message confirms the background request; server-side sync reports show the final result. See [RESOLUTION.md](RESOLUTION.md).

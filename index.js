@@ -164,6 +164,9 @@ const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256'
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
 const resolution=require('./src/resolution/runtime').createResolutionRuntime({api:brightspace,http:apiHttp,downloadHttp:axios,oauth,baseUrl:BS_URL,lpVersion,uri:MONGODB_URL,clientId:D2L_OAUTH2_CLIENT_ID});
 const orgResolver=resolution.resolver;
+const syncControls=require('./src/resolution/routes').createSyncControls({store:resolution.store,sync:resolution.sync,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID});
+lti.app.locals.orgSyncTicket=syncControls.ticket;
+lti.app.post('/org-directory/sync',syncControls.request);
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
 const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
