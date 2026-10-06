@@ -34,10 +34,11 @@ function parseDeploymentCsv(text){
  if(!rows.some(r=>r.status!=='ignored'))throw invalid('CSV contains no mappings.');
  return rows;
 }
-function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
+function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.now}){
  return {
   parse:parseDeploymentCsv,
   async plan(job,save){
+   const session=orgResolver?await orgResolver.prepare(job.rows.filter(r=>r.status==='pending').flatMap(r=>[r.sourceCode,r.targetCode])):null;
    const codes=new Map(),resolved=new Map();
    let processed=job.rows.filter(row=>row.status!=='pending').length;
    const cached=(map,key,load)=>{if(!map.has(key))map.set(key,Promise.resolve().then(load));return map.get(key);};
@@ -45,8 +46,8 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
     if(row.status!=='pending')return;
     try{
      for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']])if(row[codeField]){
-      if(!resolveCode)throw Error('Code lookup unavailable');
-      const value=await cached(codes,row[codeField],()=>resolveCode(row[codeField]));
+      if(!resolveCode&&!session)throw Error('Code lookup unavailable');
+      const value=await cached(codes,row[codeField],()=>session?session.resolve(row[codeField]).then(r=>r.Identifier):resolveCode(row[codeField]));
       if(row[idField]&&row[idField]!==value)throw Error('ID/code mismatch');row[idField]=value;
      }
      if(row.sourceId===row.targetId)throw Error('Source and replica must differ');

@@ -1,7 +1,7 @@
 'use strict';
 const {id}=require('../shared/id');
-// Cache exact-code lookups only within one validation job; never scan the directory.
-function createCopyResolver({api,root,sourceClient}){
+// Shared directory first; per-job promises deduplicate misses. Never scan the API directory.
+function createCopyResolver({api,root,sourceClient,orgResolver}){
  async function pages(url,{limit=100,check=async()=>{},progress=async()=>{}}={}){
   const rows=[],seen=new Set();let next=url;
   for(let page=0;next;page++){
@@ -19,8 +19,10 @@ function createCopyResolver({api,root,sourceClient}){
  return async function prepare(rows,check,progress,{direct=false}={}){
   const originalCheck=check;check=async()=>{try{await originalCheck();}catch(e){e.persistenceFailure=true;throw e;}};
   const originalProgress=progress;progress=async(...args)=>{try{await originalProgress(...args);}catch(e){e.persistenceFailure=true;throw e;}};
+  const session=orgResolver?await orgResolver.prepare(rows.flatMap(r=>[r.originCode,r.destinationCode]),check):null;
   const codeCache=new Map(),idCache=new Map(),validated=new Map();
   const readCode=code=>{
+   if(session)return session.resolve(code).then(record=>[record]);
    if(!codeCache.has(code)){const url=new URL(`${root}/orgstructure/`);url.searchParams.set('exactOrgUnitCode',code);codeCache.set(code,pages(url.href,{check}).then(value=>{if(!value)throw Error('Code lookup exceeded its page limit');return value;}));}
    return codeCache.get(code);
   };

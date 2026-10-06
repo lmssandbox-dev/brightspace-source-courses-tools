@@ -51,17 +51,20 @@ function createBrightspaceClient({ get, leRoot }) {
       throw new ApiReadError(error.response?.status);
     }
   }
-  async function list(path, raw) {
+  async function list(path, raw, {check=async()=>{},maxPages=10000,maxItems=1000000}={}) {
     let next = safeUrl(path);
     const seen = new Set();
     const result = [];
     while (next) {
+      await check();
+      if(seen.size>=maxPages || result.length>=maxItems) throw new Error('Brightspace list exceeds its limit');
       if (seen.has(next)) throw new Error('Brightspace pagination cycle detected');
       seen.add(next);
       const page = await read(next, raw);
-      if (Array.isArray(page)) return result.concat(page);
+      if (Array.isArray(page)) {if(result.length+page.length>maxItems)throw new Error('Brightspace list exceeds its limit');return result.concat(page);}
       if (page && Array.isArray(page.Items) && page.PagingInfo) {
         if (typeof page.PagingInfo.HasMoreItems !== 'boolean') throw new Error('Invalid paging metadata');
+        if(result.length+page.Items.length>maxItems)throw new Error('Brightspace list exceeds its limit');
         result.push(...page.Items);
         if (!page.PagingInfo.HasMoreItems) return result;
         const bookmark = page.PagingInfo.Bookmark;
@@ -76,6 +79,7 @@ function createBrightspaceClient({ get, leRoot }) {
       if (!page || !Array.isArray(page.Objects) || !Object.hasOwn(page, 'Next')) {
         throw new Error('Invalid Brightspace list response');
       }
+      if(result.length+page.Objects.length>maxItems)throw new Error('Brightspace list exceeds its limit');
       result.push(...page.Objects);
       if (page.Next != null && (typeof page.Next !== 'string' || !page.Next)) {
         throw new Error('Invalid Brightspace pagination link');

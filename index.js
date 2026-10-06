@@ -162,16 +162,18 @@ const writeEnabled = type => hasScope(D2L_OAUTH2_SCOPES, {assignment:'dropbox:fo
 const activityDates = createActivityDates({writers,deploymentId:BS_DEPLOYMENT_ID,writeEnabled});
 const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256').update(`${BS_URL}|${BS_DEPLOYMENT_ID}`).digest('hex')});
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
+const resolution=require('./src/resolution/runtime').createResolutionRuntime({api:brightspace,http:apiHttp,downloadHttp:axios,oauth,baseUrl:BS_URL,lpVersion,uri:MONGODB_URL,clientId:D2L_OAUTH2_CLIENT_ID});
+const orgResolver=resolution.resolver;
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
 const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
 const {createCopyClient}=require('./src/copy/client');
 const {createCopyJobs}=require('./src/copy/jobs');
 const {createCopyView}=require('./src/copy/view');
-const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient,lpVersion})});
-const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,resolveCode:code=>sourceClient.resolveCode(code)});
+const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient,lpVersion,orgResolver})});
+const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,orgResolver,resolveCode:code=>sourceClient.resolveCode(code)});
 const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,
-  courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient})});
+  courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient,orgResolver})});
 const bulkDates = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,writeEnabled});
 const deploymentRoutes = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'sourceDeployment',view:createDeploymentView({enabled:deployEnabled})});
 const copyRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'courseCopy',view:createCopyView()});
@@ -216,6 +218,8 @@ const start = async () => {
     await lti.deploy({ port });
     const bulkTimer = setInterval(() => { void bulkJobs.tick(); }, 2000);
     bulkTimer.unref();
+    void resolution.sync.tick();
+    const directoryTimer=setInterval(()=>{void resolution.sync.tick();},60000);directoryTimer.unref();
     const copyTimer=setInterval(()=>{void copyMonitor.tick();},10000);
     copyTimer.unref();
     if (!BS_DEPLOYMENT_ID?.trim()) {

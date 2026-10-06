@@ -44,7 +44,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Check your requested dates</h2><p>${escape(e.code==='INVALID_DATE'?e.message:'Enter valid dates and a time zone.')}</p></section>${form(res)}`);}
         let job;
         try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components,validationMode:req.body.validationMode});}
-        catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
+        catch(e){if(!['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code))require('./diagnostics').logFailure('job_create_failed',e,{kind});return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
         return res.send(render(res,job));
       }
       const job=await jobs.get(req.body.jobId,owner(res));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
@@ -64,7 +64,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       if(action==='cancel'&&!await jobs.cancel(job._id,owner(res)))return res.status(409).send('Job is already processing or finished.');
       if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition',`attachment; filename="${kind==='courseCopy'?'course-copy':kind==='sourceDeployment'?'deploy':'date-manager'}-results.csv"`);return res.send(translateReport(view?view.report(job):report(job),req.body.uiLanguage));}
       return res.send(render(res,await jobs.get(job._id,owner(res)),Number(req.body.page)||1));
-    } catch {return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
+    } catch(error) {require('./diagnostics').logFailure('job_request_failed',error,{kind,action,jobId:req.body?.jobId});return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
   };
   return handlers;
 }

@@ -1,6 +1,6 @@
 # Server environment setup
 
-This guide covers all 17 variables used by the app. Start with `.env.example`. Use one server instance per Brightspace tenant, with its own configuration and database. No real credentials are included in the template.
+This guide covers the core variables and optional shared-directory settings used by the app. Start with `.env.example`. Use one server instance per Brightspace tenant, with its own configuration and database. No real credentials are included in the template.
 
 For local use, copy `.env.example` to `.env` and replace the placeholders. On Render, enter the variables under the service's Environment settings. Render values should not include the surrounding quotes used in a .env file. Do not commit `.env` or private keys. Deploy the current project source before configuring a custom database name.
 
@@ -25,6 +25,16 @@ For local use, copy `.env.example` to `.env` and replace the placeholders. On Re
 | `D2L_OAUTH2_SCOPES` | Required | Space-separated scopes allowed by the OAuth application and requested by this app. Obtain/approve them with the Brightspace administrator using the endpoint documentation. Scopes alone do not grant Service User permissions. See below. |
 | `D2L_LE_VERSION` | Required | Supported Learning Environment API version, entered as `1.91`, not a URL. The app's date operations require at least 1.90; copy-log checks require **1.91 or later**. Confirm tenant support with the Brightspace API version discovery endpoint `/d2l/api/versions/`. |
 | `D2L_LP_VERSION` | Optional; `1.53` | Learning Platform API version. Source deployment requires 1.53 or later; verify tenant support. LP 1.54+ course updates require extra locale/address-book fields in the course response. |
+
+### Optional shared-directory settings
+
+| Variable | Default | Meaning and source |
+| --- | --- | --- |
+| `ORG_UNIT_DATASET_SYNC_ENABLED` | `true` | Enable the app's scheduled dataset import. `false` keeps persistent/live-miss resolution but disables automatic imports. |
+| `ORG_UNIT_DATASET_SYNC_HOUR_UTC` | `6` | UTC hour 0–23 selected by the administrator, preferably after dataset generation. Default is 03:00 Brasília. |
+| `ORG_UNIT_DATASET_SCHEMA_ID` | Auto-detected | Optional Organizational Units SchemaId returned by the dataset API; not its PluginId and not a secret. |
+
+See [RESOLUTION.md](RESOLUTION.md) for the nightly full/differential import, manual initialization, storage limits and freshness policy. Existing OAuth credentials are reused. The modern API requires `datasets:bds:read`; grant the Service User access to Brightspace Data Sets and the Organizational Units download. Legacy `datahub:dataexports:read` alone is insufficient. Until access is ready, misses can still resolve through orgstructure and populate the persistent directory.
 
 The application accepts database names of 1–63 letters, digits, underscores or hyphens. `admin`, `local`, `config`, missing database paths and `dbName` query overrides are rejected. MongoDB creates the selected database on the first successful write if permissions allow it. Connecting does not migrate or copy existing data. Both LTI records and application jobs use the configured database. A dedicated database user per installation is recommended; sharing a user works if it has the necessary access, but gives less isolation.
 

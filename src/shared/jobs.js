@@ -41,12 +41,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
     const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row])),resolutionCache=new Map();
+    const codeSession=await courses.prepare?.(job.rows.filter(r=>r.status==='pending'));
     let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
     let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
     await pool(job.rows.filter(r=>r.status==='pending'),8,async row=>{
       try {
-        const course=await courses.resolve(row,{cache:resolutionCache});
+        const course=await courses.resolve(row,{cache:resolutionCache,resolver:codeSession});
         row.resolvedId=course.orgUnitId;
         if(resolved.has(course.orgUnitId)){row.status='duplicate';row.duplicateOf=resolved.get(course.orgUnitId);row.message='Same resolved course; processed once.';}
         else {
@@ -163,6 +164,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         await save(job);
       } catch(error) {
         if(error.code==='JOB_CANCELLED')return;
+        require('./diagnostics').logFailure('job_worker_failed',error,{kind:job?.kind,jobId:job?._id});
         if(job) {if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused; saved progress will resume. In-flight writes will be flagged for review.';}else interruptJob(job);
           try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
       } finally {clearInterval(heartbeat);if(held)await store.release(worker).catch(()=>{});busy=false;}
