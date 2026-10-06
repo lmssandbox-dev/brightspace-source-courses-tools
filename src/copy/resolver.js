@@ -50,8 +50,8 @@ function createCopyResolver({api,root,sourceClient}){
     record=await idCache.get(value);
    }
    if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');
+   if(direct)return {orgUnitId:value,name:typeof record.Name==='string'?record.Name:''};
    if(id(record.Identifier)!==value||typeof record.Name!=='string')throw Error('Invalid org-unit metadata');
-   if(direct)return {orgUnitId:value,name:record.Name};
    // Standard type codes only; custom or unrecognized types retain authoritative validation.
    const type=String(record.Type?.Code||'').replace(/[^a-z]/gi,'').toLowerCase();
    const offering=type==='courseoffering',source=type==='sourcecourse';

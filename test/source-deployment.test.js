@@ -42,8 +42,8 @@ test('deployment planner is read-only; valid mappings group replicas by source',
  const s=workflow();await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'ready');assert.equal(s.job.tasks.length,2);assert.equal(s.job.tasks[0].targets.length,2);assert.ok(s.calls.every(c=>typeof c==='string'));
  await s.engine.execute(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');assert.equal(s.calls.filter(c=>typeof c==='object').length,2);
 });
-test('invalid targets block preview and revalidation or missing scope prevent all POSTs',async()=>{
- const s=workflow({badTarget:true});await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'failed');
+test('ID-only planning skips checks; execution preparation and missing scopes still prevent unsafe POSTs',async()=>{
+ const s=workflow({badTarget:true});await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'ready');assert.equal(s.calls.length,0);
  for(const option of [{badTarget:true},{enabled:false}]){
   const good=workflow();await good.engine.plan(good.job,async()=>{});const bad=workflow(option);await bad.engine.execute(good.job,async()=>{},async()=>{});assert.equal(good.job.status,'failed');assert.ok(bad.calls.every(c=>typeof c==='string'));
  }
@@ -100,7 +100,7 @@ test('source validation succeeds when only optional name lookup is forbidden',as
  const source=await c.source('9532');assert.equal(source.name,'Source Course 9532');assert.equal(source.orgUnitId,'9532');assert.match(source.warning,/HTTP 403/);assert.equal(calls.length,2);
  const engine=createDeploymentJobs({enabled:()=>true,client:{source:c.source,target:async orgUnitId=>({orgUnitId,name:'Replica',isActive:true})}});
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n9532,,8062,\n9532,,8063,'),tasks:[]};
- await engine.plan(job,async()=>{});assert.equal(job.status,'ready');assert.equal(job.tasks[0].targets.length,2);assert.match(job.rows[0].message,/display name/);
+ await engine.plan(job,async()=>{});assert.equal(job.status,'ready');assert.equal(job.tasks[0].targets.length,2);assert.equal(job.rows[0].message,undefined);assert.equal(calls.length,2);
 });
 test('source validation errors cannot be bypassed by optional metadata fallback',async()=>{
  for(const status of [401,403,404,429,500]){
@@ -114,7 +114,8 @@ test('replica validation reports the failing ID, version and status without raw 
  const c=createSourceDeploymentClient({baseUrl:'https://tenant.example',lpVersion:'1.53',api:{read:async()=>{throw {status:404,message:'SECRET'};}}});
  const engine=createDeploymentJobs({enabled:()=>true,client:{source:async()=>({name:'Source'}),target:c.target}});
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n9532,,8062,'),tasks:[]};
- await engine.plan(job,async()=>{});assert.equal(job.status,'failed');assert.match(job.rows[0].message,/Replica.*8062.*LP 1.53, HTTP 404/);assert.doesNotMatch(job.rows[0].message,/SECRET/);
+ await engine.plan(job,async()=>{});assert.equal(job.status,'ready');
+ await assert.rejects(()=>c.target('8062'),e=>/Replica.*8062.*LP 1.53, HTTP 404/.test(e.message)&&!e.message.includes('SECRET'));
 });
 
 test('10,000 mappings are accepted and split into bounded deployment batches',async()=>{
@@ -262,7 +263,7 @@ test('parallel deployment preview caches repeated codes and course reads and bat
  const codeReads=new Map();let sourceReads=0,targetReads=0,saves=0;
  const engine=createDeploymentJobs({enabled:()=>true,resolveCode:async code=>{codeReads.set(code,(codeReads.get(code)||0)+1);return code==='SOURCE'?'1':code.slice(1);},client:{source:async()=>{sourceReads++;return {name:'Source'};},target:async orgUnitId=>{targetReads++;return {orgUnitId,name:'Replica'};}}});
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:100},(_,i)=>`,SOURCE,,R${i%50+101}`).join('\n')),tasks:[]};
- await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,1);assert.equal(targetReads,50);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,4);assert.equal(job.tasks[0].targets.length,50);
+ await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,0);assert.equal(targetReads,0);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,4);assert.equal(job.tasks[0].targets.length,50);
 });
 
 test('activation retry uses only the affected task checkpoint and preserves saved deployment results',async()=>{
@@ -272,4 +273,12 @@ test('activation retry uses only the affected task checkpoint and preserves save
  const engine=createDeploymentJobs({enabled:()=>true,client:{setActive:async(id,active,before)=>{await before();assert.equal(snapshots.at(-1).activation.writeAttempted,true);writes.push(id);return {status:'updated',verifiedActive:active};},deploy:async()=>assert.fail('retry must not deploy')}});
  await engine.activate(job,async(j,dirty)=>{assert.deepEqual(dirty,{tasks:[0]});snapshots.push(structuredClone(j.tasks[0].targets[0]));},async()=>{});
  assert.deepEqual(writes,['101']);assert.equal(snapshots.length,3);assert.equal(snapshots.at(-1).activation.status,'updated');assert.deepEqual(job.tasks[0].result,submitted);
+});
+
+test('automatic deployment mapping excludes mismatched pairs without detail requests and reports excluded rows',async()=>{
+ const {createDeploymentView}=require('../src/replication/view');let codes=0;const sent=[];
+ const engine=createDeploymentJobs({enabled:()=>true,resolveCode:async code=>{codes++;return {S:'1',T:'2'}[code];},client:{source:async()=>({}),target:async()=>({isActive:false}),setActive:async(id,active)=>({status:'updated',verifiedActive:active}),deploy:async(s,targets)=>{sent.push(...targets);return {status:'submitted',targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}}});
+ const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n1,,3,\n1,S,2,T\n9,S,4,'),tasks:[]};
+ await engine.plan(job,async()=>{});assert.equal(job.status,'ready');assert.equal(codes,2);assert.equal(job.rows[2].status,'invalid');
+ await engine.execute(job,async()=>{},async()=>{});assert.deepEqual(sent.sort(),['2','3']);const report=createDeploymentView({enabled:()=>true}).report(job);assert.match(report,/invalid","notAttempted/);
 });

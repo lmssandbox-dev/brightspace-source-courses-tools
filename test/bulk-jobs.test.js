@@ -48,3 +48,24 @@ test('queued activation dispatches separately and retains the original deploymen
  const jobs=createBulkJobs({store:s.store,deployment:{execute:async()=>{deployments++;},activate:async j=>{activations++;j.status='activated';}}});
  await jobs.tick();assert.equal(deployments,0);assert.equal(activations,1);assert.equal(s.data.get(job._id).status,'activated');assert.equal(s.data.get(job._id).tasks[0].result.deploymentId,'99');
 });
+
+test('date workers overlap independent courses, serialize each course and persist intent before writes',async()=>{
+ const s=setup();let active=0,peak=0;const perCourse=new Set(),validated=new Set();
+ const pause=()=>new Promise(resolve=>setTimeout(resolve,2));
+ const writer={updateActivityDates:async r=>{
+  assert.ok(!perCourse.has(r.orgUnitId));perCourse.add(r.orgUnitId);peak=Math.max(peak,++active);
+  if(!r.dryRun){assert.equal(validated.size,8);const saved=[...s.data.values()][0];assert.equal(saved.tasks.find(t=>t.orgUnitId===r.orgUnitId&&t.activity.id===r.activity.id).result.status,'running');}
+  await pause();active--;perCourse.delete(r.orgUnitId);return {status:r.dryRun?'ready':'updated',verifiedDates:{}};
+ }};
+ const jobs=createBulkJobs({store:s.store,courses:{resolve:async r=>({orgUnitId:r.orgUnitId}),get:async id=>{await pause();validated.add(id);}},discovery:{discover:async()=>({complete:true,activities:[{type:'quiz',id:'1'},{type:'quiz',id:'2'}]})},writers:{quiz:writer},writeEnabled:()=>true});
+ const j=await jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:8},(_,i)=>`${i+1},`).join('\n'),dates});
+ await jobs.tick();assert.equal(peak,4);peak=0;await jobs.confirm(j._id,'a');await jobs.tick();
+ const result=await jobs.get(j._id,'a');assert.equal(peak,4);assert.equal(result.status,'completed');assert.equal(result.totals.updated,16);
+});
+
+test('date chunk snapshots cannot change while database writes are pending',async()=>{
+ const {encodeDateJob}=require('../src/shared/dateChunks');const {createHash}=require('node:crypto');
+ const job={_id:'snapshot',kind:'dates',rows:[{status:'pending'}],courses:[],tasks:[{result:{status:'running'}}]};const records=[];
+ await encodeDateJob(job,{updateOne:async(filter,update)=>{job.tasks[0].result.status='updated';records.push({key:filter._id,items:update.$setOnInsert.items});}},'test');
+ const task=records.find(r=>r.key.includes(':tasks:'));assert.equal(task.items[0].result.status,'running');assert.ok(task.key.endsWith(createHash('sha256').update(JSON.stringify(task.items)).digest('hex')));
+});

@@ -64,7 +64,7 @@ test('cancelling validation stops before the next mapping without any copy submi
  const j=job('1,,2,\n1,,3,');let checked=0,reads=0;
  const worker=createCopyJobs({client:client({origin:async()=>{reads++;return {name:'Origin'};},copy:async()=>assert.fail('validation must never copy')})});
  await assert.rejects(()=>worker.plan(j,async()=>{},async()=>{if(++checked===2)throw Object.assign(Error('cancelled'),{code:'JOB_CANCELLED'});}),{code:'JOB_CANCELLED'});
- assert.equal(reads,1);assert.equal(j.tasks.length,1);assert.equal(j.rows[1].status,'pending');
+ assert.equal(reads,0);assert.equal(j.tasks.length,1);assert.equal(j.rows[1].status,'pending');
  const html=createCopyView().render({}, {...j,status:'planning'}, {controls:()=>'',button:(_r,action)=>action==='cancel'?'CANCEL_VISIBLE':'',now:Date.now});assert.match(html,/CANCEL_VISIBLE/);
 });
 
@@ -80,4 +80,12 @@ test('checkpoint failure drains active workers and never sends the uncheckpointe
  const worker=createCopyJobs({client:client({copy:async(_o,d)=>{await new Promise(r=>setImmediate(r));sent.push(d);return {status:'PENDING',jobToken:d};}})});await worker.plan(j,async()=>{});
  await assert.rejects(()=>worker.execute(j,async(_j,dirty)=>{if(dirty.tasks[0]===0)throw Error('storage');},async()=>{}),/storage/);
  assert.equal(sent.includes('2'),false);assert.equal(sent.includes('6'),false);const done=sent.length;await new Promise(r=>setImmediate(r));assert.equal(sent.length,done);
+});
+
+test('automatic copy mapping resolves only codes and excludes mismatches while valid rows submit',async()=>{
+ const sent=[],resolved=[];const j=job('1,,2,\n1,A,3,C\n9,A,4,');j.validationMode='verified';
+ const worker=createCopyJobs({client:client({origin:async()=>assert.fail('No detail reads'),destination:async()=>assert.fail('No detail reads'),resolveCode:async code=>{resolved.push(code);return {A:'1',C:'3'}[code];},copy:async(o,d)=>{sent.push(d);return {status:'PENDING',jobToken:d};}})});
+ await worker.plan(j,async()=>{});assert.equal(j.status,'ready');assert.equal(j.rows[2].status,'invalid');assert.equal(j.tasks.length,2);
+ await worker.execute(j,async()=>{},async()=>{});assert.deepEqual(sent.sort(),['2','3']);assert.match(createCopyView().report(j),/different org units/);
+ const html=createCopyView().form({locals:{}},{controls:()=>''});assert.doesNotMatch(html,/name="validationMode"/);assert.match(html,/Codes are resolved to IDs/);
 });

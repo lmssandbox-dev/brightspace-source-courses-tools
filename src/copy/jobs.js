@@ -35,7 +35,7 @@ function createCopyJobs({client,now=Date.now}){
  async function resolve(row,side){
   let value=row[side+'Id'];const code=row[side+'Code'];
   if(code){const resolved=await client.resolveCode(code);if(value&&value!==resolved)throw Error('ID and code identify different org units.');value=resolved;}
-  const course=await client[side](value);row[side+'Id']=value;row[side+'Name']=course.name;return value;
+  if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');row[side+'Id']=value;return value;
  }
  function finish(job){
   job.status=job.tasks.length&&job.tasks.every(t=>t.result?.status==='COMPLETE')?'copiesConcluded':job.tasks.some(t=>t.result?.jobToken&&!terminalCopy.has(t.result.status))?'copiesInProcess':'copyNeedsAttention';
@@ -43,7 +43,7 @@ function createCopyJobs({client,now=Date.now}){
  return {parse:parseCopyCsv,selection,
   async plan(job,save,checkCancelled=async()=>{}){
    const destinations=new Map();
-   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);},{direct:job.validationMode==='direct'}):null;
+   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);},{direct:true}):null;
    const resolveRow=async(row,side)=>{
     if(!resolveMetadata)return resolve(row,side);
     const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;
@@ -57,7 +57,7 @@ function createCopyJobs({client,now=Date.now}){
      const origin=await resolveRow(row,'origin'),destination=await resolveRow(row,'destination');
      if(origin===destination)throw Error('Origin and destination must differ.');
      const previous=destinations.get(destination);
-     if(previous){if(previous.originId===origin){row.status='duplicate';row.message='Duplicate mapping; copied once.';}else throw Error('Each destination must have only one origin per job.');}
+     if(previous){if(previous.originId===origin){row.status='duplicate';row.message='Duplicate mapping; copied once.';}else {previous.status='invalid';previous.message='Each destination must have only one origin per job.';throw Error(previous.message);}}
      if(!previous){
      destinations.set(destination,row);row.status='valid';
      job.tasks.push({row:row.row,originId:origin,destinationId:destination});}
@@ -66,9 +66,11 @@ function createCopyJobs({client,now=Date.now}){
     if(job.progress.processed%25===0)await save(job);
    });
    // Avoid order-dependent chains where a destination is also another mapping's origin.
-   const origins=new Set(job.tasks.map(t=>t.originId));
-   for(const row of job.rows)if(row.status==='valid'&&origins.has(row.destinationId)){row.status='invalid';row.message='A destination cannot also be an origin in the same job.';}
-   job.status=job.rows.some(r=>r.status==='invalid')||!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
+   const origins=new Set(job.tasks.map(t=>t.originId)),destinationIds=new Set(job.tasks.map(t=>t.destinationId));
+   for(const row of job.rows)if(row.status==='valid'&&(origins.has(row.destinationId)||destinationIds.has(row.originId))){row.status='invalid';row.message='A destination cannot also be an origin in the same job.';}
+   const eligibleRows=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.row));
+   job.tasks=job.tasks.filter(t=>eligibleRows.has(t.row));
+   job.status=!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
   },
   async execute(job,save,renew){
    if(job.operation==='check'){

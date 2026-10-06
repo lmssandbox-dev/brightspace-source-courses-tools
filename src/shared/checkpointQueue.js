@@ -8,7 +8,7 @@ function createCheckpointQueue(persist,{delayMs=10}={}){
   if(state.failure)return Promise.reject(state.failure);
   const result=new Promise((resolve,reject)=>state.pending.push({dirty,resolve,reject}));
   if(!state.running){state.running=true;schedule();}
-  function schedule(){if(job.kind==='dates')queueMicrotask(()=>void flush());else setTimeout(()=>void flush(),delayMs);}
+  function schedule(){setTimeout(()=>void flush(),delayMs);}
   async function flush(){
    const batch=state.pending.splice(0);let merged;
    if(batch.every(item=>item.dirty)){

@@ -22,7 +22,7 @@ test('large job exceeds old 8 MB cap, round-trips chunks and preserves old check
 test('resumed planning does not repeat resolved rows or duplicate partially previewed activities',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n2,',dates});
  await s.jobs.tick();const saved=s.data.get(j._id);
- saved.status='validating';saved.courses[1].status='pending';saved.tasks=saved.tasks.slice(0,4);
+ saved.status='validating';saved.courses[1].status='pending';saved.tasks=saved.tasks.filter(t=>t.orgUnitId==='1').concat(saved.tasks.filter(t=>t.orgUnitId==='2').slice(0,1));
  const before=s.calls.filter(c=>c==='preview').length;
  await s.jobs.tick();assert.equal(s.data.get(j._id).tasks.length,6);assert.equal(s.calls.filter(c=>c==='preview').length-before,2);
 });

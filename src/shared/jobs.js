@@ -6,6 +6,7 @@ const {validateZone,DEFAULT_ZONE}=require('../dates/timeZone');
 const TYPES=['assignment','quiz','discussionTopic'];
 const MAX_ACTIVITIES=250000;
 const CHECKPOINT_SIZE=50;
+const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
 const counts = tasks => tasks.reduce((out,t)=>{const s=t.result?.status || 'pending';out[s]=(out[s]||0)+1;return out;},{total:tasks.length});
@@ -42,26 +43,32 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row]));
     let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
-    for (const row of job.rows) {
-      if(row.status!=='pending')continue;
+    let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
+    await pool(job.rows.filter(r=>r.status==='pending'),4,async row=>{
       try {
         const course=await courses.resolve(row);
         row.resolvedId=course.orgUnitId;
-        if(resolved.has(course.orgUnitId)){row.status='duplicate';row.duplicateOf=resolved.get(course.orgUnitId);row.message='Same resolved course; processed once.';continue;}
-        resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});
+        if(resolved.has(course.orgUnitId)){row.status='duplicate';row.duplicateOf=resolved.get(course.orgUnitId);row.message='Same resolved course; processed once.';}
+        else {
+        resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});}
       } catch(e) {row.status='invalid';row.message=e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
-      job.progress={phase:'Resolving courses',processed:job.rows.filter(r=>r.status!=='pending').length,total:job.rows.length};
+      job.progress={phase:'Resolving courses',processed:++resolvedRows,total:job.rows.length};
       if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
-    }
+    });
+    job.courses.sort((a,b)=>a.row-b.row);
     await save(job);
-    for (const course of job.courses) {
-      if(course.status!=='pending')continue;
+    let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
+    await pool(job.courses.filter(c=>c.status==='pending'),4,async (course,index,stopped)=>{
+      let checkpointFailure;
       try {
         const found=await discovery.discover(course.orgUnitId,{includeUndated:true});
         if(!found.complete)throw new Error('Incomplete discovery');
-        if(job.tasks.length+found.activities.filter(a=>!previewed.has(`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`)).length>MAX_ACTIVITIES)throw new Error('Activity limit exceeded');
+        const additional=new Set(found.activities.filter(a=>!previewed.has(`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`)).map(a=>`${a.type}:${a.id}:${a.parentId||''}`)).size;
+        if(reserved+additional>MAX_ACTIVITIES)throw new Error('Activity limit exceeded');
+        reserved+=additional;
         course.counts=Object.fromEntries(TYPES.map(t=>[t,found.activities.filter(a=>a.type===t).length]));
         for(const a of found.activities) {
+          if(stopped())return;
           if(!TYPES.includes(a.type))throw new Error('Unsupported type');
           const taskKey=`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`;
           if(previewed.has(taskKey))continue;
@@ -70,13 +77,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           const preview=await writers[a.type].updateActivityDates(request);
           job.tasks.push({orgUnitId:course.orgUnitId,activity,name:a.name,preview});previewed.add(taskKey);
           if(!['ready','unchanged'].includes(preview.status))course.previewInvalid=true;
-          if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
+          if(++checkpoint%CHECKPOINT_SIZE===0)try{await save(job);}catch(error){checkpointFailure=error;throw error;}
         }
         course.status=course.previewInvalid?'invalid':'valid';
-      } catch {course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
-      job.progress={phase:'Discovering activities',processed:job.courses.filter(c=>c.status!=='pending').length,total:job.courses.length,activities:job.tasks.length};
+      } catch(error) {if(checkpointFailure)throw checkpointFailure;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
+      job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:job.tasks.length};
       if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
-    }
+    });
     job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
     job.expiresAt=now()+30*60*1000;
     if(!job.tasks.length)job.message='No eligible activities were found.';
@@ -84,19 +91,23 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function execute(job) {
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
     if(job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
-    for(const course of job.courses) {
-      try {await courses.get(course.orgUnitId);} catch {job.status='failed';job.message='A course is no longer accessible. No updates were started.';return;}
-    }
-    let stop=Boolean(job.systemicFailure);
-    let taskIndex=-1;
-    if(job.kind==='courseCopy'){job.message='Processing interrupted. Saved copy tokens are retained. Check submitted copies; unconfirmed submissions are never automatically repeated.';return job;}
-  for(const task of job.tasks) {
-      taskIndex++;
-      if(task.result?.status==='running'){task.result={status:'failed',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Interrupted during this activity. Inspect its dates before retrying; this write was not repeated.'}};await save(job,{tasks:[taskIndex]});continue;}
+    let inaccessible=false;
+    await pool(job.courses,4,async course=>{
+      try {await courses.get(course.orgUnitId);} catch {inaccessible=true;}
+    });
+    if(inaccessible){job.status='failed';job.message='A course is no longer accessible. No updates were started.';return;}
+    let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running').length;
+    const groups=new Map();
+    job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});
+    await pool([...groups.values()],4,async (group,index,stopped)=>{
+     for(const {task,taskIndex} of group){
+      if(stopped())return;
+      if(task.result?.status==='running'){task.result={status:'failed',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Interrupted during this activity. Inspect its dates before retrying; this write was not repeated.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
       if(task.result)continue;
-      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};continue;}
+      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;continue;}
       await store.renew(worker); // Storage/lease failure stops scheduling before any further write.
       task.result={status:'running',writeAttempted:false};await save(job,{tasks:[taskIndex]});
+      if(stop||stopped()){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
           dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:()=>store.renew(worker),dryRun:false});
@@ -104,14 +115,16 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       const error=task.result.error;
       if(error?.category==='API_FAILURE' && (error.httpStatus==null || [401,403,429].includes(error.httpStatus) || error.httpStatus>=500))stop=true;
       job.systemicFailure=stop;
-      job.progress={phase:'Applying dates',processed:taskIndex+1,total:job.tasks.length};
+      job.progress={phase:'Applying dates',processed:++processed,total:job.tasks.length};
       await save(job,{tasks:[taskIndex]});
-    }
+     }
+    });
+    job.progress={phase:'Applying dates',processed,total:job.tasks.length};
     job.status=job.tasks.some(t=>['failed','skipped'].includes(t.result?.status))?'completedWithErrors':'completed';
   }
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
-      if(kind==='courseCopy'){if(validationMode&&!['direct','verified'].includes(validationMode))throw Object.assign(Error('Invalid validation mode'),{code:'INVALID_CSV'});const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),validationMode:validationMode||'verified',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='courseCopy'){const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);

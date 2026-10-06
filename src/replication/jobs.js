@@ -38,7 +38,7 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
  return {
   parse:parseDeploymentCsv,
   async plan(job,save){
-   const sources=new Map(),codes=new Map(),replicas=new Map(),resolved=new Map();
+   const codes=new Map(),resolved=new Map();
    let processed=job.rows.filter(row=>row.status!=='pending').length;
    const cached=(map,key,load)=>{if(!map.has(key))map.set(key,Promise.resolve().then(load));return map.get(key);};
    await pool(job.rows,4,async row=>{
@@ -50,8 +50,8 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
       if(row[idField]&&row[idField]!==value)throw Error('ID/code mismatch');row[idField]=value;
      }
      if(row.sourceId===row.targetId)throw Error('Source and replica must differ');
-     const source=await cached(sources,row.sourceId,()=>client.source(row.sourceId));
-     const target=await cached(replicas,row.targetId,()=>client.target(row.targetId));
+     const source={orgUnitId:row.sourceId,name:''};
+     const target={orgUnitId:row.targetId,name:''};
      row.sourceName=source.name;row.targetName=target.name;row.status='valid';if(source.warning)row.message=source.warning;
      resolved.set(row,{source,target});
     }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.';}
@@ -73,9 +73,12 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
     if(!task||task.targets.length>=100){task={sourceId:row.sourceId,sourceName:source.name,targets:[],preview:{status:'ready'}};batches.set(row.sourceId,task);job.tasks.push(task);}
     task.targets.push({...target});
    }
-   const resolvedSources=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.sourceId));
-   for(const row of job.rows)if(row.status==='valid'&&resolvedSources.has(row.targetId)){row.status='invalid';row.message='A source in this file cannot also be a deployment target.';}
-   job.status=job.rows.some(r=>r.status==='invalid')||!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
+   const resolvedSources=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.sourceId)),resolvedTargets=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.targetId));
+   for(const row of job.rows)if(row.status==='valid'&&(resolvedSources.has(row.targetId)||resolvedTargets.has(row.sourceId))){row.status='invalid';row.message='A source in this file cannot also be a deployment target.';}
+   const eligible=new Set(job.rows.filter(r=>r.status==='valid').map(r=>`${r.sourceId}:${r.targetId}`));
+   for(const task of job.tasks)task.targets=task.targets.filter(t=>eligible.has(`${task.sourceId}:${t.orgUnitId}`));
+   job.tasks=job.tasks.filter(t=>t.targets.length);
+   job.status=!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
   },
   async activate(job,save,renew){
    if(!enabled()){job.status='activationWithErrors';job.message='Required deployment/course update scopes are unavailable.';return;}

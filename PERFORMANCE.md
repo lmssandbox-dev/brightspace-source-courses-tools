@@ -2,16 +2,13 @@
 
 ## Preparation
 
-Course Copy offers two modes without changing its four-column CSV template:
+Both copy tools automatically use IDs directly and resolve only supplied codes. When both ID and code are supplied, they must agree. No mapping-check selector or extra course-detail reads are used during preparation. Course names may be blank for ID-only mappings. Course Copy defers type/access errors to Brightspace's copy API.
 
-- **Direct submission** is selected on new forms. ID-only rows make no Brightspace validation requests. Codes still resolve to unique IDs; matching ID/code pairs must agree. It skips additional type/access checks and lets the copy API reject unsupported or inaccessible courses at submission. The report records these failures. Course names can be blank for ID-only rows. This mode does not create missing courses or enable Source Courses as origins.
-- **Verify courses before copying** checks org-unit metadata and supported course types before confirmation. Unknown types retain authoritative checks. Existing saved jobs and requests without a mode retain verified behavior.
-
-Both modes enforce the CSV schema, identifier format, 10,000-row/5 MB limits, self-copy prevention, duplicate suppression, conflicting destination rejection and origin/destination overlap rejection. Local errors and unresolved/ambiguous codes block confirmation. Neither mode submits anything until the user confirms. Components and resolved mappings are saved in the confirmed job.
+CSV structure and identifier format, 10,000-row/5 MB limits, self-copy prevention, duplicate suppression and conflicting/overlapping mappings are still checked locally. Invalid or unresolved rows are excluded from executable tasks and remain in the report. Confirmation is available when at least one valid mapping remains, with a warning to review excluded rows. Nothing is submitted before confirmation.
 
 Course Copy resolves at most four mappings concurrently. Repeated codes share one lookup promise. For at least 250 distinct codes, it first attempts a complete directory scan capped at 100 pages / 50,000 records and at most one page per four requested codes; incomplete scans are discarded and exact lookup is used. A scan can cost extra requests on a large tenant. There is no cross-job cache of potentially stale course permissions or codes.
 
-Source Deployer also resolves at most four mappings concurrently and caches codes, source validation and replica metadata within the preview. Conflict detection and source grouping run in CSV order after resolution. Planning saves progress every 25 processed mappings. It retains authoritative source/replica checks and revalidates each batch before changing replica state; direct mode applies only to Course Copy.
+Source Deployer also resolves at most four mappings concurrently and caches code resolution within the preview, with no source/replica detail reads. Conflict detection and source grouping run in CSV order after resolution. Planning saves progress every 25 processed mappings. Execution retains source/replica checks before changing activation state, plus deactivation/read-back, deployment and reactivation safeguards. These execution steps are separate from mapping preparation.
 
 ## Submission and checking
 
@@ -19,7 +16,7 @@ Course Copy has up to four submission workers. Each saves an uncertain-intent ch
 
 Source Deployer runs up to four independent source groups concurrently. Batches for the **same source** remain sequential and contain at most 100 replicas. Every batch preserves this sequence: validate, deactivate and verify replicas, submit deployment, reactivate accepted replicas and verify active state. Rejected and uncertain replicas are never automatically activated. Deployment copy-log monitoring checks up to 10 replicas per dispatch with four concurrent reads and keeps previously confirmed successes.
 
-One primary job still holds the application worker lease. Date Manager execution is still sequential. The API ceiling below covers all these workflows and concurrent monitor traffic together.
+One primary job still holds the application worker lease. Date Manager resolves and discovers up to four courses concurrently, then updates up to four independent courses after every course passes accessibility revalidation. The API ceiling below covers all these workflows and concurrent monitor traffic together.
 
 ## Shared API budget
 
@@ -33,7 +30,7 @@ D2L documents the response headers and dynamic costs in [API rate limiting](http
 
 ## Persistence and interruption
 
-Execution saves only changed task paths plus small job metadata instead of rewriting thousands of rows on every response. Checkpoints are serialized within a job and retain worker/status guards. Copy/deployment checkpoint requests arriving together are combined during a 10 ms collection window; every caller waits for the combined database write before submitting its copy. Requests arriving during a write belong to the next batch. A failed batch rejects all waiting workers and poisons that job queue. Date jobs use a microtask rather than the collection delay. Final saves retain the complete cumulative report. Failed persistence stops scheduling; active workers drain before the lease is released. A systemic copy failure stops new submissions, but up to four already in flight can still complete. Deployment groups similarly finish in-flight batches while stopping new groups/batches after their systemic-failure threshold.
+Execution saves only changed task paths plus small job metadata instead of rewriting thousands of rows on every response. Checkpoints are serialized within a job and retain worker/status guards. Copy/deployment checkpoint requests arriving together are combined during a 10 ms collection window; every caller waits for the combined database write before submitting its copy. Requests arriving during a write belong to the next batch. A failed batch rejects all waiting workers and poisons that job queue. Date jobs also use the 10 ms collection window, with immutable chunk snapshots captured before database writes. Final saves retain the complete cumulative report. Failed persistence stops scheduling; active workers drain before the lease is released. A systemic copy failure stops new submissions, but up to four already in flight can still complete. Deployment groups similarly finish in-flight batches while stopping new groups/batches after their systemic-failure threshold.
 
 Interrupted copy/deployment jobs retain checkpoints and saved tokens; they are not blindly resumed or resubmitted. An accepted request whose response could not be saved remains uncertain. Inspect Brightspace before creating a replacement job. Cancellation during Course Copy preparation stops further validation, with up to four mappings finishing in flight; it cannot undo a submitted Brightspace copy.
 
@@ -77,3 +74,5 @@ Check the Render service region and Atlas cluster/primary region in their dashbo
 Deploy after current jobs finish, repeat the same 11-copy workload and inspect all three reports. Concurrency remains four. The regression suite verifies batching barriers, failure propagation, lease expiry, single initialization and no database polling during a known cooldown. Live latency and throughput must still be measured after deployment.
 
 Source Deployer uses the shared lease reuse, gate waiting and checkpoint coalescing improvements. Activation retries now checkpoint only the affected task, and normal execution omits the redundant end-of-batch save after submission/activation results have already been persisted. Pre-write intent checkpoints, course-state verification, the 100-replica batch limit and sequential batches for each source remain intact. Test a small deployment separately: Course Copy timing does not predict deployment timing because deployment also prepares and reactivates replicas.
+
+Date Manager performance update: course resolution, discovery/preview, accessibility revalidation and application use up to four independent courses. Activities within a course remain sequential. All courses must pass revalidation before any write. Repeated CSV identifiers are deduplicated; resolved aliases are processed once. Checkpoints coalesce for 10 ms and snapshot immutable chunks before database I/O. The 250,000-activity limit reserves capacity before parallel preview work. Existing stale-preview, unrelated-setting preservation, read-back verification, worker fencing and uncertain-write recovery remain enabled. No new environment variables are required. Measure a small date job separately with `node scripts/job-performance-report.js`; copy timings do not predict date-update duration. These changes do not remove cross-region MongoDB latency.
