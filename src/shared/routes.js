@@ -10,7 +10,7 @@ const date=v=>v?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',da
 function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,view,kind='dates'}) {
   const presentation=view||createDateView({writeEnabled});
   if(!secret)throw new Error('Bulk forms require the configured application key.');
-  const prefix=kind==='sourceDeployment'?'/deploy':'/bulk';
+  const prefix=kind==='courseCopy'?'/copy':kind==='sourceDeployment'?'/deploy':'/bulk';
   const guard=deploymentGuard(deploymentId);
   const owner=res=>createHash('sha256').update(JSON.stringify([res.locals.token.iss,res.locals.token.deploymentId,res.locals.token.user])).digest('hex');
   const session=res=>createHash('sha256').update(String(res.locals.ltik)).digest('hex');
@@ -32,24 +32,25 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
     if(!valid(res,req.body?.ticket,action,action==='preview'||action==='history'?'':req.body?.jobId)){res.status(403).send('Form expired or invalid. Relaunch through Brightspace.');return false;}
     return true;
   }
-  const handlers={form,historyButton:res=>button(res,'history','',kind==='dates'?'View Date Jobs':'View Deployment Jobs')};
+  const handlers={form,historyButton:res=>button(res,'history','',kind==='courseCopy'?'View Copy Jobs':kind==='dates'?'View Date Jobs':'View Deployment Jobs')};
   for(const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies'])handlers[action]=async(req,res)=>{
     if(!authorize(req,res,action))return;
     try {
-      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(kind==='sourceDeployment'&&['activated','submitted'].includes(j.status)?(j.copySummary?.total>0&&j.copySummary.copied===j.copySummary.total?'copiesConcluded':'copiesInProcess'):j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
+      if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='courseCopy'?'Course Copy Jobs':kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(kind==='sourceDeployment'&&['activated','submitted'].includes(j.status)?(j.copySummary?.total>0&&j.copySummary.copied===j.copySummary.total?'copiesConcluded':'copiesInProcess'):j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
       if(action==='preview'){
         let dates,timeZone;
         res.locals.dateForm=req.body;
         try {if(kind==='dates'){timeZone=validateZone(req.body.timeZone??DEFAULT_ZONE);dates=Object.fromEntries(['start','due','end'].map(k=>[k,localDateToUtc(req.body[k],timeZone)]));}}
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Check your requested dates</h2><p>${escape(e.code==='INVALID_DATE'?e.message:'Enter valid dates and a time zone.')}</p></section>${form(res)}`);}
         let job;
-        try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind});}
+        try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components});}
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
         return res.send(render(res,job));
       }
       const job=await jobs.get(req.body.jobId,owner(res));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
-      if(action==='checkCopies'){if(kind!=='sourceDeployment'||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
+      if(action==='checkCopies'){if(!['sourceDeployment','courseCopy'].includes(kind)||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
       if(action==='apply') {
+        if(kind==='courseCopy'&&req.body.confirmCopy!=='yes')return res.status(400).send('Confirm copying the selected components before continuing.');
         if(kind==='sourceDeployment'&&req.body.confirmReset!=='yes')return res.status(400).send('Confirm the reset of the listed replicas before deployment.');
         if(!(view?view.canApply():job.tasks.every(t=>writeEnabled(t.activity.type))))return res.status(403).send('A required write scope is unavailable.');
         if(!await jobs.confirm(job._id,owner(res)))return res.status(409).send('Job expired, was already confirmed, or is not ready.');

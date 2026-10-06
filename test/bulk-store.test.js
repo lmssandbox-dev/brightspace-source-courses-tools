@@ -64,3 +64,13 @@ test('copy checks deduplicate pending requests and require ownership',async()=>{
  assert.equal(await store.requestCopyCheck('j','owner'),true);assert.equal(mutations,1);assert.equal(job.copyCheck.runId,run);
  job.copyCheck.status='completed';assert.equal(await store.requestCopyCheck('j','owner'),true);assert.notEqual(job.copyCheck.runId,run);
 });
+
+test('native copy checks queue only pending tokens and preserve expiry-independent ownership guards',async()=>{
+ const job={_id:'copy',kind:'courseCopy',owner:'owner',namespace:'n',status:'copiesInProcess',tasks:[{result:{status:'COMPLETE',jobToken:'done'}},{result:{status:'PENDING',jobToken:'pending'}}]};let writes=0;
+ const collection={findOne:async f=>f.owner===job.owner&&f.kind===job.kind?job:null,updateOne:async(f,u)=>{assert.equal(f.owner,'owner');assert.equal(f.namespace,'n');assert.equal(f.status,job.status);assert.equal(u.$unset.expiresAt,'');writes++;Object.assign(job,u.$set);return {modifiedCount:1};}};
+ const store=createBulkStore({uri:'mongodb://localhost/test_copy',namespace:'n',mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})}});
+ assert.equal(await store.requestCopyCheck('copy','other'),false);
+ assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(job.operation,'check');
+ assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(writes,1);
+ job.status='copiesConcluded';job.tasks[1].result.status='COMPLETE';assert.equal(await store.requestCopyCheck('copy','owner'),false);assert.equal(writes,1);
+});

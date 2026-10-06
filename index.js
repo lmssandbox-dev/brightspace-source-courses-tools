@@ -165,24 +165,29 @@ const lpVersion = process.env.D2L_LP_VERSION || '1.53';
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
 const deployEnabled = () => hasScope(D2L_OAUTH2_SCOPES,'manageCourses:deploy:manage') && hasScope(D2L_OAUTH2_SCOPES,'orgunits:course:update');
 const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
+const {createCopyClient}=require('./src/copy/client');
+const {createCopyJobs}=require('./src/copy/jobs');
+const {createCopyView}=require('./src/copy/view');
+const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient})});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,resolveCode:code=>sourceClient.resolveCode(code)});
-const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,
+const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,
   courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient})});
 const bulkDates = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,writeEnabled});
 const deploymentRoutes = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'sourceDeployment',view:createDeploymentView({enabled:deployEnabled})});
+const copyRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'courseCopy',view:createCopyView()});
 const diagnostics = createDiagnostics({
   workspace: true,
   activityForm: res => workspace({
-    dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
-    selected:res.locals.uiSection||'dates',
-    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
+    copy:copyRoutes.form(res),dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
+    selected:res.locals.uiSection||'copy',
+    history:`<div class="history-grid"><section class="panel"><h3>Course Copy Jobs</h3>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
   client: discovery,
   deploymentId: BS_DEPLOYMENT_ID
 });
 lti.onConnect(diagnostics.launch);
-lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['dates','replication','history'].includes(req.body?.section)?req.body.section:'dates';return diagnostics.launch(res.locals.token,req,res);});
+lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'copy';return diagnostics.launch(res.locals.token,req,res);});
 // Not whitelisted: ltijs validates the LTI session before this handler runs.
 lti.app.get('/diagnostics/activities', diagnostics.activities);
 // Protected POST routes; preview/apply tickets are bound to the validated LTI session.
@@ -195,6 +200,8 @@ for (const action of ['preview','apply','status','cancel','history','report']) {
 for (const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies']) {
   lti.app.post(`/deploy/${action}`, deploymentRoutes[action]);
 }
+
+for(const action of ['preview','apply','status','cancel','history','report','checkCopies'])lti.app.post(`/copy/${action}`,copyRoutes[action]);
 
 // Health-check
 lti.app.get('/ping', (req, res) => {

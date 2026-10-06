@@ -15,6 +15,7 @@ function interruptJob(job) {
     for(const task of job.tasks)for(const target of task.targets)if(target.activation?.status==='running')target.activation={status:'failed',writeAttempted:target.activation.writeAttempted,error:{message:'Activation interrupted. Recheck active state before retrying.'}};
     job.status='activationWithErrors';job.message='Activation interrupted; deployment results are retained. Retry activation to read current states and finish.';return job;
   }
+  if(job.kind==='courseCopy'){job.message='Processing interrupted. Saved copy tokens are retained. Check submitted copies; unconfirmed submissions are never automatically repeated.';return job;}
   for(const task of job.tasks) {
     if(task.result?.status==='running')task.result={status:'failed',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Read its current dates before retrying.'}};
     else if(!task.result)task.result={status:'skipped',writeAttempted:false,error:{message:'Not executed before interruption.'}};
@@ -22,7 +23,7 @@ function interruptJob(job) {
   if(job.kind==='sourceDeployment'){job.message='Deployment processing was interrupted. Check Brightspace before any new submission; saved acceptance IDs remain available.';for(const task of job.tasks)if(task.result?.error?.category==='UNCERTAIN_OUTCOME'){task.result.status='uncertain';task.result.error.message='Deployment outcome is unknown. Check Brightspace before retrying.';}}
   job.totals=counts(job.tasks);return job;
 }
-function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,now=Date.now}) {
+function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
   let busy=false;
   const worker=randomUUID();
   const countCache=new WeakMap();
@@ -81,7 +82,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     }
     let stop=Boolean(job.systemicFailure);
     let taskIndex=-1;
-    for(const task of job.tasks) {
+    if(job.kind==='courseCopy'){job.message='Processing interrupted. Saved copy tokens are retained. Check submitted copies; unconfirmed submissions are never automatically repeated.';return job;}
+  for(const task of job.tasks) {
       taskIndex++;
       if(task.result?.status==='running'){task.result={status:'failed',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Interrupted during this activity. Inspect its dates before retrying; this write was not repeated.'}};await save(job,{tasks:[taskIndex]});continue;}
       if(task.result)continue;
@@ -101,7 +103,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.status=job.tasks.some(t=>['failed','skipped'].includes(t.result?.status))?'completedWithErrors':'completed';
   }
   return {
-    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates'}) {
+    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components}) {
+      if(kind==='courseCopy'){const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
@@ -125,12 +128,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         heartbeat=setInterval(()=>store.renew(worker).catch(()=>{}),10000);heartbeat.unref?.();
         job=await store.claim(worker);if(!job)return;
         if(job.status==='planning') {
-          if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
+          if(job.kind==='courseCopy')await courseCopy.plan(job,save);else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.
           if(blocked){job.status='failed';job.message='A source or target has a deployment awaiting review in Brightspace. Review that job before modifying these courses.';}
           else if(job.kind==='sourceDeployment')await deployment[job.operation==='activate'?'activate':'execute'](job,save,()=>store.renew(worker));
+          else if(job.kind==='courseCopy')await courseCopy.execute(job,save,()=>store.renew(worker));
           else await execute(job);
         }
         await save(job);

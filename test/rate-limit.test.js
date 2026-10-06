@@ -15,3 +15,7 @@ test('network time counts toward spacing instead of adding unnecessary delay',as
  const request=createRateLimitedHttp({baseUrl:'https://tenant.example',now:()=>now,delay:async ms=>{waits.push(ms);now+=ms;},gate:{acquire:async()=>Math.max(0,next-now),release:async n=>{next=n;}},http:async()=>{now+=100;return {status:200,headers:{'x-request-cost':'10'}};}});
  await request(config);await request(config);assert.deepEqual(waits,[]);
 });
+
+test('copy status cost metrics aggregate tokens without persisting token identifiers',async()=>{
+ const s=setup(async()=>({status:200,headers:{'x-request-cost':'10'}}));await s.request({method:'GET',url:'https://tenant.example/d2l/api/le/1.99/import/123/copy/private-token'});assert.equal(s.samples[0].route,'GET /d2l/api/le/1.99/import/:id/copy/:token');
+});

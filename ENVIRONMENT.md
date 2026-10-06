@@ -76,7 +76,7 @@ The Service User must have access to the source and replica org units and permis
 3. Register the LTI tool using the app URLs above; copy Brightspace's issuer, client ID and endpoints. Create its deployment and copy the deployment ID.
 4. Create the Service User and OAuth Client Credentials application with the app's OAuth JWKS URL. Copy the OAuth client ID and configure approved scopes. If Brightspace requires a reachable JWKS before saving registration, host the public JWKS derived from the same RSA key/key ID at an HTTPS setup location, then switch the registration to the app endpoint once deployed. Never publish the private PEM.
 5. Fill all required variables and deploy the current source. Use Node.js 22, `npm ci` for the build and `npm start` to start. Check `/ping` and both public key endpoints.
-6. Launch through the configured Brightspace LTI link. Validate a small CSV and test the two workflows with disposable courses. Check copy results and download the report. Confirm job data is written to the intended MongoDB database.
+6. Launch through the configured Brightspace LTI link. Validate a small CSV and test the three workflows with disposable courses. Check copy results and download the report. Confirm job data is written to the intended MongoDB database.
 
 ## Troubleshooting
 
@@ -107,3 +107,13 @@ Run `node scripts/api-cost-report.js` with this installation's server environmen
 A synthetic 55,000-request test verifies serialization and pacing, not live throughput or the complete workflow request count. Fifty thousand activity updates require additional reads/discovery/verification, and 5,000 deployments require validation and activation calls. Allow hours, not minutes. Existing activity checkpoints and uncertain-write protections remain in effect; deployment restart recovery still requires reviewing interrupted jobs. No guarantee is made that all jobs complete during repeated outages. Validate live at gradually increasing scale before a full production run, including memory, MongoDB storage, report size and lease recovery. Copy checks renew their lease during long cooldowns.
 
 Deployment CSV uploads require all four headers: `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`. The previous two-column format is rejected. Code-based mapping requires orgstructure read access; use the current downloadable template and leave unused ID/code cells empty.
+
+## Bulk Course Copy configuration and permissions
+
+No additional environment variables or Render services are required. The first sidebar tool uses the existing MONGODB_URL, namespace, OAuth client, service user, LTI session, shared rate limiter, D2L_LP_VERSION and D2L_LE_VERSION. Set D2L_LE_VERSION to a tenant-supported version **at least 1.97** (for example, the tested tenant uses 1.99). Earlier versions do not reliably distinguish COMPLETE from COMPLETE_WITH_ERRORS.
+
+The service user must be able to read the origin Course Offering, resolve codes through org structure, read the existing destination (including Source Course validation where applicable), copy the selected course components, and retrieve native copy-job status. Enable the relevant Brightspace course-copy permissions for both org units and the selected tools. Unlike Source Course Deployer, this tool does not require reset or active-state updates for its copy operation. Other tools still require their documented permissions.
+
+D2L's current [copy-job endpoint documentation](https://docs.valence.desire2learn.com/res/course.html#copying-courses) does not list dedicated OAuth scope strings for these two copy routes. Do not infer them from the separate import-job scopes or Source Course deploy scope. Confirm access using the configured OAuth client and linked service user in a test course; authentication and authorization failures are recorded, stop further submissions, and do not trigger permission escalation.
+
+Tenant acceptance: copy a small Course Offering into an existing test Course Offering and a test Source Course, once with all components and once with selected components. Verify content and native status against Brightspace, including COMPLETE_WITH_ERRORS and dependencies. Test that missing destinations are rejected and no course activation changes occur. Inspect `node scripts/api-cost-report.js` for copy POST and token-status GET costs. Metrics remain server-only and contain normalized token paths. Do not begin a large job until tenant access and selections have been validated.

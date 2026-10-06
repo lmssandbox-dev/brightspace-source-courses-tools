@@ -61,7 +61,7 @@ function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,inter
     ?Math.ceil(cost*reset/(remaining-reserve)):0;
    const pacing=Math.max(intervalMs,budgetSpacing,adaptiveSpacing);
    const pause=status===429?Math.max(reset,60000):Number.isFinite(remaining)&&remaining<=Math.max(reserve,knownCost?cost:10)?Math.max(reset,60000):0;
-   await gate.release(Math.max(startedAt+pacing,now()+(pause?pause+1000:0)),{route:String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/\/\d+(?=\/|$)/g,'/:id'),cost:Number.isFinite(cost)&&cost>=0?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,status:status||response?.status});
+   await gate.release(Math.max(startedAt+pacing,now()+(pause?pause+1000:0)),{route:String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/(\/copy\/)[^/]+$/, '$1:token').replace(/\/\d+(?=\/|$)/g,'/:id'),cost:Number.isFinite(cost)&&cost>=0?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,status:status||response?.status});
    if(!error)return response;
    // Only explicit rejection is replayed. Timeouts and ambiguous writes propagate.
    if(status!==429||attempt>=maxRetries)throw error;

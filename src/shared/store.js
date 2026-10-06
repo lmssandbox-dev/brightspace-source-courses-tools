@@ -19,14 +19,21 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(kind==='sourceDeployment'?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1,copyCheck:1,...(kind==='sourceDeployment'?{copySummary:{$let:{vars:{targets:{$reduce:{input:{$ifNull:['$tasks',[]]},initialValue:[],in:{$concatArrays:['$$value','$$this.targets']}}},monitors:{$objectToArray:{$ifNull:['$copyMonitor',{}]}}},in:{total:{$size:'$$targets'},copied:{$size:{$filter:{input:'$$targets',as:'target',cond:{$anyElementTrue:{$map:{input:'$$monitors',as:'monitor',in:{$and:[{$eq:['$$monitor.k','$$target.orgUnitId']},{$eq:['$$monitor.v.status','Copied successfully']}]}}}}}}}}}}}:{})}}).sort({createdAt:-1}).limit(100).toArray();},
+    async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(['sourceDeployment','courseCopy'].includes(kind)?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1,copyCheck:1,...(kind==='sourceDeployment'?{copySummary:{$let:{vars:{targets:{$reduce:{input:{$ifNull:['$tasks',[]]},initialValue:[],in:{$concatArrays:['$$value','$$this.targets']}}},monitors:{$objectToArray:{$ifNull:['$copyMonitor',{}]}}},in:{total:{$size:'$$targets'},copied:{$size:{$filter:{input:'$$targets',as:'target',cond:{$anyElementTrue:{$map:{input:'$$monitors',as:'monitor',in:{$and:[{$eq:['$$monitor.k','$$target.orgUnitId']},{$eq:['$$monitor.v.status','Copied successfully']}]}}}}}}}}}}}:{})}}).sort({createdAt:-1}).limit(100).toArray();},
     async blocked(ids,excludeId) {
       const {jobs}=await collections();
       const pending=await jobs.find({namespace,_id:{$ne:excludeId},kind:'sourceDeployment',status:{$in:['submitted','submittedWithErrors','outcomeUnknown','interrupted','activationWithErrors','failed','queued','running']}}).toArray();
       return pending.some(job=>job.tasks.some(t=>reservesCourses(t) && [t.sourceId,...t.targets.map(r=>r.orgUnitId)].some(id=>ids.includes(id))));
     },
     async requestCopyCheck(_id,owner){
-      const {jobs}=await collections();const job=await jobs.findOne({_id,owner,namespace,kind:'sourceDeployment'});
+      const {jobs}=await collections();
+      const copy=await jobs.findOne({_id,owner,namespace,kind:'courseCopy'});
+      if(copy?.kind==='courseCopy'){
+        if(['queued','running'].includes(copy.status))return copy.operation==='check';
+        if(!['copiesInProcess','copyNeedsAttention','interrupted'].includes(copy.status)||!copy.tasks.some(t=>t.result?.jobToken&&!['COMPLETE','COMPLETE_WITH_ERRORS','FAILED','CANCELLED'].includes(t.result.status)))return false;
+        return (await jobs.updateOne({_id,owner,namespace,status:copy.status},{$set:{status:'queued',operation:'check'},$unset:{expiresAt:''}})).modifiedCount===1;
+      }
+      const job=await jobs.findOne({_id,owner,namespace,kind:'sourceDeployment'});
       if(!job||['queued','running','planning','validating'].includes(job.status))return false;
       if(['queued','running'].includes(job.copyCheck?.status))return true;
       const targetIds=job.tasks.flatMap(t=>t.targets.filter(r=>['submitted','uncertain'].includes(targetStatus(t,r))&&job.copyMonitor?.[r.orgUnitId]?.status!=='Copied successfully').map(r=>String(r.orgUnitId)));

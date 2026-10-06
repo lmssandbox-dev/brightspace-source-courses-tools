@@ -1,6 +1,6 @@
 # Brightspace Source Courses Tools
 
-A toolkit for managing Brightspace Source Courses, currently offering Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with two workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
+A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
 
 ## 1. Activity dates
 
@@ -72,7 +72,7 @@ Date-job screens show compact summaries; the CSV report includes all records. Pr
 
 ## Application identity
 
-Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The two tools retain their feature names. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
+Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
 
 ## Fresh database setup
 
@@ -133,3 +133,29 @@ Pacing tuning: the shared gate now targets 30,000 measured credits/minute with a
 CSV templates: the date template downloads as `date-manager-template.csv`. Deployment accepts `SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode`; provide an ID, code, or matching pair for each side. Codes must resolve to exactly one accessible org unit, followed by source/replica type validation. Aliases are deduplicated after resolution; conflicting targets and source/target overlap block deployment. All four headers are required, even when code cells are empty. Legacy two-column CSV files are rejected; download the new template. Code lookup requires orgstructure read access.
 
 LTI launch shows a lightweight blue loading indicator while frontend assets initialize. It starts when the app HTML arrives, not during Brightspace authentication or server cold start. It is removed after UI initialization and has an eight-second visual fallback; without JavaScript it is hidden so server-rendered content remains accessible.
+
+## Bulk Course Copy (first tool in the sidebar)
+
+Use this tool to copy **all components or a selection of component types** from a **Course Offering** into an **existing Course Offering or Source Course**. This is separate from Source Course deployment: it never creates courses, resets content, or changes activation. Source Courses are not accepted as origins. Offering → Source Course was confirmed by the operator in Postman; verify it in each new tenant before bulk use.
+
+Download `copy-template.csv` from the upload page. All four case-sensitive headers are required (their order may vary):
+
+```csv
+OriginOrgUnitId,OriginOrgUnitCode,DestinationOrgUnitId,DestinationOrgUnitCode
+123,,456,
+,MASTER-2026,,DESTINATION-2026
+```
+
+Provide an ID, exact unique org-unit code, or matching ID/code pair on both sides. Destinations must already exist. Missing/ambiguous codes, mismatched identifiers, self-copy, multiple origins for a destination, or a destination also used as an origin in the same job block confirmation. Identical resolved mappings are copied once. Limits: 10,000 mappings and 5 MB UTF-8 CSV. Validation is read-only and the preview expires after 30 minutes.
+
+1. Upload mappings and choose **Copy all components** or **Copy selected components**. A selected-component job requires at least one component. The same selection applies to every mapping; this selects component types, not individual quizzes, assignments, or files.
+2. Review counts, selected components, and the downloadable mapping report. Confirm the copy. Existing content can produce duplicates; Brightspace does not deduplicate previous copies.
+3. Submission queues native copy jobs and saves their tokens. Select **Check copy results now** to retrieve their status. Completed/failed/cancelled tokens are not checked again. Return through **Job History → Course Copy Jobs**. Page refresh reloads saved progress; it does not continually poll Brightspace or submit new copies.
+
+The report contains all original CSV rows, resolved IDs/names, validation, native copy status, token, component selection, last successful check time, and diagnostic text. A partial check preserves previous results; a read error never erases a saved successful copy. `COMPLETE` counts as success; `COMPLETE_WITH_ERRORS`, `FAILED`, and `CANCELLED` require review in Brightspace. This tool requires LE API **1.97 or newer** so COMPLETE is not mistaken for an older status that could include errors.
+
+Submission checkpoints and tokens are saved in MongoDB before/after each request. Timeouts, unexpected responses, and interrupted submissions are **not automatically repeated**; inspect Brightspace before making a new job. Authentication/transport/server failures stop remaining submissions. Explicit 429 responses use the shared rate-limit handling. A restart interrupts the local job and preserves available tokens for on-demand checks; unsent rows require a new reviewed job. There is no remote cancellation or rollback. The UI Cancel action cancels only local pending work.
+
+Supported component types: AttendanceRegisters, Awards, Checklists, Competencies, CompletionTracking, Content, CourseAppearance, CourseFiles, Discussions, DisplaySettings, Dropbox (Assignments), Faq, Forms (registration forms), Glossary, Grades, GradesSettings, Groups, Homepages, IntelligentAgents, LearningOutcomes, Links, LtiLink, LtiTP, Navbars, News, QuestionLibrary, Quizzes, ReleaseConditions, Rubrics, S3Model, Schedule, SelfAssessments, Surveys, ToolNames, Widgets. Include related components required by your content; the app does not automatically add dependencies.
+
+The interface and report headings support English, Brazilian Portuguese, and Latin American Spanish. CSV input headers, native API status values, tokens, and diagnostic report data remain stable machine values.

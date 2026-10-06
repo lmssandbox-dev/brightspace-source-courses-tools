@@ -52,3 +52,16 @@ test('reactivation retry requires a signed session and queues only once',async()
  const yes=response();await routes.activate({body:{...body,confirmCompleted:'yes'}},yes);assert.equal(activations,1);assert.doesNotMatch(yes.body,/action="\/deploy\/cancel"/);
  const repeat=response();await routes.activate({body:{...body,confirmCompleted:'yes'}},repeat);assert.equal(repeat.code,409);
 });
+
+test('course copy confirmation is required, scoped to workflow/session, and only stored options execute',async()=>{
+ const {createCopyView}=require('../src/copy/view');
+ const job={_id:'copy',kind:'courseCopy',status:'ready',expiresAt:99999,rows:[],tasks:[],components:['Content']};let creates,confirms=0;
+ const routes=createBulkDates({jobs:{create:async input=>{creates=input;return job;},get:async()=>job,confirm:async()=>{if(confirms)return false;confirms++;return true;}},deploymentId:'d',secret:'secret',kind:'courseCopy',view:createCopyView(),now:()=>100});
+ const pick=(html,action)=>html.match(new RegExp(`<form[^>]*action="/copy/${action}"[^>]*>([\\s\\S]*?)</form>`))?.[1].match(/name="ticket" value="([^"]+)"/)[1];
+ const r=response();await routes.preview({body:{ticket:pick(routes.form(r),'preview'),csv:'csv',copyMode:'selected',components:['Content']}},r);assert.deepEqual(creates.components,['Content']);
+ const body={jobId:'copy',ticket:pick(r.body,'apply')};const no=response();await routes.apply({body},no);assert.equal(no.code,400);
+ const wrong=response('other');await routes.apply({body:{...body,confirmCopy:'yes'}},wrong);assert.equal(wrong.code,403);
+ await routes.apply({body:{...body,confirmCopy:'yes',components:['Quizzes']}},response());assert.equal(confirms,1);assert.deepEqual(job.components,['Content']);
+ const again=response();await routes.apply({body:{...body,confirmCopy:'yes'}},again);assert.equal(again.code,409);
+ const dates=setup(),cross=response();await dates.routes.apply({body:{...body,confirmCopy:'yes'}},cross);assert.equal(cross.code,403);
+});
