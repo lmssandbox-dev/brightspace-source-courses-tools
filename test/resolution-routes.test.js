@@ -26,12 +26,12 @@ test('existing run and cooldown do not start another sync',async()=>{
   const res=response();await controls.request({body:{ticket:controls.ticket(res)}},res);assert.equal(res.code,state==='cooldown'?429:202);assert.equal(res.body.state,state);
  }
 });
-test('header renders icon-only accessible sync control before language only with a ticket',()=>{
+test('header renders icon-only accessible sync control after language only with a ticket',()=>{
  assert.ok(!page('hello').includes('data-org-sync'));
  const html=page('hello',{ltik:'session',syncTicket:'signed'});
  const button=html.match(/<button[^>]*data-org-sync[\s\S]*?<\/button>/)[0];
  assert.match(button,/title="Sync org units"/);assert.match(button,/aria-label="Sync org units"/);assert.match(button,/<svg/);assert.ok(!button.replace(/<[^>]*>/g,'').trim());
- assert.ok(html.indexOf('data-org-sync')<html.indexOf('data-language-selector'));
+ assert.ok(html.indexOf('data-org-sync')>html.indexOf('data-language-selector'));
  for(const language of ['es-419','pt-BR'])assert.notEqual(translate('Sync org units',language),'Sync org units');
 });
 test('manual request is atomic and throttled with no change to a running lease',async()=>{

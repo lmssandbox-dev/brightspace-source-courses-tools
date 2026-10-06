@@ -69,10 +69,10 @@ test('a newly observed cost above the local budget fails closed rather than wait
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const p=await gate.reserve(route);await gate.complete(p,{...sample,cost:40000});now=100000;await assert.rejects(()=>gate.reserve(route),/exceeds/);
 });
 const config={method:'POST',url:'https://tenant.example/d2l/api/le/1.99/import/123/copy/'};
-test('production transport allows four overlapping requests and drains 5,000 submissions',async()=>{
+test('production transport allows eight overlapping requests and drains 5,000 submissions',async()=>{
  let active=0,max=0,count=0;const samples=[];
  const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async()=>({token:'t',reservedCost:10}),complete:async(_p,s)=>samples.push(s)},http:async()=>{max=Math.max(max,++active);await new Promise(r=>setImmediate(r));active--;count++;return {status:202,headers:{'x-request-cost':'10'}};}});
- await Promise.all(Array.from({length:5000},()=>request(config)));assert.equal(max,4);assert.equal(active,0);assert.equal(count,5000);assert.equal(samples.length,5000);
+ await Promise.all(Array.from({length:5000},()=>request(config)));assert.equal(max,8);assert.equal(active,0);assert.equal(count,5000);assert.equal(samples.length,5000);
 });
 test('production transport never repeats ambiguous writes and poisons scheduling on lost persistence',async()=>{
  for(const fail of ['timeout','reserve','complete']){
@@ -115,7 +115,32 @@ test('transport permits eight exact-code reads but only four other calls with a 
   const lookup=new URL(config.url).searchParams.has('exactOrgUnitCode');active++;if(!lookup)ordinary++;peak=Math.max(peak,active);ordinaryPeak=Math.max(ordinaryPeak,ordinary);
   await new Promise(resolve=>releases.push(resolve));active--;if(!lookup)ordinary--;return {status:200,headers:{'x-request-cost':'10'}};
  }});
- const work=Array.from({length:12},(_,i)=>request({method:'GET',url:i<6?'https://tenant.example/d2l/api/lp/1.63/courses/1':'https://tenant.example/d2l/api/lp/1.63/orgstructure/?exactOrgUnitCode=C'+i}));
+ const work=Array.from({length:12},(_,i)=>request({method:'GET',url:i<6?'https://tenant.example/d2l/api/le/1.99/1/quizzes/1':'https://tenant.example/d2l/api/lp/1.63/orgstructure/?exactOrgUnitCode=C'+i}));
  await new Promise(r=>setImmediate(r));assert.equal(active,8);assert.equal(ordinary,4);
  while(releases.length){releases.splice(0).forEach(r=>r());await new Promise(r=>setImmediate(r));}await Promise.all(work);assert.equal(peak,8);assert.equal(ordinaryPeak,4);assert.equal(classes.filter(Boolean).length,6);
+});
+
+test('copy and resolution permits share eight total with four ordinary permits across instances',async()=>{
+ let now=0;const m=mongoModel(),make=()=>createConcurrentGate({key:'mixed-copy',now:()=>now,mongoClient:m.client}),a=make(),b=make();
+ for(let i=0;i<4;i++){assert.ok((await a.reserve(route)).token);now+=250;}
+ for(let i=0;i<4;i++){assert.ok((await b.reserve('copy',{copy:true})).token);now+=250;}
+ assert.ok((await a.reserve('lookup',{resolution:true})).wait);
+ assert.ok((await b.reserve('copy',{copy:true})).wait);
+ now+=50000;
+ for(let i=0;i<8;i++){assert.ok((await (i%2?a:b).reserve('copy',{copy:true})).token);now+=250;}
+ assert.equal(m.doc.permits.length,8);assert.ok((await a.reserve(route)).wait);
+});
+test('copy permit classification excludes unsupported import methods',async()=>{
+ const classes=[];const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async(_r,o)=>{classes.push(o.copy);return {token:'t'};},complete:async()=>{}},http:async()=>({status:200,headers:{}})});
+ for(const [method,path] of [['POST','import/123/copy/'],['GET','import/123/copy/token'],['GET','import/123/copy/'],['PUT','import/123/copy/token'],['POST','import/123/copy/token'],['GET','ccb/logs']])
+ await request({method,url:'https://tenant.example/d2l/api/le/1.99/'+path});
+ assert.deepEqual(classes,[true,true,false,false,false,true]);
+});
+
+test('deployment routes overlap eight requests while date activity calls retain four',async()=>{
+ for(const [method,path,expected] of [['POST','lp/1.63/sourceCourses/1/deploy',8],['PUT','lp/1.63/courses/2',8],['GET','lp/1.63/courses/2',8],['GET','lp/1.63/orgstructure/1',8],['GET','lp/1.63/sourceCourses/1/reofferedCourses',8],['GET','le/1.99/ccb/logs',8],['PUT','le/1.99/2/quizzes/3',4]]){
+  let active=0,peak=0;
+  const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async()=>({token:'t'}),complete:async()=>{}},http:async()=>{peak=Math.max(peak,++active);await new Promise(r=>setImmediate(r));active--;return {status:200,headers:{}};}});
+  await Promise.all(Array.from({length:20},()=>request({method,url:'https://tenant.example/d2l/api/'+path})));assert.equal(peak,expected,path);assert.equal(active,0);
+ }
 });

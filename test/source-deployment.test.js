@@ -152,11 +152,11 @@ test('isolated validation and preparation failures leave other batches available
 });
 test('authentication and repeated outages stop new groups while in-flight groups finish',async()=>{
  for(const status of [401,429]){
- const s=batchScenario([...Array.from({length:4},()=>({status:'failed',error:{httpStatus:status}})),{status:'submitted'}]);await s.run();
- assert.equal(s.events.includes('prepare:105'),false);assert.equal(s.job.tasks[4].result.targets[0].status,'notAttempted');
+ const s=batchScenario([...Array.from({length:8},()=>({status:'failed',error:{httpStatus:status}})),{status:'submitted'}]);await s.run();
+ assert.equal(s.events.includes('prepare:109'),false);assert.equal(s.job.tasks[8].result.targets[0].status,'notAttempted');
  }
- const s=batchScenario([...Array.from({length:4},()=>({status:'uncertain',error:{httpStatus:503}})),{status:'submitted'}]);await s.run();
- assert.equal(s.events.includes('prepare:105'),false);assert.equal(s.job.tasks[4].result.status,'skipped');
+ const s=batchScenario([...Array.from({length:8},()=>({status:'uncertain',error:{httpStatus:503}})),{status:'submitted'}]);await s.run();
+ assert.equal(s.events.includes('prepare:109'),false);assert.equal(s.job.tasks[8].result.status,'skipped');
 });
 test('429 respects Retry-After and retries only explicit rejection with renewed intent',async()=>{
  let calls=0,hooks=0;const waits=[];
@@ -243,7 +243,7 @@ test('legacy two-column deployment CSV is rejected',()=>{assert.throws(()=>parse
 
 test('parallel source groups preserve inactive-before-POST and active-before-next-batch ordering',async()=>{
  const states=new Map(),inFlight=new Set(),events=[];let active=0,max=0;
- const job={tasks:Array.from({length:10},(_,i)=>({sourceId:String(i%5+1),targets:[{orgUnitId:String(i+101)}]}))};
+ const job={tasks:Array.from({length:20},(_,i)=>({sourceId:String(i%10+1),targets:[{orgUnitId:String(i+101)}]}))};
  const engine=createDeploymentJobs({enabled:()=>true,client:{
   source:async()=>{},target:async id=>({isActive:states.get(id)??true}),
   setActive:async(id,value,before)=>{await before();states.set(id,value);events.push(`${id}:${value}`);return {status:'updated',verifiedActive:value};},
@@ -255,8 +255,8 @@ test('parallel source groups preserve inactive-before-POST and active-before-nex
   }
  }});
  await engine.execute(job,async(_j,dirty)=>assert.equal(dirty.tasks.length,1),async()=>{});
- assert.equal(max,4);assert.equal(job.status,'activated');assert.ok([...states.values()].every(Boolean));
- for(let source=0;source<5;source++)assert.ok(events.indexOf(`${source+101}:true`)<events.indexOf(`${source+106}:false`));
+ assert.equal(max,8);assert.equal(job.status,'activated');assert.ok([...states.values()].every(Boolean));
+ for(let source=0;source<10;source++)assert.ok(events.indexOf(`${source+101}:true`)<events.indexOf(`${source+111}:false`));
 });
 
 test('parallel deployment preview caches repeated codes and course reads and batches checkpoints',async()=>{

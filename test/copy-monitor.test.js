@@ -54,3 +54,10 @@ test('incremental checks preserve confirmed results and keep batch membership st
  assert.deepEqual(Object.keys(s.saved.updates),['22','23']);assert.equal(s.saved.cursor,0);
  assert.equal(s.job.copyMonitor['1'].details,'saved evidence');
 });
+
+test('deployment monitor checks eight replicas concurrently and keeps the ten-replica dispatch bound',async()=>{
+ const job={_id:'j',tasks:[{sourceId:'1',submittedAt:1000,targets:Array.from({length:12},(_,i)=>({orgUnitId:String(i+2)})),result:{status:'submitted'}}]};
+ let active=0,peak=0,calls=0,saved;
+ const monitor=createCopyMonitor({leRoot:'https://tenant.example/d2l/api/le/1.99',store:{claimCopyMonitor:async()=>job,nextCopySubmission:async()=>null,saveCopyMonitor:async(_j,updates,cursor)=>{saved={updates,cursor};}},api:{read:async()=>{peak=Math.max(peak,++active);calls++;await new Promise(r=>setImmediate(r));active--;return {Objects:[],Next:null};}}});
+ await monitor.tick();assert.equal(peak,8);assert.equal(active,0);assert.equal(calls,10);assert.equal(saved.cursor,10);assert.equal(Object.keys(saved.updates).length,10);
+});
