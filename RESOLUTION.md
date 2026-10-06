@@ -82,3 +82,5 @@ Automated tests cover warm/missing/ambiguous codes, tool integration, batching, 
 - `DATASET_TOO_LARGE` or `DATASET_ROW_LIMIT`: review tenant size and hosting/storage capacity.
 - `RESOLUTION_LEASE_LOST`: another run took over after a timeout; the losing run cannot publish. Retry after the active import finishes.
 - `org_directory_sync_failed`, `resolution_cache_write_failed`, `job_request_failed`, or `job_worker_failed` in Render logs: events include sanitized error class/code and HTTP status, with job ID where available. They omit credentials, raw exception messages and download links. A generic UI storage error should now have a corresponding server event to investigate.
+
+Row-validation diagnostics include only the field name, reason, one-based data-record number (excluding the CSV header), and Full/Differential extract type. No raw row values are logged. Empty descriptive Type labels are retained; actual course type/access enforcement remains with the existing tool checks and Brightspace. Boolean whitespace is ignored, but unknown deletion flags still abort the import.

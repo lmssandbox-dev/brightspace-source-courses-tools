@@ -147,3 +147,17 @@ test('schema discovery accepts compact/display names but not related org-unit da
  assert.throws(()=>selectSchema([{SchemaId:'ABC',Full:null}],'ABC'),{code:'DATASET_FULL_UNAVAILABLE'});
  assert.ok(!JSON.stringify(datasetSummary([schema('Organizational Units')])).includes('private-link'));
 });
+
+test('dataset rows permit empty descriptive types and nullable name/code without changing codes',()=>{
+ const row={OrgUnitId:'1',Code:' a ',Name:'',Type:'',IsDeleted:' FALSE '};
+ assert.equal(normalize(row,1).Type.Code,'');assert.equal(normalize(row,1).Code,' a ');
+ assert.equal(normalize({...row,Code:null,Name:null},1).Code,'');
+ assert.throws(()=>normalize({...row,IsDeleted:'unexpected'},1),e=>e.code==='DATASET_ROW_INVALID'&&e.datasetField==='IsDeleted'&&e.datasetReason==='unsupported_boolean');
+ assert.throws(()=>normalize({...row,OrgUnitId:'bad'},1),e=>e.datasetField==='OrgUnitId');
+});
+test('invalid import logs only field/reason/record position, never raw course data',async()=>{
+ const f=fixture();f.readExtract=async(e,consume)=>consume({OrgUnitId:'1',Code:'SECRET_COURSE_CODE',Name:'PRIVATE_NAME',Type:'Course',IsDeleted:'SECRET_BAD_VALUE'});
+ const output=[],previous=console.error;console.error=value=>output.push(value);
+ try{await assert.rejects(createDirectorySync({...f,root}).run(),{code:'DATASET_ROW_INVALID'});}finally{console.error=previous;}
+ const event=JSON.parse(output[0]);assert.equal(event.datasetField,'IsDeleted');assert.equal(event.datasetRecord,1);assert.equal(event.datasetExtract,'Full');assert.equal(event.datasetReason,'unsupported_boolean');assert.ok(!output.join('').includes('SECRET'));assert.ok(!output.join('').includes('PRIVATE'));assert.equal(f.publishes,0);
+});

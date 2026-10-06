@@ -49,7 +49,8 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
    for(const extract of extracts){
     await check();let batch=[],count=0;const seen=new Set();
     await readExtract(extract,async row=>{
-     await check();const record=normalize(row,extract.at);
+     await check();let record;
+     try{record=normalize(row,extract.at);}catch(error){error.datasetRecord=count+1;error.datasetExtract=extract.BdsType;throw error;}
      if(seen.has(record.Identifier))throw fail('DATASET_DUPLICATE_ID');seen.add(record.Identifier);
      batch.push(record);count++;rows++;
      if(batch.length>=500){await store.stage(generation,batch);batch=[];}

@@ -62,10 +62,21 @@ async function readZip(file,consume,signal){
  }finally{zip.close();}
 }
 function normalize(row,observedAt){
- const flag=String(row.IsDeleted??'').toLowerCase();
- if(!['','0','1','true','false'].includes(flag)||typeof row.Code!=='string'||row.Code.length>512||typeof row.Type!=='string'||!row.Type||typeof row.Name!=='string'||row.Name.length>1024)throw fail('DATASET_ROW_INVALID');
+ const invalid=(field,reason)=>{throw Object.assign(fail('DATASET_ROW_INVALID'),{datasetField:field,datasetReason:reason});};
+ const flag=String(row.IsDeleted??'').trim().toLowerCase();
+ if(!['','0','1','true','false'].includes(flag))invalid('IsDeleted','unsupported_boolean');
+ const text=(field,max,nullable=false)=>{
+  const value=nullable&&row[field]==null?'':row[field];
+  if(typeof value!=='string')invalid(field,'not_text');
+  if(value.length>max)invalid(field,'too_long');
+  return value;
+ };
+ const code=text('Code',512,true),name=text('Name',1024,true),type=text('Type',512);
+ // Type is descriptive metadata, not authorization. Empty labels do not change ID/code identity.
  // Dates are historical; an explicit false flag takes precedence for restored units.
  const deleted=flag==='1'||flag==='true'||flag===''&&Boolean(row.DeletedDate||row.RecycledDate);
- return {Identifier:id(row.OrgUnitId),Code:row.Code,Name:row.Name,Type:{Code:row.Type},deleted,observedAt};
+ let identifier;try{identifier=id(row.OrgUnitId);}catch{invalid('OrgUnitId','invalid_id');}
+ return {Identifier:identifier,Code:code,Name:name,Type:{Code:type},deleted,observedAt};
 }
+
 module.exports={createExtractReader,readZip,normalize,safeDownload,fail};
