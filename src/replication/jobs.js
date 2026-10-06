@@ -41,7 +41,7 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
    const codes=new Map(),resolved=new Map();
    let processed=job.rows.filter(row=>row.status!=='pending').length;
    const cached=(map,key,load)=>{if(!map.has(key))map.set(key,Promise.resolve().then(load));return map.get(key);};
-   await pool(job.rows,4,async row=>{
+   await pool(job.rows,8,async row=>{
     if(row.status!=='pending')return;
     try{
      for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']])if(row[codeField]){

@@ -19,7 +19,7 @@ function mongoModel(){
   const a=evalExpr(arg,vars);
   switch(op){
    case '$ifNull':return a[0]??a[1];case '$max':return Math.max(...a);case '$add':return a.reduce((x,y)=>x+y,0);case '$multiply':return a.reduce((x,y)=>x*y,1);
-   case '$cond':return a[0]?a[1]:a[2];case '$lte':return a[0]<=a[1];case '$lt':return a[0]<a[1];case '$gt':return a[0]>a[1];case '$and':return a.every(Boolean);case '$size':return a.length;case '$concatArrays':return a.flat();
+   case '$eq':return a[0]===a[1];case '$cond':return a[0]?a[1]:a[2];case '$lte':return a[0]<=a[1];case '$lt':return a[0]<a[1];case '$gt':return a[0]>a[1];case '$and':return a.every(Boolean);case '$size':return a.length;case '$concatArrays':return a.flat();
    default:return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,evalExpr(x,vars)]));
   }
  }
@@ -96,4 +96,26 @@ test('gate initializes once and cached cooldown waits do not query MongoDB',asyn
 test('budget waits account for the next request cost, even below the full credit ceiling',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const p=await gate.reserve(route);await gate.complete(p,{...sample,cost:100});m.doc.budgetUsed=29950;now=250;
  assert.equal((await gate.reserve(route)).wait,59750);const reads=m.calls.read;now=1000;assert.equal((await gate.reserve(route)).wait,59000);assert.equal(m.calls.read,reads);
+});
+
+test('resolution permits share an eight-request ceiling and ordinary requests retain four across instances',async()=>{
+ let now=0;const m=mongoModel(),make=()=>createConcurrentGate({uri:'mongodb://unused/app',key:'mixed',now:()=>now,mongoClient:m.client}),a=make(),b=make();
+ for(let i=0;i<4;i++){assert.ok((await a.reserve(route)).token);now+=250;}
+ assert.ok((await b.reserve(route)).wait);now+=1000;
+ for(let i=0;i<4;i++){assert.ok((await b.reserve('GET /d2l/api/lp/1.63/orgstructure/',{resolution:true})).token);now+=250;}
+ assert.equal(m.doc.permits.length,8);assert.ok((await a.reserve('GET lookup',{resolution:true})).wait);
+ now+=50000;
+ for(let i=0;i<8;i++){assert.ok((await a.reserve('GET lookup',{resolution:true})).token);now+=250;}
+ assert.ok((await b.reserve('GET lookup',{resolution:true})).wait);assert.ok((await b.reserve(route)).wait);
+});
+
+test('transport permits eight exact-code reads but only four other calls with a shared total of eight',async()=>{
+ let active=0,ordinary=0,peak=0,ordinaryPeak=0;const releases=[],classes=[];
+ const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async(_route,options)=>{classes.push(options.resolution);return {token:'t'};},complete:async()=>{}},http:async config=>{
+  const lookup=new URL(config.url).searchParams.has('exactOrgUnitCode');active++;if(!lookup)ordinary++;peak=Math.max(peak,active);ordinaryPeak=Math.max(ordinaryPeak,ordinary);
+  await new Promise(resolve=>releases.push(resolve));active--;if(!lookup)ordinary--;return {status:200,headers:{'x-request-cost':'10'}};
+ }});
+ const work=Array.from({length:12},(_,i)=>request({method:'GET',url:i<6?'https://tenant.example/d2l/api/lp/1.63/courses/1':'https://tenant.example/d2l/api/lp/1.63/orgstructure/?exactOrgUnitCode=C'+i}));
+ await new Promise(r=>setImmediate(r));assert.equal(active,8);assert.equal(ordinary,4);
+ while(releases.length){releases.splice(0).forEach(r=>r());await new Promise(r=>setImmediate(r));}await Promise.all(work);assert.equal(peak,8);assert.equal(ordinaryPeak,4);assert.equal(classes.filter(Boolean).length,6);
 });

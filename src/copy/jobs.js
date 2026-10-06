@@ -50,7 +50,7 @@ function createCopyJobs({client,now=Date.now}){
    };
    let processed=job.rows.filter(r=>r.status!=='pending').length;
    job.progress={phase:'mappings',processed,total:job.rows.length};await save(job);
-   await pool(job.rows,4,async row=>{
+   await pool(job.rows,8,async row=>{
     await checkCancelled();
     if(row.status!=='pending')return;
     try{

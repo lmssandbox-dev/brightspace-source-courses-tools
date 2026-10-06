@@ -44,7 +44,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
     let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
-    await pool(job.rows.filter(r=>r.status==='pending'),4,async row=>{
+    await pool(job.rows.filter(r=>r.status==='pending'),8,async row=>{
       try {
         const course=await courses.resolve(row,{cache:resolutionCache});
         row.resolvedId=course.orgUnitId;
