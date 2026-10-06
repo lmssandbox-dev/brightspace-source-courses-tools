@@ -368,5 +368,21 @@
   "IDs are used directly. Codes are resolved to IDs; when both are supplied, they must match. Invalid mappings are excluded and reported. Brightspace reports processing errors after you confirm.": "Os IDs são usados diretamente. Os códigos são convertidos em IDs; quando ambos são fornecidos, devem corresponder. Mapeamentos inválidos são excluídos e registrados no relatório. O Brightspace informa erros de processamento após a confirmação.",
   "Some mappings were excluded. Download the report to review errors before continuing.": "Alguns mapeamentos foram excluídos. Baixe o relatório para revisar os erros antes de continuar.",
   "Automatic Mapping": "Mapeamento automático",
-  "Some mappings were excluded and were not submitted. See the CSV report for details.": "Alguns mapeamentos foram excluídos e não foram enviados. Consulte os detalhes no relatório CSV."
+  "Some mappings were excluded and were not submitted. See the CSV report for details.": "Alguns mapeamentos foram excluídos e não foram enviados. Consulte os detalhes no relatório CSV.",
+  "Provide a source course ID, code, or matching ID/code pair per row. Duplicate source courses are processed once.": "Informe um ID, código ou par de ID/código correspondente por linha. Cursos de origem duplicados são processados uma vez.",
+  "Supply an ID, a code, or a matching ID/code pair.": "Informe um ID, um código ou um par de ID/código correspondente.",
+  "ID and code identify different org units.": "O ID e o código identificam unidades organizacionais diferentes.",
+  "Use IDs, codes, or both. If both are supplied, they must match.": "Use IDs, códigos ou ambos. Se informar ambos, eles devem corresponder.",
+  "Copy all content or selected components from a Course Offering to an existing destination.": "Copie todo o conteúdo ou componentes selecionados de uma oferta de curso para um destino existente.",
+  "Existing content stays in place, so copies may create duplicates. Courses are not created or activated.": "O conteúdo existente é mantido, portanto as cópias podem gerar duplicatas. Os cursos não são criados nem ativados.",
+  "Invalid mappings are skipped. Review errors and copy results in the CSV report.": "Mapeamentos inválidos são ignorados. Consulte erros e resultados das cópias no relatório CSV.",
+  "Replicas are made inactive and their content is replaced with a full copy of the source course.": "As réplicas são desativadas e seu conteúdo é substituído por uma cópia completa do curso de origem.",
+  "Accepted replicas are reactivated automatically. Check copy results from the job page to confirm completion.": "As réplicas aceitas são reativadas automaticamente. Verifique os resultados da cópia na página da tarefa para confirmar a conclusão.",
+  "The same dates apply to assignments, quizzes, and discussion topics in every listed course.": "As mesmas datas se aplicam às atividades, questionários e tópicos de discussão de todos os cursos listados.",
+  "Review the changes before applying. Fix any course or identifier errors to continue.": "Revise as alterações antes de aplicá-las. Corrija os erros de curso ou identificador para continuar.",
+  "What will change": "O que será alterado",
+  "Check the results": "Confira os resultados",
+  "Keep in mind": "Lembre-se",
+  "Review first": "Revise primeiro",
+  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copie todos ou alguns componentes de uma oferta de curso para uma oferta de curso ou curso de origem existente."
 }

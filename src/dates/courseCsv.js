@@ -20,11 +20,11 @@ function parseCourseCsv(text) {
     if (record.length !== 2) return {...row,status:'invalid',message:'Expected two columns.'};
     row.orgUnitId = record[header.indexOf('OrgUnitId')].trim();
     row.orgUnitCode = record[header.indexOf('OrgUnitCode')].trim();
-    if (!!row.orgUnitId === !!row.orgUnitCode) return {...row,status:'invalid',message:'Supply exactly one ID or code.'};
+    if (!row.orgUnitId && !row.orgUnitCode) return {...row,status:'invalid',message:'Supply an ID, a code, or a matching ID/code pair.'};
     try { if (row.orgUnitId) row.orgUnitId = id(row.orgUnitId); }
     catch { return {...row,status:'invalid',message:'ID must be a positive decimal integer.'}; }
     if (row.orgUnitCode.length > 50 || /[\r\n\x00-\x1f]/.test(row.orgUnitCode)) return {...row,status:'invalid',message:'Invalid course code.'};
-    const key = row.orgUnitId ? `id:${row.orgUnitId}` : `code:${row.orgUnitCode}`;
+    const key = JSON.stringify([row.orgUnitId,row.orgUnitCode]);
     if (seen.has(key)) return {...row,status:'duplicate',duplicateOf:seen.get(key),message:'Repeated input; processed once.'};
     seen.set(key,row.row);return row;
   });

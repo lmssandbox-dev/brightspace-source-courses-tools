@@ -40,18 +40,18 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     try {await store.save(job,worker);} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
-    const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row]));
+    const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row])),resolutionCache=new Map();
     let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
     let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
     await pool(job.rows.filter(r=>r.status==='pending'),4,async row=>{
       try {
-        const course=await courses.resolve(row);
+        const course=await courses.resolve(row,{cache:resolutionCache});
         row.resolvedId=course.orgUnitId;
         if(resolved.has(course.orgUnitId)){row.status='duplicate';row.duplicateOf=resolved.get(course.orgUnitId);row.message='Same resolved course; processed once.';}
         else {
         resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});}
-      } catch(e) {row.status='invalid';row.message=e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
+      } catch(e) {row.status='invalid';row.message=e.code==='ID_CODE_MISMATCH'?'ID and code identify different org units.':e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
       job.progress={phase:'Resolving courses',processed:++resolvedRows,total:job.rows.length};
       if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
     });

@@ -282,3 +282,8 @@ test('automatic deployment mapping excludes mismatched pairs without detail requ
  await engine.plan(job,async()=>{});assert.equal(job.status,'ready');assert.equal(codes,2);assert.equal(job.rows[2].status,'invalid');
  await engine.execute(job,async()=>{},async()=>{});assert.deepEqual(sent.sort(),['2','3']);const report=createDeploymentView({enabled:()=>true}).report(job);assert.match(report,/invalid","notAttempted/);
 });
+
+test('deployment code lookup always sends an exact filter and rejects ambiguous results',async()=>{
+ let ambiguous=false;const c=createSourceDeploymentClient({baseUrl:'https://tenant.example',lpVersion:'1.63',api:{list:async url=>{const u=new URL(url);assert.equal(u.searchParams.get('exactOrgUnitCode'),'S001');assert.equal(u.searchParams.has('orgUnitCode'),false);return ambiguous?[{Identifier:'1',Code:'S001'},{Identifier:'2',Code:'S001'}]:[{Identifier:'1',Code:'S001'}];}}});
+ assert.equal(await c.resolveCode('S001'),'1');ambiguous=true;await assert.rejects(()=>c.resolveCode('S001'),/exactly one/);
+});

@@ -18,37 +18,28 @@ test('ID-only lookup uses one metadata GET; code/ID mismatch and source origin a
  await assert.rejects(()=>resolve({destinationId:'3',destinationCode:'B'},'destination'),/different/);
  await assert.rejects(()=>resolve({originCode:'B'},'origin'),/Course Offering/);
 });
-test('full paginated inventory resolves hundreds of codes without per-course requests and detects later duplicates',async()=>{
- let calls=0;const records=Array.from({length:250},(_,i)=>unit(i+1,'C'+i));
- const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async url=>{calls++;return new URL(url).searchParams.has('bookmark')?page([unit(999,'C0')]):page(records,true);}}})(records.map(r=>row('',r.Code)),async()=>{},async()=>{});
- assert.equal(calls,2);await assert.rejects(()=>resolve({destinationCode:'C0'},'destination'),/exactly one/);assert.equal((await resolve({destinationCode:'C1'},'destination')).orgUnitId,'2');assert.equal(calls,2);
+test('large CSVs use exact searches only, reuse concurrent lookups and reject duplicates across pages',async()=>{
+ const requests=[];const rows=Array.from({length:5000},(_,i)=>row('A','C'+i));
+ const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async url=>{
+  const u=new URL(url),code=u.searchParams.get('exactOrgUnitCode');assert.ok(code);requests.push(url);
+  if(code==='A')return page([unit(1,'A')]);
+  if(code==='C0')return u.searchParams.has('bookmark')?page([unit(999,'C0')]):page([unit(2,'C0')],true);
+  return page([unit(Number(code.slice(1))+2,code)]);
+ }}})(rows,async()=>{},async()=>{},{direct:true});
+ assert.equal(requests.length,0);
+ await Promise.all(rows.map(r=>resolve(r,'origin')));assert.equal(requests.length,1);
+ await assert.rejects(()=>resolve(rows[0],'destination'),/exactly one/);
+ for(const r of rows.slice(1))await resolve(r,'destination');assert.equal(requests.length,5002);
 });
-test('partial inventory is discarded and exact lookup still checks all matches',async()=>{
- let scans=0,exact=0;
- const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async url=>{const u=new URL(url);if(u.searchParams.has('exactOrgUnitCode')){exact++;return page([unit(1,'C0'),unit(999,'C0')]);}scans++;return page([unit(scans,'C'+(scans-1))],true,String(scans));}}})(Array.from({length:250},(_,i)=>row('','C'+i)),async()=>{},async()=>{});
- assert.equal(scans,62);await assert.rejects(()=>resolve({destinationCode:'C0'},'destination'),/exactly one/);assert.equal(exact,1);
-});
-test('unrecognized types retain cached authoritative checks; cancellation interrupts inventory',async()=>{
- let targets=0;const resolver=createCopyResolver({root,api:{read:async()=>page([unit(1,'A','Custom')])},sourceClient:{target:async()=>{targets++;return {};}}});const resolve=await resolver([row()],async()=>{},async()=>{});
- await resolve({originCode:'A'},'origin');await resolve({originCode:'A'},'origin');assert.equal(targets,1);
- await assert.rejects(()=>resolver(Array.from({length:250},(_,i)=>row('','C'+i)),async()=>{throw Object.assign(Error('cancelled'),{code:'JOB_CANCELLED'});},async()=>{}),{code:'JOB_CANCELLED'});
+test('cancellation stops exact-code pagination before the next request',async()=>{
+ let reads=0,checks=0;
+ const resolve=await createCopyResolver({root,api:{read:async()=>{reads++;return page([unit(1,'A')],true);}}})([],async()=>{if(++checks===3)throw Object.assign(Error('cancelled'),{code:'JOB_CANCELLED'});},async()=>{},{direct:true});
+ await assert.rejects(()=>resolve({originCode:'A'},'origin'),{code:'JOB_CANCELLED'});assert.equal(reads,1);
 });
 test('missing codes and malformed pagination fail closed',async()=>{
  for(const response of [page([]),{Items:[],PagingInfo:{HasMoreItems:true,Bookmark:''}}]){
  const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async()=>response}})([row()],async()=>{},async()=>{});await assert.rejects(()=>resolve({destinationCode:'missing'},'destination'));
  }
-});
-
-test('5,000 unique origin/destination pairs resolve from a complete 10,000-unit inventory',async()=>{
- const records=Array.from({length:10000},(_,i)=>unit(i+1,'C'+i,i<5000?'CourseOffering':'SourceCourse'));let requests=0;
- const rows=Array.from({length:5000},(_,i)=>row('C'+i,'C'+(5000+i)));
- const resolve=await createCopyResolver({root,sourceClient:forbidden,api:{read:async url=>{requests++;const offset=Number(new URL(url).searchParams.get('bookmark')||0);return page(records.slice(offset,offset+1000),offset<9000,String(offset+1000));}}})(rows,async()=>{},async()=>{});
- for(const r of rows){await resolve(r,'origin');await resolve(r,'destination');}
- assert.equal(requests,10);
-});
-test('inventory checkpoint failures abort instead of issuing fallback reads',async()=>{
- let reads=0;const resolver=createCopyResolver({root,api:{read:async()=>{reads++;return page([]);}},sourceClient:forbidden});
- await assert.rejects(()=>resolver(Array.from({length:250},(_,i)=>row('','C'+i)),async()=>{},async()=>{throw Error('storage unavailable');}),/storage unavailable/);assert.equal(reads,1);
 });
 
 test('direct ID-only validation makes zero API requests for 5,000 mappings',async()=>{

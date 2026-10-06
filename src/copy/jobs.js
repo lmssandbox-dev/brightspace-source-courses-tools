@@ -43,7 +43,7 @@ function createCopyJobs({client,now=Date.now}){
  return {parse:parseCopyCsv,selection,
   async plan(job,save,checkCancelled=async()=>{}){
    const destinations=new Map();
-   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);},{direct:true}):null;
+   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async()=>{},{direct:true}):null;
    const resolveRow=async(row,side)=>{
     if(!resolveMetadata)return resolve(row,side);
     const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;

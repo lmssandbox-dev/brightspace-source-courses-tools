@@ -12,16 +12,19 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient }) {
       if (id(row.Identifier)!==orgUnitId || typeof row.Name!=='string' || (row.Code!==null && typeof row.Code!=='string')) throw new Error('Invalid Course Offering response.');
       return {orgUnitId,name:row.Name,code:row.Code};
     },
-    async resolve(row) {
+    async resolve(row,{cache=new Map()}={}) {
+      const cached=(key,load)=>{if(!cache.has(key))cache.set(key,Promise.resolve().then(load));return cache.get(key);};
+      const get=value=>cached(`id:${value}`,()=>this.get(value));
       configured();
-      if (row.orgUnitId) return this.get(row.orgUnitId);
+      if (row.orgUnitId && !row.orgUnitCode) return get(row.orgUnitId);
       const url = new URL(`${root}/orgstructure/`);
       url.searchParams.set('exactOrgUnitCode',row.orgUnitCode);
-      const matches = await api.list(url.href);
+      const matches = await cached(`code:${row.orgUnitCode}`,()=>api.list(url.href));
       // Never silently select one of multiple matches or infer that a numeric code is an ID.
       const ids=[...new Set(matches.filter(r=>r.Code===row.orgUnitCode).map(r=>id(r.Identifier)))];
       if(ids.length!==1) throw new Error(ids.length?'Course code is ambiguous.':'Course code was not found.');
-      const course=await this.get(ids[0]);
+      if(row.orgUnitId && id(row.orgUnitId)!==ids[0])throw Object.assign(new Error('ID and code identify different org units.'),{code:'ID_CODE_MISMATCH'});
+      const course=await get(ids[0]);
       if(course.code!==row.orgUnitCode) throw new Error('Course code changed during validation.');
       return course;
     }

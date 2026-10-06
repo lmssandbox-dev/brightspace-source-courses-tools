@@ -1,6 +1,6 @@
 'use strict';
 const {id}=require('../shared/id');
-// Cache only within one validation job. Never infer uniqueness from a partial inventory.
+// Cache exact-code lookups only within one validation job; never scan the directory.
 function createCopyResolver({api,root,sourceClient}){
  async function pages(url,{limit=100,check=async()=>{},progress=async()=>{}}={}){
   const rows=[],seen=new Set();let next=url;
@@ -19,19 +19,7 @@ function createCopyResolver({api,root,sourceClient}){
  return async function prepare(rows,check,progress,{direct=false}={}){
   const originalCheck=check;check=async()=>{try{await originalCheck();}catch(e){e.persistenceFailure=true;throw e;}};
   const originalProgress=progress;progress=async(...args)=>{try{await originalProgress(...args);}catch(e){e.persistenceFailure=true;throw e;}};
-  const codes=[...new Set(rows.filter(r=>r.status==='pending').flatMap(r=>[r.originCode,r.destinationCode]).filter(Boolean))];
   const codeCache=new Map(),idCache=new Map(),validated=new Map();
-  let inventory;
-  if(codes.length>=250){
-   // At most one inventory request per four requested codes, capped at 100 pages.
-   try{inventory=await pages(`${root}/orgstructure/`,{limit:Math.min(100,Math.floor(codes.length/4)),check,progress});}
-   catch(e){if(e.code==='JOB_CANCELLED'||e.persistenceFailure)throw e;inventory=null;}
-  }
-  if(inventory){
-   const wanted=new Set(codes),matches=new Map();
-   for(const row of inventory)if(wanted.has(row.Code)){const list=matches.get(row.Code)||[];list.push(row);matches.set(row.Code,list);}
-   for(const code of codes)codeCache.set(code,Promise.resolve(matches.get(code)||[]));
-  }
   const readCode=code=>{
    if(!codeCache.has(code)){const url=new URL(`${root}/orgstructure/`);url.searchParams.set('exactOrgUnitCode',code);codeCache.set(code,pages(url.href,{check}).then(value=>{if(!value)throw Error('Code lookup exceeded its page limit');return value;}));}
    return codeCache.get(code);

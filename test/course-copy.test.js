@@ -87,5 +87,5 @@ test('automatic copy mapping resolves only codes and excludes mismatches while v
  const worker=createCopyJobs({client:client({origin:async()=>assert.fail('No detail reads'),destination:async()=>assert.fail('No detail reads'),resolveCode:async code=>{resolved.push(code);return {A:'1',C:'3'}[code];},copy:async(o,d)=>{sent.push(d);return {status:'PENDING',jobToken:d};}})});
  await worker.plan(j,async()=>{});assert.equal(j.status,'ready');assert.equal(j.rows[2].status,'invalid');assert.equal(j.tasks.length,2);
  await worker.execute(j,async()=>{},async()=>{});assert.deepEqual(sent.sort(),['2','3']);assert.match(createCopyView().report(j),/different org units/);
- const html=createCopyView().form({locals:{}},{controls:()=>''});assert.doesNotMatch(html,/name="validationMode"/);assert.match(html,/Codes are resolved to IDs/);
+ const html=createCopyView().form({locals:{}},{controls:()=>''});assert.doesNotMatch(html,/name="validationMode"/);assert.match(html,/If both are provided, they must identify the same course/);
 });

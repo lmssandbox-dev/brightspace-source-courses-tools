@@ -38,3 +38,5 @@ input[type=radio]{width:19px;height:19px;accent-color:#006fbf;flex-shrink:0;marg
 .copy-upload-grid{margin-bottom:20px}.copy-upload-actions{justify-content:flex-end}
 
 .brand strong{font-size:20px;line-height:1.3}
+
+.date-schedule{margin-top:24px}.date-schedule-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 20px}.date-schedule-fields>.field:first-child{grid-column:1/-1;max-width:480px;width:100%}.date-schedule-fields input{min-width:0}.guidance .explanation{padding-left:20px}.guidance .explanation li{margin-bottom:16px}.guidance .explanation li:last-child,.guidance .explanation li:last-child p{margin-bottom:0}@media(max-width:850px){.date-schedule-fields{grid-template-columns:1fr}.date-schedule-fields>.field:first-child{max-width:none}}

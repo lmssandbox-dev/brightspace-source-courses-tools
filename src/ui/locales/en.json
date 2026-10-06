@@ -368,5 +368,21 @@
   "IDs are used directly. Codes are resolved to IDs; when both are supplied, they must match. Invalid mappings are excluded and reported. Brightspace reports processing errors after you confirm.": "IDs are used directly. Codes are resolved to IDs; when both are supplied, they must match. Invalid mappings are excluded and reported. Brightspace reports processing errors after you confirm.",
   "Some mappings were excluded. Download the report to review errors before continuing.": "Some mappings were excluded. Download the report to review errors before continuing.",
   "Automatic Mapping": "Automatic Mapping",
-  "Some mappings were excluded and were not submitted. See the CSV report for details.": "Some mappings were excluded and were not submitted. See the CSV report for details."
+  "Some mappings were excluded and were not submitted. See the CSV report for details.": "Some mappings were excluded and were not submitted. See the CSV report for details.",
+  "Provide a source course ID, code, or matching ID/code pair per row. Duplicate source courses are processed once.": "Provide a source course ID, code, or matching ID/code pair per row. Duplicate source courses are processed once.",
+  "Supply an ID, a code, or a matching ID/code pair.": "Supply an ID, a code, or a matching ID/code pair.",
+  "ID and code identify different org units.": "ID and code identify different org units.",
+  "Use IDs, codes, or both. If both are supplied, they must match.": "Use IDs, codes, or both. If both are supplied, they must match.",
+  "Copy all content or selected components from a Course Offering to an existing destination.": "Copy all content or selected components from a Course Offering to an existing destination.",
+  "Existing content stays in place, so copies may create duplicates. Courses are not created or activated.": "Existing content stays in place, so copies may create duplicates. Courses are not created or activated.",
+  "Invalid mappings are skipped. Review errors and copy results in the CSV report.": "Invalid mappings are skipped. Review errors and copy results in the CSV report.",
+  "Replicas are made inactive and their content is replaced with a full copy of the source course.": "Replicas are made inactive and their content is replaced with a full copy of the source course.",
+  "Accepted replicas are reactivated automatically. Check copy results from the job page to confirm completion.": "Accepted replicas are reactivated automatically. Check copy results from the job page to confirm completion.",
+  "The same dates apply to assignments, quizzes, and discussion topics in every listed course.": "The same dates apply to assignments, quizzes, and discussion topics in every listed course.",
+  "Review the changes before applying. Fix any course or identifier errors to continue.": "Review the changes before applying. Fix any course or identifier errors to continue.",
+  "What will change": "What will change",
+  "Check the results": "Check the results",
+  "Keep in mind": "Keep in mind",
+  "Review first": "Review first",
+  "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course.": "Copy all or selected components from a Course Offering to an existing Course Offering or Source Course."
 }
