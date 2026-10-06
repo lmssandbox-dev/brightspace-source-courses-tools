@@ -168,7 +168,7 @@ const copyMonitor=createCopyMonitor({store:bulkStore,api:brightspace,leRoot});
 const {createCopyClient}=require('./src/copy/client');
 const {createCopyJobs}=require('./src/copy/jobs');
 const {createCopyView}=require('./src/copy/view');
-const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient})});
+const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient,lpVersion})});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,resolveCode:code=>sourceClient.resolveCode(code)});
 const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,
   courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient})});

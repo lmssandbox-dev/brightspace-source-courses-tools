@@ -353,5 +353,9 @@
   "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Consulte o relatório para verificar problemas de validação, falhas de cópia ou envios não confirmados.",
   "Review course mappings, selected components, and copy results.": "Revise os mapeamentos de cursos, componentes selecionados e resultados das cópias.",
   "Destination Courses": "Cursos de Destino",
-  "Copies in Process": "Cópias em Andamento"
+  "Copies in Process": "Cópias em Andamento",
+  "Validating course mappings": "Validando mapeamentos de cursos",
+  "Submitting copy requests": "Enviando solicitações de cópia",
+  "Loading course directory: {0} pages read.": "Carregando diretório de cursos: {0} páginas lidas.",
+  "Validating mappings: {0} of {1}.": "Validando mapeamentos: {0} de {1}."
 }

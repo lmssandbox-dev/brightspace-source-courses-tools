@@ -42,18 +42,26 @@ function createCopyJobs({client,now=Date.now}){
  return {parse:parseCopyCsv,selection,
   async plan(job,save,checkCancelled=async()=>{}){
    const destinations=new Map();
+   const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async(pages,units)=>{job.progress={phase:'inventory',pages,units,processed:0,total:job.rows.length};await save(job);}):null;
+   const resolveRow=async(row,side)=>{
+    if(!resolveMetadata)return resolve(row,side);
+    const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;
+   };
+   let processed=job.rows.filter(r=>r.status!=='pending').length;
+   job.progress={phase:'mappings',processed,total:job.rows.length};await save(job);
    for(const row of job.rows){
     await checkCancelled();
     if(row.status!=='pending')continue;
     try{
-     const origin=await resolve(row,'origin'),destination=await resolve(row,'destination');
+     const origin=await resolveRow(row,'origin'),destination=await resolveRow(row,'destination');
      if(origin===destination)throw Error('Origin and destination must differ.');
      const previous=destinations.get(destination);
-     if(previous){if(previous.originId===origin){row.status='duplicate';row.message='Duplicate mapping; copied once.';continue;}throw Error('Each destination must have only one origin per job.');}
+     if(previous){if(previous.originId===origin){row.status='duplicate';row.message='Duplicate mapping; copied once.';}else throw Error('Each destination must have only one origin per job.');}
+     if(!previous){
      destinations.set(destination,row);row.status='valid';
-     job.tasks.push({row:row.row,originId:origin,destinationId:destination});
-    }catch(error){row.status='invalid';row.message=error.message;}
-    job.progress={processed:job.rows.filter(r=>r.status!=='pending').length,total:job.rows.length};
+     job.tasks.push({row:row.row,originId:origin,destinationId:destination});}
+    }catch(error){if(error.code==='JOB_CANCELLED')throw error;row.status='invalid';row.message=error.message;}
+    job.progress={phase:'mappings',processed:++processed,total:job.rows.length};
     if(job.progress.processed%25===0)await save(job);
    }
    // Avoid order-dependent chains where a destination is also another mapping's origin.

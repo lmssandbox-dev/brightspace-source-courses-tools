@@ -163,3 +163,9 @@ The interface and report headings support English, Brazilian Portuguese, and Lat
 ### CSV download names
 
 Report downloads use the template name with `results` in place of `template`: `date-manager-results.csv`, `deploy-results.csv`, and `course-copy-results.csv`. These names are the same in every interface language.
+
+### Faster copy mapping validation
+
+Org codes remain supported without manual ID conversion. Code lookups retain names and types and are reused for repeated courses within the job. Large code-based uploads first try a bounded paginated directory scan; if the inventory is too large or unavailable, they fall back to exact-code lookups. Only a complete scan is used to establish uniqueness. Recognized course types no longer need the extra course-detail requests. Custom types retain extra validation when necessary.
+
+The first step shows **Validating course mappings**, with mappings processed out of the CSV total. During directory scanning it shows pages read instead. Cancel remains available. These are read-only checks; copying still requires confirmation. Actual speed depends on tenant inventory size, API latency and pagination. This improves validation without removing the existing invalid-mapping checks.

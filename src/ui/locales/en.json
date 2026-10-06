@@ -353,5 +353,9 @@
   "Review the report for validation issues, failed copies, or unconfirmed submissions.": "Review the report for validation issues, failed copies, or unconfirmed submissions.",
   "Review course mappings, selected components, and copy results.": "Review course mappings, selected components, and copy results.",
   "Destination Courses": "Destination Courses",
-  "Copies in Process": "Copies in Process"
+  "Copies in Process": "Copies in Process",
+  "Validating course mappings": "Validating course mappings",
+  "Submitting copy requests": "Submitting copy requests",
+  "Loading course directory: {0} pages read.": "Loading course directory: {0} pages read.",
+  "Validating mappings: {0} of {1}.": "Validating mappings: {0} of {1}."
 }
