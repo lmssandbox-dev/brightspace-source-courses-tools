@@ -142,7 +142,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     else recordFailure(task.result.error);
     // Submission and each activation result were already checkpointed above.
    }
-   await pool([...groups.values()],4,async(group,_index,stopped)=>{for(const {task,index} of group){if(stopped())return;await submit(task,index);}});
+   await pool([...groups.values()],8,async(group,_index,stopped)=>{for(const {task,index} of group){if(stopped())return;await submit(task,index);}});
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
    job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
    job.reactivationFinishedAt=now();

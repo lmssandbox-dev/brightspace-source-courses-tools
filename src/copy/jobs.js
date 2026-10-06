@@ -74,7 +74,7 @@ function createCopyJobs({client,now=Date.now}){
   },
   async execute(job,save,renew){
    if(job.operation==='check'){
-    await pool(job.tasks,4,async(task,index)=>{
+    await pool(job.tasks,8,async(task,index)=>{
      const result=task.result;if(!result?.jobToken||terminalCopy.has(result.status))return;
      await renew();
      try{result.status=await client.check(task.destinationId,result.jobToken);delete result.message;result.checkedAt=now();}
@@ -84,7 +84,7 @@ function createCopyJobs({client,now=Date.now}){
     finish(job);return;
    }
    let stop=false;
-   await pool(job.tasks,4,async(task,index)=>{
+   await pool(job.tasks,8,async(task,index)=>{
     if(task.result)return;
     if(stop){task.result={status:'notAttempted',message:'Stopped after an authentication, transport, or server failure.'};await save(job,{tasks:[index]});return;}
     // A durable checkpoint precedes each POST. A restart never repeats an in-flight copy.

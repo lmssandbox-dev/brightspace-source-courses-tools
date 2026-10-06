@@ -16,7 +16,7 @@ function createCopyMonitor({store,api,leRoot,now=Date.now}){
    const pendingIds=job.copyCheck?.targetIds?new Set(job.copyCheck.targetIds):null;
    const targets=job.tasks.flatMap(task=>task.targets.filter(target=>['submitted','uncertain'].includes(targetStatus(task,target))&&(!pendingIds||pendingIds.has(String(target.orgUnitId)))).map(target=>({task,target})));
    const cursor=job.copyMonitorCursor||0,updates={};
-   await pool(targets.slice(cursor,cursor+10),4,async({task,target})=>{
+   await pool(targets.slice(cursor,cursor+10),8,async({task,target})=>{
     if(leaseLost)throw Error('Copy-check lease lost');
     const result={checkedAt:now(),status:'Awaiting copy logs',details:''};
     try{
