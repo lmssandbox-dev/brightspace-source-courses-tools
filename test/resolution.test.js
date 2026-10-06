@@ -136,3 +136,14 @@ test('replacement retains old published generation for in-flight readers even if
  await store.cleanup('new',1000);const excluded=calls.find(c=>c.name==='org_resolution_units').filter.generation.$nin;
  assert.ok(excluded.includes('old-but-reading'));assert.ok(excluded.includes('new'));assert.ok(!excluded.includes('expired'));
 });
+
+test('schema discovery accepts compact/display names but not related org-unit datasets',()=>{
+ const {selectSchema,datasetSummary}=require('../src/resolution/sync');
+ const schema=name=>({SchemaId:'ABC',Full:{Name:name},ExtractsLink:'https://tenant.example/private-link'});
+ for(const name of ['Organizational Units','OrganizationalUnits',' Organizational Units (Full) ','Organisational Units'])assert.equal(selectSchema([schema(name)]).SchemaId,'ABC');
+ assert.throws(()=>selectSchema([schema('Organizational Unit Ancestors')]),{code:'DATASET_SCHEMA_NOT_FOUND'});
+ assert.throws(()=>selectSchema([schema('Organizational Units'),schema('OrganizationalUnits')]),{code:'DATASET_SCHEMA_AMBIGUOUS'});
+ assert.equal(selectSchema([schema('Unidade organizacional')],' abc ').SchemaId,'ABC');
+ assert.throws(()=>selectSchema([{SchemaId:'ABC',Full:null}],'ABC'),{code:'DATASET_FULL_UNAVAILABLE'});
+ assert.ok(!JSON.stringify(datasetSummary([schema('Organizational Units')])).includes('private-link'));
+});

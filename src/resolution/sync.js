@@ -15,6 +15,21 @@ function selectExtracts(rows,schemaId){
  for(let i=1;i<ordered.length;i++)if(ordered[i].at-ordered[i-1].at>36*3600000)throw fail('DATASET_DIFFERENTIAL_GAP');
  const seen=new Set();return ordered.filter(r=>{if(seen.has(r.DownloadLink))return false;seen.add(r.DownloadLink);return true;});
 }
+function datasetSummary(schemas){
+ const safe=value=>typeof value==='string'?value.replace(/[\x00-\x1f\x7f-\x9f]/g,' ').slice(0,200):'';
+ return schemas.map(s=>({schemaId:safe(s.SchemaId),fullName:safe(s.Full?.Name),differentialName:safe(s.Differential?.Name),fullAvailable:Boolean(s.Full),extractsLinkAvailable:Boolean(s.ExtractsLink)}));
+}
+function selectSchema(schemas,schemaId=''){
+ // Names may be human-readable or compact plugin names. Do not match ancestors/descendants.
+ const normalize=value=>String(value||'').toLowerCase().replace(/[\s_()\-]/g,'');
+ const names=new Set(['organizationalunits','organizationalunitsfull','organisationalunits','organisationalunitsfull']);
+ const matches=schemas.filter(s=>schemaId?String(s.SchemaId).toLowerCase()===schemaId.trim().toLowerCase():names.has(normalize(s.Full?.Name)));
+ if(!matches.length)throw fail('DATASET_SCHEMA_NOT_FOUND');
+ if(matches.length!==1)throw fail('DATASET_SCHEMA_AMBIGUOUS');
+ if(!matches[0].Full)throw fail('DATASET_FULL_UNAVAILABLE');
+ if(!matches[0].ExtractsLink)throw fail('DATASET_EXTRACT_LINK_MISSING');
+ return matches[0];
+}
 function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=Date.now,enabled=true}){
  let busy=false;
  async function run({force=false}={}){
@@ -25,9 +40,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
    heartbeat=setInterval(()=>store.renew(token).catch(error=>{leaseError=error;}),30000);heartbeat.unref?.();
    const check=async()=>{if(leaseError)throw leaseError;};
    const schemas=await api.list(root+'/datasets/bds',undefined,{check,maxPages:100,maxItems:10000});
-   const matches=schemas.filter(s=>schemaId?s.SchemaId===schemaId:/^organizational units(?: full)?$/i.test(s.Full?.Name||''));
-   if(matches.length!==1||!matches[0].Full||!matches[0].ExtractsLink)throw fail('DATASET_SCHEMA_NOT_FOUND');
-   const schema=matches[0],extracts=selectExtracts(await api.list(schema.ExtractsLink,undefined,{check,maxPages:100,maxItems:10000}),schema.SchemaId);
+   const schema=selectSchema(schemas,schemaId),extracts=selectExtracts(await api.list(schema.ExtractsLink,undefined,{check,maxPages:100,maxItems:10000}),schema.SchemaId);
    if(extracts.some(r=>r.Version!==extracts[0].Version))throw fail('DATASET_VERSION_MISMATCH');
    const fullAt=extracts[0].at,asOf=extracts.at(-1).at,state=await store.status();
    // Rebuild from a full plus its available differentials, not from yesterday's partial cache.
@@ -58,4 +71,4 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
  }
  return {run,async tick(){if(enabled)try{await run();}catch{/* Logged; old published directory remains usable. */}}};
 }
-module.exports={createDirectorySync,nextNight,selectExtracts};
+module.exports={createDirectorySync,nextNight,selectExtracts,selectSchema,datasetSummary};

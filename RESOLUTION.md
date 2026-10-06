@@ -74,7 +74,9 @@ Automated tests cover warm/missing/ambiguous codes, tool integration, batching, 
 
 ## Troubleshooting
 
-- `DATASET_SCHEMA_NOT_FOUND`: check Service User dataset access and schema name; optionally set the correct schema ID.
+- `DATASET_SCHEMA_NOT_FOUND`: the dataset listing succeeded but no matching schema was identified. Run `node scripts/sync-org-units.js --list-datasets` in Render Shell. This prints schema IDs, full/differential names and availability flags only. It makes metadata GET requests (plus normal rate-limit accounting), without downloading/importing data. Set `ORG_UNIT_DATASET_SCHEMA_ID` to the **Organizational Units** row's schema ID if the name differs; do not choose Ancestors or Descendants. If the dataset is absent, check Service User dataset visibility and tenant Data Hub configuration.
+- `DATASET_SCHEMA_AMBIGUOUS`: more than one name matched; select the intended schema explicitly.
+- `DATASET_FULL_UNAVAILABLE` / `DATASET_EXTRACT_LINK_MISSING`: the selected schema lacks full-plugin metadata or its extract link. Check dataset availability/permissions; the importer does not guess a download URL.
 - HTTP 401/403: check scope, Service User permissions and dataset download quota. Failures retry in one hour; current mappings remain usable.
 - `DATASET_FULL_MISSING`, `DATASET_DIFFERENTIAL_GAP`, or `DATASET_VERSION_MISMATCH`: check Data Hub availability; wait for a complete compatible full/differential sequence. No partial import is published.
 - `DATASET_TOO_LARGE` or `DATASET_ROW_LIMIT`: review tenant size and hosting/storage capacity.
