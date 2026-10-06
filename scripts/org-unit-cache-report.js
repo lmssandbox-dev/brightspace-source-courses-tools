@@ -2,7 +2,7 @@
 const {createResolutionStore,namespaceFor}=require('../src/resolution/store');
 function printable(state){
  const time=value=>Number.isFinite(value)&&value>0?new Date(value).toISOString():'not recorded';
- return {status:state?.status||'not initialized',snapshotAvailable:Boolean(state?.generation),asOf:time(state?.asOf),fullAsOf:time(state?.fullAt),fullRows:state?.fullRows??0,importedRows:state?.importedRows??0,extracts:state?.extracts??0,lastFinished:time(state?.finishedAt),nextRun:time(state?.nextRunAt),errorCode:state?.lastError?.code||'',httpStatus:state?.lastError?.status??''};
+ return {status:state?.status||'not initialized',syncMode:state?.syncMode||'legacy',snapshotAvailable:Boolean(state?.generation),asOf:time(state?.asOf),fullAsOf:time(state?.fullAt),fullRows:state?.fullRows??0,importedRows:state?.importedRows??0,extracts:state?.extracts??0,lastFinished:time(state?.finishedAt),nextRun:time(state?.nextRunAt),errorCode:state?.lastError?.code||'',httpStatus:state?.lastError?.status??''};
 }
 async function main(){
  require('dotenv').config();const env=process.env;
