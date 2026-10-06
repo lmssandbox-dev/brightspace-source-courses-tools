@@ -84,3 +84,19 @@ test('copy/deployment checkpoints persist only selected task paths with worker f
   assert.equal(write.tasks,undefined);assert.equal(write.rows,undefined);assert.equal(write.courses,undefined);assert.equal(write['tasks.0'],undefined);assert.equal(write['tasks.1'].result.status,'uncertain');assert.ok(JSON.stringify(write).length<500);
  }
 });
+
+test('recent lease checks are shared, periodically renewed, and fail closed after lease loss',async()=>{
+ let time=0,writes=0,allow=true;
+ const collection={updateOne:async()=>{writes++;await Promise.resolve();return {matchedCount:allow?1:0};}};
+ const store=createBulkStore({uri:'mongodb://localhost/test',namespace:'n',now:()=>time,mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})}});
+ await Promise.all(Array.from({length:8},()=>store.renew('w')));assert.equal(writes,1);
+ time=9999;await store.renew('w');assert.equal(writes,1);
+ time=10000;await store.renew('w');assert.equal(writes,2);
+ time=20000;allow=false;await assert.rejects(()=>store.renew('w'),/lease lost/);assert.equal(writes,3);
+ allow=true;await assert.rejects(()=>store.renew('w'),/lease lost/);assert.equal(writes,3);
+});
+test('expired leases cannot be used from cache',async()=>{
+ let time=0,writes=0;
+ const store=createBulkStore({uri:'mongodb://localhost/test',namespace:'n',leaseMs:100,now:()=>time,mongoClient:{connect:async()=>{},db:()=>({collection:()=>({updateOne:async()=>({matchedCount:++writes===1?1:0})})})}});
+ await store.renew('w');time=101;await assert.rejects(()=>store.renew('w'),/lease lost/);assert.equal(writes,2);
+});

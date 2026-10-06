@@ -26,10 +26,11 @@ function interruptJob(job) {
 function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
   let busy=false;
   const worker=randomUUID();
-  const countCache=new WeakMap(), saveQueues=new WeakMap();
+  const countCache=new WeakMap();
+  const checkpoint=require('./checkpointQueue').createCheckpointQueue(saveCheckpoint);
   function save(job,dirty) {
-    const pending=(saveQueues.get(job)||Promise.resolve()).then(()=>saveCheckpoint(job,dirty));
-    saveQueues.set(job,pending);return pending;
+    job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
+    return checkpoint(job,dirty);
   }
   async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}

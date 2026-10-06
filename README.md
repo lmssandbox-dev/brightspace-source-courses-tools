@@ -173,3 +173,7 @@ The first step shows **Validating course mappings**, with mappings processed out
 ## Bounded bulk processing
 
 See [PERFORMANCE.md](PERFORMANCE.md) for direct versus verified Course Copy preparation, parallel source-group deployment, targeted checkpoints, shared credit reservations, failure behavior, and the server-only timing commands. No new environment variables are required. Local tests cover simulated 5,000-row work; Render/Brightspace throughput remains to be measured after deployment.
+
+### Database round-trip optimization
+
+Concurrent copy/deployment checkpoints now share a durable write when ready together; no copy is sent before its checkpoint succeeds. Lease renewals are deduplicated and reused briefly within the valid lease, while the heartbeat and worker/status fencing remain. The API gate initializes once and waits on known spacing/reset/budget deadlines without repeated database polling. Concurrency stays at four. The job report distinguishes checkpoint requests from physical saves. Run `node scripts/mongodb-latency-report.js` in Render for a read-only connection/ping report; credentials and hostnames are never printed. See [PERFORMANCE.md](PERFORMANCE.md) for behavior, tests, region checks and the repeat-test procedure. No new environment variables or infrastructure changes are required.

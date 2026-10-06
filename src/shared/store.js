@@ -11,6 +11,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   databaseConfig(uri);
   const client=mongoClient || new MongoClient(uri,{serverSelectionTimeoutMS:10000,socketTimeoutMS:15000});
   let connected;
+  const leases=new Map();
   async function collections() {
     if(!connected)connected=client.connect().catch(e=>{connected=null;throw e;});
     await connected;
@@ -82,6 +83,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       try {lock=await locks.findOneAndUpdate({_id:namespace,until:{$lte:now()}},{$set:{worker,until:now()+leaseMs}},{upsert:true,returnDocument:'after'});}
       catch(e){if(e.code===11000)return false;throw e;}
       if(lock.value?.worker!==worker)return false;
+      leases.delete(worker);
       const interrupted=await jobs.find({namespace,status:{$in:['planning','running']}}).toArray();
       for(const job of interrupted) {
         if(job.storageVersion===2&&job.kind==='dates'){
@@ -94,9 +96,23 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       return true;
     },
     async renew(worker) {
-      const {locks}=await collections();
-      const r=await locks.updateOne({_id:namespace,worker,until:{$gt:now()}},{$set:{until:now()+leaseMs}});
-      if(!r.matchedCount)throw new Error('Worker lease lost.');
+      let lease=leases.get(worker);
+      if(lease?.failed)throw lease.failed;
+      if(lease?.pending)return lease.pending;
+      // Only reuse a recently confirmed, unexpired lease. Heartbeats still renew it.
+      if(lease&&now()-lease.confirmedAt<Math.min(10000,leaseMs/4)&&now()<lease.until)return;
+      lease ||= {};leases.set(worker,lease);
+      const started=now();
+      lease.pending=(async()=>{
+        try {
+          const {locks}=await collections();
+          const r=await locks.updateOne({_id:namespace,worker,until:{$gt:now()}},{$set:{until:started+leaseMs}});
+          if(!r.matchedCount)throw new Error('Worker lease lost.');
+          lease.confirmedAt=started;lease.until=started+leaseMs;
+        }catch(error){lease.failed=error;throw error;}
+        finally{lease.pending=null;}
+      })();
+      return lease.pending;
     },
     async claim(worker) {
       const {jobs,chunks}=await collections();
@@ -127,7 +143,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       if(!r.matchedCount)throw new Error('Job is no longer owned by this worker.');
       if(encoded.storageVersion===2){job.storageVersion=2;job.dateChunks=encoded.dateChunks;}
     },
-    async release(worker) {const {locks}=await collections();await locks.updateOne({_id:namespace,worker},{$set:{until:0}});},
+    async release(worker) {leases.delete(worker);const {locks}=await collections();await locks.updateOne({_id:namespace,worker},{$set:{until:0}});},
     async close(){await client.close();}
   };
 }

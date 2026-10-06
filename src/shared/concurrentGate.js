@@ -4,12 +4,16 @@ const {MongoClient}=require('mongodb');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const LIMIT=4,BUDGET=30000;
 function createConcurrentGate({uri,key,now=Date.now,mongoClient}){
- const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready;
+ const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready,initialized;let notBefore=0,slotRetryAt=0,slotWait=250,reservations=Promise.resolve();
  async function collection(){ready ||= client.connect().catch(e=>{ready=null;throw e;});await ready;return client.db().collection('api_rate_limits');}
- return {
-  async reserve(route){
+ async function initialize(c,time){
+  initialized ||= c.updateOne({_id:key},{$setOnInsert:{nextAt:0,pauseUntil:0,permits:[],budgetStart:time,budgetUsed:0}},{upsert:true}).catch(e=>{if(e.code!==11000){initialized=null;throw e;}});
+  await initialized;
+ }
+ async function reserve(route){
+   const deferred=Math.max(notBefore,slotRetryAt)-now();if(deferred>0)return {wait:deferred};
    const c=await collection(),time=now(),token=randomUUID(),costPath='$costs.'+hash(route)+'.maxCost';
-   try{await c.updateOne({_id:key},{$setOnInsert:{nextAt:0,pauseUntil:0,permits:[],budgetStart:time,budgetUsed:0}},{upsert:true});}catch(e){if(e.code!==11000)throw e;}
+   await initialize(c,time);
    const cost={$max:[1,{$ifNull:[costPath,125]},{$ifNull:['$costs.'+hash(route)+'.fallbackCost',0]}]},fresh={$lte:[{$ifNull:['$budgetStart',0]},time-60000]},used={$cond:[fresh,0,{$ifNull:['$budgetUsed',0]}]};
    const active={$filter:{input:{$ifNull:['$permits',[]]},as:'permit',cond:{$gt:['$$permit.until',time]}}};
    const result=await c.findOneAndUpdate({_id:key,nextAt:{$lte:time},$expr:{$and:[{$lte:[{$ifNull:['$pauseUntil',0]},time]},{$lt:[{$size:active},LIMIT]},{$lte:[{$add:[used,cost]},BUDGET]}]}},[{$set:{
@@ -18,9 +22,19 @@ function createConcurrentGate({uri,key,now=Date.now,mongoClient}){
     budgetStart:{$cond:[fresh,time,{$ifNull:['$budgetStart',time]}]},budgetUsed:{$add:[used,cost]},
     lastReservationCost:cost
    }}],{returnDocument:'after'});
-   if(result.value)return {token,reservedCost:result.value.lastReservationCost};
-   // Short waits let completed requests free slots without waiting for lease expiry.
-   const row=await c.findOne({_id:key});if(row?.costs?.[hash(route)]?.maxCost>BUDGET)throw Error('Observed API cost exceeds the application budget');return {wait:Math.max(20,Math.min(1000,Math.max(row?.pauseUntil||0,row?.nextAt||0,(row?.budgetUsed||0)>=BUDGET?(row.budgetStart||time)+60000:0)-time))};
+   if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost};}
+   const row=await c.findOne({_id:key});if(!row)throw Error('API gate missing');
+   const estimate=Math.max(1,row.costs?.[hash(route)]?.maxCost??125,row.costs?.[hash(route)]?.fallbackCost||0);
+   if(estimate>BUDGET)throw Error('Observed API cost exceeds the application budget');
+   const current=now(),windowEnd=(row.budgetStart??0)+60000;
+   notBefore=Math.max(notBefore,row.pauseUntil||0,row.nextAt||0,windowEnd>current&&(row.budgetUsed||0)+estimate>BUDGET?windowEnd:0);
+   if((row.permits||[]).filter(p=>p.until>current).length>=LIMIT){slotRetryAt=current+slotWait;slotWait=Math.min(1000,slotWait*2);}
+   return {wait:Math.max(20,Math.max(notBefore,slotRetryAt)-current)};
+ }
+ return {
+  reserve(route){
+   // Serialize short reservation attempts locally; HTTP requests still overlap.
+   const pending=reservations.then(()=>reserve(route));reservations=pending.catch(()=>{});return pending;
   },
   async complete(permit,sample){
    const c=await collection(),time=now(),prefix='costs.'+hash(sample.route);
@@ -31,6 +45,7 @@ function createConcurrentGate({uri,key,now=Date.now,mongoClient}){
    if(sample.status===429)update.$inc.rateLimitResponses=1;
    if(sample.pauseMs)update.$max.pauseUntil=time+sample.pauseMs+1000;
    const r=await c.updateOne({_id:key,'permits.token':permit.token},update);if(r.matchedCount!==1)throw Error('API permit lost');
+   slotRetryAt=0;slotWait=250;if(sample.pauseMs)notBefore=Math.max(notBefore,time+sample.pauseMs+1000);
   },
   async close(){await client.close();}
  };

@@ -33,7 +33,7 @@ D2L documents the response headers and dynamic costs in [API rate limiting](http
 
 ## Persistence and interruption
 
-Execution saves only changed task paths plus small job metadata instead of rewriting thousands of rows on every response. Checkpoints are serialized within a job and retain worker/status guards. Final saves retain the complete cumulative report. Failed persistence stops scheduling; active workers drain before the lease is released. A systemic copy failure stops new submissions, but up to four already in flight can still complete. Deployment groups similarly finish in-flight batches while stopping new groups/batches after their systemic-failure threshold.
+Execution saves only changed task paths plus small job metadata instead of rewriting thousands of rows on every response. Checkpoints are serialized within a job and retain worker/status guards. Copy/deployment checkpoint requests arriving together are combined during a 10 ms collection window; every caller waits for the combined database write before submitting its copy. Requests arriving during a write belong to the next batch. A failed batch rejects all waiting workers and poisons that job queue. Date jobs use a microtask rather than the collection delay. Final saves retain the complete cumulative report. Failed persistence stops scheduling; active workers drain before the lease is released. A systemic copy failure stops new submissions, but up to four already in flight can still complete. Deployment groups similarly finish in-flight batches while stopping new groups/batches after their systemic-failure threshold.
 
 Interrupted copy/deployment jobs retain checkpoints and saved tokens; they are not blindly resumed or resubmitted. An accepted request whose response could not be saved remains uncertain. Inspect Brightspace before creating a replacement job. Cancellation during Course Copy preparation stops further validation, with up to four mappings finishing in flight; it cannot undo a submitted Brightspace copy.
 
@@ -52,6 +52,26 @@ Both commands read MongoDB only. They never send Brightspace requests. Costs and
 
 The API report shows measured costs plus average HTTP duration, average gate wait and maximum HTTP duration. Timing averages include only newly timed requests, so older cost records do not dilute them. Endpoint paths omit IDs, tokens and query strings. Gate wait includes reservation/database/cooldown waits; HTTP duration excludes job persistence and token acquisition. It does not separately measure local semaphore queue time.
 
-The job report shows the latest 20 jobs for this deployment with preparation, submission and native-check durations, checkpoint count and checkpoint duration. Unfinished/interrupted phases have no finished duration. Checkpoint aggregates exclude the final save's own duration. Source Deployer's separate copy-log monitor does not currently publish a job phase duration. Submission duration measures app submission/preparation/activation work, **not** Brightspace's later copy completion time. These reports contain job IDs, never credentials or course content.
+The job report shows the latest 20 jobs for this deployment with preparation, submission and native-check durations, logical checkpoint requests, physical checkpoint count and checkpoint duration. New jobs can therefore show fewer physical checkpoints than logical requests. Unfinished/interrupted phases have no finished duration. Checkpoint aggregates exclude the final save's own duration. Source Deployer's separate copy-log monitor does not currently publish a job phase duration. Submission duration measures app submission/preparation/activation work, **not** Brightspace's later copy completion time. These reports contain job IDs, never credentials or course content.
 
 Compare equivalent jobs with the same mapping count, identifier mode and components. First verify content/status on a small job, then increase volume. Local regression tests include 5,000-row direct preparation and submission, repeated lookups, batch ordering, concurrent failure handling, targeted persistence and a deterministic model of the actual Mongo reservation expressions. They do not replace a live MongoDB/Render/Brightspace performance test or establish a completion-time promise.
+
+## Reducing database round trips
+
+Worker lease renewals share an in-flight renewal and reuse a recently verified lease for less than 10 seconds (or one quarter of a shorter lease). The 10-second heartbeat remains active. Expired leases are never reused; a failed renewal blocks further work until a new acquisition. Per-job database writes still require the matching worker and active job status. This removes redundant lease writes around every checkpoint without removing ownership fencing.
+
+The API gate initializes its Mongo document once per process. Short reservation attempts are serialized locally to reduce collisions; HTTP requests still overlap up to four. A cached next-start time, cooldown or credit-window deadline returns a wait without querying MongoDB. All actual grants still pass the atomic Mongo filter. Permit contention uses 250–1,000 ms backoff, and a local completion clears that contention backoff. It never clears a global cooldown. Insufficient credits consider the next request's estimated cost, even when used credits are slightly below the ceiling.
+
+### Check database latency and hosting regions
+
+Run from the **Render shell**, where the application runs:
+
+```sh
+node scripts/mongodb-latency-report.js
+```
+
+This command performs eight read-only MongoDB pings and reports connection time plus minimum, median and maximum ping duration. It prints no connection URI, credentials, hostname, or database contents. Ping time is not the same as a durable write's latency; database load and write concern can also matter. Compare it with checkpoint timing after repeating the same small job.
+
+Check the Render service region and Atlas cluster/primary region in their dashboards. Do not infer region from an opaque cluster hostname or ping measurement. Render currently lists Oregon, Ohio, Virginia, Frankfurt and Singapore in its [region documentation](https://render.com/docs/regions); AWS São Paulo is not a listed Render service region. If Atlas is in São Paulo, confirm the Render location before considering any migration. No hosting region or database configuration is changed by this update.
+
+Deploy after current jobs finish, repeat the same 11-copy workload and inspect all three reports. Concurrency remains four. The regression suite verifies batching barriers, failure propagation, lease expiry, single initialization and no database polling during a known cooldown. Live latency and throughput must still be measured after deployment.

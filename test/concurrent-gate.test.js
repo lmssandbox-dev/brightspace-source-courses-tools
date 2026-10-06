@@ -7,7 +7,7 @@ const hash=s=>createHash('sha256').update(s).digest('hex');
 // Small expression model for the operators used by the atomic Mongo reservation.
 // This exercises the actual generated filter/pipeline, not a replacement gate algorithm.
 function mongoModel(){
- let doc;const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
+ const calls={initialize:0,reserve:0,read:0,complete:0};let doc;const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
  const put=(o,path,value)=>{const keys=path.split('.'),last=keys.pop();for(const key of keys)o=o[key]||=( {} );o[last]=value;};
  function evalExpr(v,vars={}){
   if(typeof v==='string'&&v.startsWith('$$'))return get(vars,v.slice(2));
@@ -25,6 +25,7 @@ function mongoModel(){
  }
  const collection={
   async updateOne(filter,update){
+   calls[update.$setOnInsert?'initialize':'complete']++;
    if(!doc&&update.$setOnInsert)doc={_id:filter._id,...structuredClone(update.$setOnInsert)};
    if(!doc||filter['permits.token']&&!doc.permits.some(p=>p.token===filter['permits.token']))return {matchedCount:0};
    for(const [k,v] of Object.entries(update.$set||{}))put(doc,k,v);
@@ -35,25 +36,26 @@ function mongoModel(){
    return {matchedCount:1};
   },
   async findOneAndUpdate(filter,pipeline){
+   calls.reserve++;
    if(!doc||doc.nextAt>filter.nextAt.$lte||!evalExpr(filter.$expr))return {value:null};
    Object.assign(doc,evalExpr(pipeline[0].$set));return {value:structuredClone(doc)};
-  },async findOne(){return structuredClone(doc);}
+  },async findOne(){calls.read++;return structuredClone(doc);}
  };
- return {client:{connect:async()=>{},db:()=>({collection:()=>collection}),close:async()=>{}},get doc(){return doc;}};
+ return {calls,client:{connect:async()=>{},db:()=>({collection:()=>collection}),close:async()=>{}},get doc(){return doc;}};
 }
 const route='POST /d2l/api/lp/1.63/sourceCourses/:id/deploy';
 const sample={route,status:200,cost:10,remaining:49000,latencyMs:100,gateWaitMs:20,resetMs:60000};
 test('atomic reservations share four permits across gate instances and release records timing',async()=>{
  let now=0;const m=mongoModel(),create=()=>createConcurrentGate({uri:'mongodb://unused/app',key:'k',now:()=>now,mongoClient:m.client});const a=create(),b=create(),permits=[];
  for(let i=0;i<4;i++){const permit=await (i%2?a:b).reserve(route);assert.ok(permit.token);permits.push(permit);now+=250;}
- assert.ok((await b.reserve(route)).wait>0);await a.complete(permits[0],sample);assert.ok((await b.reserve(route)).token);
+ assert.ok((await b.reserve(route)).wait>0);await a.complete(permits[0],sample);now+=250;assert.ok((await b.reserve(route)).token);
  const metrics=m.doc.costs[hash(route)];assert.equal(metrics.requests,1);assert.equal(metrics.timedRequests,1);assert.equal(metrics.totalLatencyMs,100);assert.equal(metrics.totalGateWaitMs,20);
  now=50000;assert.ok((await a.reserve(route)).token);await assert.rejects(()=>a.complete(permits[1],sample),/permit lost/);
 });
 test('reserved credit budget blocks starts until its window resets',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const initial=await gate.reserve(route);await gate.complete(initial,sample);
- m.doc.budgetUsed=29990;m.doc.nextAt=0;
- const last=await gate.reserve(route);assert.ok(last.token);assert.equal(m.doc.budgetUsed,30000);await gate.complete(last,sample);now=20;
+ m.doc.budgetUsed=29990;now=250;
+ const last=await gate.reserve(route);assert.ok(last.token);assert.equal(m.doc.budgetUsed,30000);await gate.complete(last,sample);now=270;
  assert.ok((await gate.reserve(route)).wait);now=60000;assert.ok((await gate.reserve(route)).token);assert.equal(m.doc.budgetUsed,10);
 });
 test('429 pause is durable and cannot be shortened by an older successful response',async()=>{
@@ -83,4 +85,15 @@ test('production transport respects global reset waits before retrying an explic
  let now=0,pauseUntil=0,calls=0;const samples=[];
  const request=createRateLimitedHttp({baseUrl:'https://tenant.example',now:()=>now,delay:async ms=>{now+=ms;},gate:{reserve:async()=>now<pauseUntil?{wait:pauseUntil-now}:{token:'t',reservedCost:10},complete:async(_p,s)=>{samples.push(s);if(s.pauseMs)pauseUntil=now+s.pauseMs+1000;}},http:async()=>{if(++calls===1)throw {response:{status:429,headers:{'retry-after':'75'}}};assert.ok(now>=76000);return {status:202,headers:{'x-request-cost':'10'}};}});
  await request(config);assert.equal(calls,2);assert.equal(samples[0].pauseMs,75000);
+});
+
+test('gate initializes once and cached cooldown waits do not query MongoDB',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});
+ const p=await gate.reserve(route);await gate.complete(p,{...sample,status:429,pauseMs:75000});const before={...m.calls};
+ for(let i=0;i<100;i++){const wait=await gate.reserve(route);assert.equal(wait.wait,76000);}
+ assert.deepEqual(m.calls,before);now=76000;const next=await gate.reserve(route);assert.ok(next.token);assert.equal(m.calls.initialize,1);
+});
+test('budget waits account for the next request cost, even below the full credit ceiling',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const p=await gate.reserve(route);await gate.complete(p,{...sample,cost:100});m.doc.budgetUsed=29950;now=250;
+ assert.equal((await gate.reserve(route)).wait,59750);const reads=m.calls.read;now=1000;assert.equal((await gate.reserve(route)).wait,59000);assert.equal(m.calls.read,reads);
 });
