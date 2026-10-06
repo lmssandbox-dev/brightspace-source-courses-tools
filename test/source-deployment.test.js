@@ -264,3 +264,12 @@ test('parallel deployment preview caches repeated codes and course reads and bat
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:100},(_,i)=>`,SOURCE,,R${i%50+101}`).join('\n')),tasks:[]};
  await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,1);assert.equal(targetReads,50);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,4);assert.equal(job.tasks[0].targets.length,50);
 });
+
+test('activation retry uses only the affected task checkpoint and preserves saved deployment results',async()=>{
+ const submitted={status:'submitted',deploymentId:'saved'};
+ const job={tasks:[{sourceId:'1',result:submitted,targets:[{orgUnitId:'101',deactivation:{status:'updated'},activation:{status:'failed'}}]},{sourceId:'2',result:{status:'failed'},targets:[{orgUnitId:'102',deactivation:{status:'updated'}}]}]};
+ const snapshots=[],writes=[];
+ const engine=createDeploymentJobs({enabled:()=>true,client:{setActive:async(id,active,before)=>{await before();assert.equal(snapshots.at(-1).activation.writeAttempted,true);writes.push(id);return {status:'updated',verifiedActive:active};},deploy:async()=>assert.fail('retry must not deploy')}});
+ await engine.activate(job,async(j,dirty)=>{assert.deepEqual(dirty,{tasks:[0]});snapshots.push(structuredClone(j.tasks[0].targets[0]));},async()=>{});
+ assert.deepEqual(writes,['101']);assert.equal(snapshots.length,3);assert.equal(snapshots.at(-1).activation.status,'updated');assert.deepEqual(job.tasks[0].result,submitted);
+});

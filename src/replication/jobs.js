@@ -79,10 +79,13 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
   },
   async activate(job,save,renew){
    if(!enabled()){job.status='activationWithErrors';job.message='Required deployment/course update scopes are unavailable.';return;}
-   for(const task of job.tasks)for(const target of task.targets.filter(r=>canActivateTarget(task,r)&&!['updated','unchanged'].includes(r.activation?.status))){
-    target.activation={status:'running',writeAttempted:false};await save(job);
-    target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await save(job);});
-    await save(job);
+   for(const [index,task] of job.tasks.entries()){
+    const checkpoint=()=>save(job,{tasks:[index]});
+    for(const target of task.targets.filter(r=>canActivateTarget(task,r)&&!['updated','unchanged'].includes(r.activation?.status))){
+     target.activation={status:'running',writeAttempted:false};await checkpoint();
+     target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await checkpoint();});
+     await checkpoint();
+    }
    }
    job.status=job.tasks.every(t=>t.targets.every(r=>canActivateTarget(t,r)&&['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
    job.message=job.status==='activated'?'All replicas verified active. Copy completion was confirmed manually by the user.':'Some replicas were excluded from activation or could not be verified active. Inspect the per-replica results; eligible activation can be retried without deploying again.';
@@ -133,7 +136,7 @@ function createDeploymentJobs({client,enabled,resolveCode,now=Date.now}){
     if(task.result.status==='submitted')serviceFailures=0;
     else if(task.result.status==='submittedWithErrors')serviceFailures=0;
     else recordFailure(task.result.error);
-    await checkpoint();
+    // Submission and each activation result were already checkpointed above.
    }
    await pool([...groups.values()],4,async(group,_index,stopped)=>{for(const {task,index} of group){if(stopped())return;await submit(task,index);}});
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
