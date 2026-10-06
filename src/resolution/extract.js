@@ -73,8 +73,9 @@ function normalize(row,observedAt){
  };
  const code=text('Code',512,true),name=text('Name',1024,true),type=text('Type',512);
  // Type is descriptive metadata, not authorization. Empty labels do not change ID/code identity.
- // Dates are historical; an explicit false flag takes precedence for restored units.
- const deleted=flag==='1'||flag==='true'||flag===''&&Boolean(row.DeletedDate||row.RecycledDate);
+ // Recycled rows can have IsDeleted=FALSE. Either deletion timestamp excludes the row.
+ // IsActive is unrelated: inactive courses remain valid mapping candidates.
+ const deleted=flag==='1'||flag==='true'||Boolean(String(row.DeletedDate??'').trim()||String(row.RecycledDate??'').trim());
  let identifier;try{identifier=id(row.OrgUnitId);}catch{invalid('OrgUnitId','invalid_id');}
  return {Identifier:identifier,Code:code,Name:name,Type:{Code:type},deleted,observedAt};
 }

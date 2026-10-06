@@ -23,10 +23,17 @@ test('cold lookup is deduplicated, exact, persisted, then reused by another job'
  const session=await resolver.prepare(['a/b ?']);await Promise.all(Array.from({length:8},()=>session.resolve('a/b ?')));assert.equal(calls,1);assert.equal(writes,1);
  await (await resolver.prepare(['a/b ?'])).resolve('a/b ?');assert.equal(calls,1);
 });
-test('ambiguous cached codes fail without live lookup; misses do not become negative entries',async()=>{
- const resolver=createOrgResolver({root,store:{lookup:async()=>new Map([['A',[record('1','A'),record('2','A')]]]),remember:async()=>{}},api:{list:async()=>[]}});
- const session=await resolver.prepare(['A','missing']);await assert.rejects(session.resolve('A'),{code:'CODE_NOT_UNIQUE'});await assert.rejects(session.resolve('missing'),{code:'CODE_NOT_UNIQUE'});
+test('ambiguous cache is checked live; missing and genuinely ambiguous API results remain errors',async()=>{
+ let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>new Map([['A',[record('1','A'),record('2','A')]]]),remember:async()=>{}},api:{list:async url=>{calls++;return new URL(url).searchParams.get('exactOrgUnitCode')==='A'?[record('1','A'),record('2','A')]:[];}}});
+ const session=await resolver.prepare(['A','missing']);await assert.rejects(session.resolve('A'),{code:'CODE_NOT_UNIQUE'});await assert.rejects(session.resolve('missing'),{code:'CODE_NOT_FOUND'});assert.equal(calls,2);
 });
+test('unique live answer replaces ambiguous cache and concurrent rows share the lookup',async()=>{
+ let calls=0,saved;const cache=new Map([['A',[record('1','A'),record('2','A')]]]);
+ const resolver=createOrgResolver({root,store:{lookup:async()=>new Map(cache),remember:async(code,records)=>{saved=records;cache.set(code,records);}},api:{list:async()=>{calls++;return [record('2','A')];}}});
+ const session=await resolver.prepare(['A']);const rows=await Promise.all(Array.from({length:8},()=>session.resolve('A')));assert.ok(rows.every(r=>r.Identifier==='2'));assert.equal(calls,1);assert.deepEqual(saved,[record('2','A')].map(({observedAt,deleted,...r})=>r));
+ await (await resolver.prepare(['A'])).resolve('A');assert.equal(calls,1);
+});
+
 test('fresh live mappings survive old fulls; newer full/differentials invalidate renames/deletions',()=>{
  const old=record('1','A',100),overlay={verifiedAt:200,matches:[old]};
  assert.deepEqual(mergeMatches('A',[],overlay,new Map(),100),[old]);
@@ -76,9 +83,9 @@ test('no lease prevents download; no full prevents publishing',async()=>{
  assert.throws(()=>selectExtracts([],'schema'),{code:'DATASET_FULL_MISSING'});
  assert.equal(new Date(nextNight(Date.parse('2026-10-06T07:00:00Z'),6)).toISOString(),'2026-10-07T06:00:00.000Z');
 });
-test('normalization preserves Source Course type, exact codes and restored units',()=>{
+test('normalization preserves Source Course type and excludes deletion timestamps despite false flag',()=>{
  const row={OrgUnitId:'12',Code:' a ',Name:'N',Type:'Source Course',IsDeleted:'false',DeletedDate:'old'};
- const value=normalize(row,1);assert.equal(value.Code,' a ');assert.equal(value.Type.Code,'Source Course');assert.equal(value.deleted,false);
+ const value=normalize(row,1);assert.equal(value.Code,' a ');assert.equal(value.Type.Code,'Source Course');assert.equal(value.deleted,true);
  assert.throws(()=>normalize({...row,IsDeleted:'maybe'},1));
 });
 // Minimal stored ZIP fixture with a valid CRC; no extra test dependency.
@@ -199,4 +206,18 @@ test('Mongo staging clone is bounded and never writes to the published generatio
  const collection={createIndex:async()=>{},find:filter=>{assert.equal(filter.generation,'old');return {batchSize:size=>{assert.equal(size,500);return {async *[Symbol.asyncIterator](){for(let i=1;i<=1001;i++)yield {_id:i,namespace:'n',generation:'old',Identifier:String(i),Code:'C'+i};},close:async()=>{closed=true;}};}};},bulkWrite:async operations=>writes.push(operations)};
  const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'n',mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})}});
  await store.clone('old','new');assert.deepEqual(writes.map(w=>w.length),[500,500,1]);assert.ok(writes.flat().every(w=>w.updateOne.filter.generation==='new'&&!Object.hasOwn(w.updateOne.update.$set,'_id')));assert.ok(closed);
+});
+
+test('reported five historical org units yield only the unrecycled destination',()=>{
+ const ids=['44814','44815','49825','54824','59831'];
+ const rows=ids.map((OrgUnitId,i)=>normalize({OrgUnitId,Code:'oferta_origem_0001',Name:'Oferta Origem 0001',Type:i===3?'Course Offering':'Source Course',IsDeleted:'FALSE',DeletedDate:'',RecycledDate:i<4?'2026-10-05T15:22:19.627Z':'',IsActive:'TRUE'},1));
+ assert.deepEqual(mergeMatches('oferta_origem_0001',rows,null,new Map(),1).map(r=>r.Identifier),['59831']);
+ const base={OrgUnitId:'1',Code:'A',Name:'',Type:'',IsDeleted:'FALSE',IsActive:'FALSE'};
+ assert.equal(normalize(base,1).deleted,false);
+ assert.equal(normalize({...base,IsDeleted:'TRUE'},1).deleted,true);
+ assert.equal(normalize({...base,DeletedDate:'2026-01-01'},1).deleted,true);
+});
+test('previous normalization policy rebuilds even when extract timestamps have not changed',async()=>{
+ const f=incrementalFixture();await createDirectorySync({...f,root}).run();f.state.syncVersion=2;
+ assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,3);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
 });

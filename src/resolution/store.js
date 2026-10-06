@@ -19,7 +19,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   async lookup(codes){const d=await db(),meta=await d.collection('org_resolution_state').findOne({_id:metaId}),found=new Map();
    for(let i=0;i<codes.length;i+=500){const part=codes.slice(i,i+500),overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
     const ids=overlays.flatMap(o=>o.matches.map(r=>r.Identifier));const records=meta?.generation?await d.collection('org_resolution_units').find({namespace,generation:meta.generation,$or:[{Code:{$in:part}},{Identifier:{$in:ids}}]}).toArray():[];
-    const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.map(r=>[r.code,r]));
+    const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)).map(r=>[r.code,r]));
     for(const r of records){if(!byCode.has(r.Code))byCode.set(r.Code,[]);byCode.get(r.Code).push(r);}
     for(const code of part){const matches=mergeMatches(code,byCode.get(code)||[],live.get(code),byId,meta?.fullAt||0);if(matches.length)found.set(code,matches);}
    }return found;
@@ -54,7 +54,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    const retained=(meta?.retired||[]).filter(r=>r.retiredAt>=cutoff).map(r=>r.generation);
    await d.collection('org_resolution_units').deleteMany({namespace,generation:{$nin:[generation,meta?.generation,...retained].filter(Boolean)},stagedAt:{$lt:cutoff}});
    await state.updateOne({_id:metaId},{$pull:{retired:{retiredAt:{$lt:cutoff}}}});
-   await d.collection('org_resolution_live').deleteMany({namespace,verifiedAt:{$lte:fullAt}});
+   await d.collection('org_resolution_live').deleteMany({namespace,verifiedAt:{$lte:Math.max(fullAt,meta?.liveInvalidBefore||0)}});
   },
   async discard(generation){const d=await db(),state=await d.collection('org_resolution_state').findOne({_id:metaId});if(state?.generation!==generation)await d.collection('org_resolution_units').deleteMany({namespace,generation});},
   close:()=>client.close()

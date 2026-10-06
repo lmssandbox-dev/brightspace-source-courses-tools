@@ -20,7 +20,7 @@ function selectExtracts(rows,schemaId){
 }
 function planSync(rows,schemaId,state){
  const available=extractList(rows,schemaId),full=available.filter(r=>r.BdsType==='Full').at(-1);
- const tracked=state?.generation&&state.syncVersion===2&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
+ const tracked=state?.generation&&state.syncVersion===3&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
  const rebuild=!tracked||full&&(full.at>state.fullAt||full.at===state.fullAt&&full.key!==state.fullKey);
  if(rebuild){
   if(!full)throw fail('DATASET_FULL_MISSING');
@@ -87,7 +87,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
     if(extract.BdsType==='Full'){fullRows=count;if(!count)throw fail('DATASET_EMPTY_FULL');}
    }
    await check();await store.renew(token);
-   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:2,syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
+   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:3,liveInvalidBefore:state?.syncVersion===3?(state.liveInvalidBefore||0):now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
    await store.finish(token,nextNight(now(),hour));
    await store.cleanup(generation,fullAt);
    return {status:'ready',mode:plan.mode,fullRows,importedRows:rows,extracts:extracts.length,asOf};
