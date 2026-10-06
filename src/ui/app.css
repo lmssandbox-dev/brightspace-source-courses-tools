@@ -36,3 +36,5 @@ main{max-width:1440px;padding:24px 32px 52px}.app-header{padding:18px 32px}.side
 input[type=radio]{width:19px;height:19px;accent-color:#006fbf;flex-shrink:0;margin:3px 0;padding:0}
 
 .copy-upload-grid{margin-bottom:20px}.copy-upload-actions{justify-content:flex-end}
+
+.brand strong{font-size:20px;line-height:1.3}

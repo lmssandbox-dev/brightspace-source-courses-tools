@@ -1,6 +1,6 @@
 # Brightspace Source Courses Tools
 
-A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy to Source Course, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
+A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
 
 ## 1. Activity dates
 
@@ -72,7 +72,7 @@ Date-job screens show compact summaries; the CSV report includes all records. Pr
 
 ## Application identity
 
-Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy to Source Course is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
+Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy to Source Courses is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
 
 ## Fresh database setup
 
@@ -134,7 +134,7 @@ CSV templates: the date template downloads as `date-manager-template.csv`. Deplo
 
 LTI launch shows a lightweight blue loading indicator while frontend assets initialize. It starts when the app HTML arrives, not during Brightspace authentication or server cold start. It is removed after UI initialization and has an eight-second visual fallback; without JavaScript it is hidden so server-rendered content remains accessible.
 
-## Bulk Course Copy to Source Course (first tool in the sidebar)
+## Bulk Course Copy to Source Courses (first tool in the sidebar)
 
 Use this tool to copy **all components or a selection of component types** from a **Course Offering** into an **existing Course Offering or Source Course**. This is separate from Source Course deployment: it never creates courses, resets content, or changes activation. Source Courses are not accepted as origins. Offering → Source Course was confirmed by the operator in Postman; verify it in each new tenant before bulk use.
 
@@ -159,3 +159,7 @@ Submission checkpoints and tokens are saved in MongoDB before/after each request
 Supported component types: AttendanceRegisters, Awards, Checklists, Competencies, CompletionTracking, Content, CourseAppearance, CourseFiles, Discussions, DisplaySettings, Dropbox (Assignments), Faq, Forms (registration forms), Glossary, Grades, GradesSettings, Groups, Homepages, IntelligentAgents, LearningOutcomes, Links, LtiLink, LtiTP, Navbars, News, QuestionLibrary, Quizzes, ReleaseConditions, Rubrics, S3Model, Schedule, SelfAssessments, Surveys, ToolNames, Widgets. Include related components required by your content; the app does not automatically add dependencies.
 
 The interface and report headings support English, Brazilian Portuguese, and Latin American Spanish. CSV input headers, native API status values, tokens, and diagnostic report data remain stable machine values.
+
+### CSV download names
+
+Report downloads use the template name with `results` in place of `template`: `date-manager-results.csv`, `deploy-results.csv`, and `course-copy-results.csv`. These names are the same in every interface language.
