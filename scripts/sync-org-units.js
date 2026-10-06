@@ -2,7 +2,8 @@
 // Refreshes only the app's MongoDB directory; never copies courses or changes Brightspace.
 async function main(){
  const args=process.argv.slice(2);
- if(args.some(arg=>arg!=='--list-datasets'))throw Object.assign(Error('Use no arguments or --list-datasets'),{code:'INVALID_ARGUMENT'});
+ const checkCode=args.length===2&&args[0]==='--check-code'&&args[1].length>0&&args[1].length<=512;
+ if(!checkCode&&args.some(arg=>arg!=='--list-datasets'))throw Object.assign(Error('Use no arguments or --list-datasets'),{code:'INVALID_ARGUMENT'});
  require('dotenv').config();const env=process.env,http=require('axios');
  const {createBrightspaceAuth}=require('../src/shared/auth');
  const {createBrightspaceClient,createBrightspaceGet}=require('../src/shared/client');
@@ -22,6 +23,15 @@ async function main(){
   return;
  }
  const runtime=require('../src/resolution/runtime').createResolutionRuntime({api,http:apiHttp,downloadHttp:http,oauth,baseUrl:env.BS_URL,lpVersion:env.D2L_LP_VERSION||'1.53',uri:env.MONGODB_URL,clientId:env.D2L_OAUTH2_CLIENT_ID});
- try{console.log(await runtime.sync.run({force:true}));}finally{await runtime.store.close();await gate.close?.();}
+ try{
+  if(checkCode){
+   const code=args[1],cached=await runtime.store.lookup([code]);
+   const url=new URL(new URL(env.BS_URL).origin+'/d2l/api/lp/'+(env.D2L_LP_VERSION||'1.53')+'/orgstructure/');url.searchParams.set('exactOrgUnitCode',code);
+   const live=(await api.list(url.href,undefined,{maxPages:100,maxItems:5000})).filter(r=>r.Code===code);
+   const clean=value=>String(value??'').replace(/[\x00-\x1f\x7f-\x9f]/g,' ').slice(0,512);
+   console.table([...(cached.get(code)||[]).map(r=>({source:'MongoDB',id:clean(r.Identifier),code:clean(r.Code),type:clean(r.Type?.Code)})),...live.map(r=>({source:'Brightspace',id:clean(r.Identifier),code:clean(r.Code),type:clean(r.Type?.Code)}))]);
+   console.log(`MongoDB matches: ${(cached.get(code)||[]).length}; Brightspace matches: ${new Set(live.map(r=>String(r.Identifier))).size}. No mappings or courses were changed; API rate accounting still applies.`);
+  }else console.log(await runtime.sync.run({force:true}));
+ }finally{await runtime.store.close();await gate.close?.();}
 }
 if(require.main===module)main().catch(error=>{require('../src/shared/diagnostics').logFailure('org_directory_manual_sync_failed',error);process.exitCode=1;});
