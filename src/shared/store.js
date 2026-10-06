@@ -74,8 +74,9 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,status:'ready',expiresAt:{$gt:time}},{$set:{status:'queued',confirmedAt:time}})).modifiedCount===1;
     },
     async cancel(_id,owner) {
-      const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'},status:{$in:['validating','ready','queued']}},{$set:{status:'cancelled',updatedAt:now()}})).modifiedCount===1;
+      const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'}, $or:[{status:{$in:['validating','ready','queued']}},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:now()}})).modifiedCount===1;
     },
+    async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,status:'cancelled'},{projection:{_id:1}}));},
     async acquire(worker) {
       const {locks,jobs}=await collections();let lock;
       try {lock=await locks.findOneAndUpdate({_id:namespace,until:{$lte:now()}},{$set:{worker,until:now()+leaseMs}},{upsert:true,returnDocument:'after'});}

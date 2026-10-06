@@ -40,9 +40,10 @@ function createCopyJobs({client,now=Date.now}){
   job.status=job.tasks.length&&job.tasks.every(t=>t.result?.status==='COMPLETE')?'copiesConcluded':job.tasks.some(t=>t.result?.jobToken&&!terminalCopy.has(t.result.status))?'copiesInProcess':'copyNeedsAttention';
  }
  return {parse:parseCopyCsv,selection,
-  async plan(job,save){
+  async plan(job,save,checkCancelled=async()=>{}){
    const destinations=new Map();
    for(const row of job.rows){
+    await checkCancelled();
     if(row.status!=='pending')continue;
     try{
      const origin=await resolve(row,'origin'),destination=await resolve(row,'destination');

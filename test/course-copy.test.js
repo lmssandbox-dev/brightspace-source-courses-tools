@@ -59,3 +59,11 @@ test('report includes every row and saved cumulative statuses, quotes formulas; 
  const j=job('1,,2,');j.rows[0].originName='=formula';j.tasks=[{row:2,originId:'1',destinationId:'2',result:{status:'COMPLETE',jobToken:'t'}}];j.status='copiesConcluded';const view=createCopyView();assert.match(view.report(j),/'=formula/);assert.match(view.report(j),/COMPLETE/);
  const html=view.render({},j,{button:()=>'',controls:()=>'',now:Date.now});assert.match(html,/Courses Copied Successfully/);assert.doesNotMatch(html,/<table/);
 });
+
+test('cancelling validation stops before the next mapping without any copy submissions',async()=>{
+ const j=job('1,,2,\n1,,3,');let checked=0,reads=0;
+ const worker=createCopyJobs({client:client({origin:async()=>{reads++;return {name:'Origin'};},copy:async()=>assert.fail('validation must never copy')})});
+ await assert.rejects(()=>worker.plan(j,async()=>{},async()=>{if(++checked===2)throw Object.assign(Error('cancelled'),{code:'JOB_CANCELLED'});}),{code:'JOB_CANCELLED'});
+ assert.equal(reads,1);assert.equal(j.tasks.length,1);assert.equal(j.rows[1].status,'pending');
+ const html=createCopyView().render({}, {...j,status:'planning'}, {controls:()=>'',button:(_r,action)=>action==='cancel'?'CANCEL_VISIBLE':'',now:Date.now});assert.match(html,/CANCEL_VISIBLE/);
+});

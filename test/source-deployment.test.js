@@ -180,7 +180,7 @@ test('results and CSV keep separate outcomes for batches sharing a source',()=>{
  const {createDeploymentView}=require('../src/replication/view');
  const job={_id:'j',status:'submittedWithErrors',rows:[{sourceId:'1',targetId:'101'},{sourceId:'1',targetId:'102'}],tasks:[{sourceId:'1',targets:[{orgUnitId:'101'}],result:{status:'submitted',deploymentId:'first'}},{sourceId:'1',targets:[{orgUnitId:'102'}],result:{status:'failed',error:{message:'Rejected'},targets:[{orgUnitId:'102',status:'failed'}]}}]};
  const view=createDeploymentView({enabled:()=>true});const html=view.render({},job,{button:()=>'',controls:()=>'',now:()=>0});
- assert.match(html,/Deployment Needs Attention/);assert.match(html,/Copy in Process/);assert.doesNotMatch(html,/Deployment Results/);
+ assert.match(html,/Deployment Needs Attention/);assert.match(html,/Copies in Process/);assert.doesNotMatch(html,/Deployment Results/);
  const report=view.report(job).split('\r\n');assert.match(report[1],/first/);assert.doesNotMatch(report[2],/first/);assert.match(report[2],/Rejected/);
 });
 

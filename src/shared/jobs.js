@@ -128,7 +128,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         heartbeat=setInterval(()=>store.renew(worker).catch(()=>{}),10000);heartbeat.unref?.();
         job=await store.claim(worker);if(!job)return;
         if(job.status==='planning') {
-          if(job.kind==='courseCopy')await courseCopy.plan(job,save);else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
+          if(job.kind==='courseCopy')await courseCopy.plan(job,save,async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.
@@ -138,7 +138,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           else await execute(job);
         }
         await save(job);
-      } catch {
+      } catch(error) {
+        if(error.code==='JOB_CANCELLED')return;
         if(job) {if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused; saved progress will resume. In-flight writes will be flagged for review.';}else interruptJob(job);
           try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
       } finally {clearInterval(heartbeat);if(held)await store.release(worker).catch(()=>{});busy=false;}
