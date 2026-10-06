@@ -31,6 +31,15 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   },
   async renew(token){const r=await (await db()).collection('org_resolution_state').updateOne({_id:metaId,token,leaseUntil:{$gt:now()}},{$set:{leaseUntil:now()+120000}});if(r.matchedCount!==1)throw Object.assign(Error('Sync lease lost'),{code:'RESOLUTION_LEASE_LOST'});},
   async stage(generation,records){if(!records.length)return;await (await db()).collection('org_resolution_units').bulkWrite(records.map(r=>({updateOne:{filter:{namespace,generation,Identifier:r.Identifier},update:{$set:{...r,namespace,generation,stagedAt:now()}},upsert:true}})),{ordered:true});},
+  async clone(source,generation,check=async()=>{}){
+   if(source===generation)throw Error('Directory staging must be separate');
+   const cursor=(await db()).collection('org_resolution_units').find({namespace,generation:source}).batchSize(500);
+   let batch=[];
+   try{for await(const row of cursor){
+    await check();const {_id,namespace:ignoredNamespace,generation:ignoredGeneration,stagedAt,...record}=row;
+    batch.push(record);if(batch.length===500){await this.stage(generation,batch);batch=[];}
+   }if(batch.length)await this.stage(generation,batch);}finally{await cursor.close();}
+  },
   async publish(token,generation,fullAt,asOf,summary){
    const state=(await db()).collection('org_resolution_state'),previous=await state.findOne({_id:metaId,token});
    const update={$set:{generation,fullAt,asOf,...summary}};

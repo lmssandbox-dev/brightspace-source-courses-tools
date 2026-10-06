@@ -124,10 +124,7 @@ test('failed or expired sync cannot publish a partial snapshot; duplicate IDs re
  const duplicate=fixture();duplicate.readExtract=async(e,consume)=>{const row={OrgUnitId:'1',Code:'A',Name:'n',Type:'Course Offering',IsDeleted:'0'};await consume(row);await consume(row);};
  await assert.rejects(createDirectorySync({...duplicate,root}).run(),{code:'DATASET_DUPLICATE_ID'});assert.equal(duplicate.publishes,0);
 });
-test('missing differential day is rejected; scheduling failure never changes an existing directory',()=>{
- const full={SchemaId:'s',BdsType:'Full',QueuedForProcessingDate:'2026-10-01T00:00:00Z',Version:'11',DownloadLink:'https://example.com/full'};
- assert.throws(()=>selectExtracts([full,{...full,BdsType:'Differential',QueuedForProcessingDate:'2026-10-04T00:00:00Z',DownloadLink:'https://example.com/diff'}],'s'),{code:'DATASET_DIFFERENTIAL_GAP'});
-});
+
 test('replacement retains old published generation for in-flight readers even if imported a week ago',async()=>{
  const {createResolutionStore}=require('../src/resolution/store');const calls=[];
  const meta={generation:'new',retired:[{generation:'old-but-reading',retiredAt:200000000},{generation:'expired',retiredAt:1}]};
@@ -160,4 +157,46 @@ test('invalid import logs only field/reason/record position, never raw course da
  const output=[],previous=console.error;console.error=value=>output.push(value);
  try{await assert.rejects(createDirectorySync({...f,root}).run(),{code:'DATASET_ROW_INVALID'});}finally{console.error=previous;}
  const event=JSON.parse(output[0]);assert.equal(event.datasetField,'IsDeleted');assert.equal(event.datasetRecord,1);assert.equal(event.datasetExtract,'Full');assert.equal(event.datasetReason,'unsupported_boolean');assert.ok(!output.join('').includes('SECRET'));assert.ok(!output.join('').includes('PRIVATE'));assert.equal(f.publishes,0);
+});
+function incrementalFixture(){
+ let state=null,failAt=null;const generations=new Map(),downloads=[];
+ const e=(type,day)=>({SchemaId:'schema',PluginId:type,CreatedDate:new Date(day*86400000+100).toISOString(),QueuedForProcessingDate:new Date(day*86400000).toISOString(),Version:'11',BdsType:type,DownloadLink:root+'/'+day});
+ const available=[e('Full',1),e('Differential',4),e('Differential',7)];
+ const store={claim:async()=> 'lease',renew:async()=>{},status:async()=>state,finish:async()=>{},cleanup:async()=>{},discard:async g=>generations.delete(g),stage:async(g,rows)=>{if(!generations.has(g))generations.set(g,new Map());for(const r of rows)generations.get(g).set(r.Identifier,r);},clone:async(s,g)=>generations.set(g,new Map(generations.get(s))),publish:async(t,g,fullAt,asOf,summary)=>{state={generation:g,fullAt,asOf,...summary};}};
+ const api={list:async url=>url.endsWith('/datasets/bds')?[{SchemaId:'schema',Full:{Name:'Organizational Units'},ExtractsLink:root+'/extracts'}]:available};
+ const readExtract=async(e,consume)=>{const day=e.at/86400000;downloads.push(day);await consume({OrgUnitId:'1',Code:'C'+day,Type:'',Name:'',IsDeleted:day===10?'true':'false'});if(failAt===day)throw Error('Failed download');if(e.BdsType==='Full')await consume({OrgUnitId:'2',Code:'unchanged',Name:'',Type:'',IsDeleted:'false'});};
+ return {store,api,readExtract,available,e,downloads,generations,get state(){return state;},set failAt(value){failAt=value;}};
+}
+test('initial full ignores calendar gaps; subsequent runs download only new differentials',async()=>{
+ const f=incrementalFixture(),sync=createDirectorySync({...f,root});
+ assert.equal((await sync.run()).mode,'full');assert.deepEqual(f.downloads,[1,4,7]);
+ assert.equal((await sync.run()).skipped,'already_current');assert.equal(f.downloads.length,3);
+ f.available.push(f.e('Differential',10));assert.equal((await sync.run()).mode,'differential');assert.deepEqual(f.downloads,[1,4,7,10]);
+ const records=f.generations.get(f.state.generation);assert.equal(records.get('1').deleted,true);assert.equal(records.get('2').Code,'unchanged');
+ assert.equal(f.state.fullAt,86400000);assert.equal(f.state.appliedExtracts.length,4);
+ f.available.push(f.e('Full',11),f.e('Differential',12));assert.equal((await sync.run()).mode,'full');assert.deepEqual(f.downloads,[1,4,7,10,11,12]);assert.equal(f.state.appliedExtracts.length,2);
+});
+test('failed incremental import preserves committed directory and ledger; retry applies it once',async()=>{
+ const f=incrementalFixture();await createDirectorySync({...f,root}).run();const previous=f.state;
+ f.available.push(f.e('Differential',10));f.failAt=10;
+ await assert.rejects(createDirectorySync({...f,root}).run());assert.deepEqual(f.state,previous);assert.equal(f.generations.get(previous.generation).get('1').Code,'C7');
+ f.failAt=null;await createDirectorySync({...f,root}).run();assert.equal(f.state.appliedExtracts.length,4);assert.equal(f.state.asOf,10*86400000);
+});
+test('lost history stops updates; a fresh full recovers without guessing the customer cadence',async()=>{
+ const f=incrementalFixture();await createDirectorySync({...f,root}).run();const previous=f.state;
+ f.available.splice(0,f.available.length,f.e('Differential',20));
+ await assert.rejects(createDirectorySync({...f,root}).run(),{code:'DATASET_HISTORY_UNAVAILABLE'});assert.equal(f.state,previous);
+ f.available.push(f.e('Full',19));assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.fullAt,19*86400000);
+});
+test('saved baseline supports differential-only listing; signed URL changes do not replay extracts',async()=>{
+ const f=incrementalFixture();await createDirectorySync({...f,root}).run();
+ for(const e of f.available)e.DownloadLink+='?changed=signature';
+ assert.equal((await createDirectorySync({...f,root}).run()).skipped,'already_current');
+ f.available.splice(0,1);f.available.push(f.e('Differential',10));assert.equal((await createDirectorySync({...f,root}).run()).mode,'differential');
+});
+test('Mongo staging clone is bounded and never writes to the published generation',async()=>{
+ const {createResolutionStore}=require('../src/resolution/store');let closed=false;const writes=[];
+ const collection={createIndex:async()=>{},find:filter=>{assert.equal(filter.generation,'old');return {batchSize:size=>{assert.equal(size,500);return {async *[Symbol.asyncIterator](){for(let i=1;i<=1001;i++)yield {_id:i,namespace:'n',generation:'old',Identifier:String(i),Code:'C'+i};},close:async()=>{closed=true;}};}};},bulkWrite:async operations=>writes.push(operations)};
+ const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'n',mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})}});
+ await store.clone('old','new');assert.deepEqual(writes.map(w=>w.length),[500,500,1]);assert.ok(writes.flat().every(w=>w.updateOne.filter.generation==='new'&&!Object.hasOwn(w.updateOne.update.$set,'_id')));assert.ok(closed);
 });
