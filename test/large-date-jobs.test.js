@@ -26,6 +26,20 @@ test('resumed planning does not repeat resolved rows or duplicate partially prev
  const before=s.calls.filter(c=>c==='preview').length;
  await s.jobs.tick();assert.equal(s.data.get(j._id).tasks.length,6);assert.equal(s.calls.filter(c=>c==='preview').length-before,2);
 });
+test('course resolution saves once before discovery and keeps discovery checkpoint cadence',async()=>{
+ const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:51},(_,i)=>`${i+1},`).join('\n'),dates});
+ const saves=[];const originalSave=s.store.save;
+ s.store.save=async job=>{saves.push(structuredClone(job));await originalSave(job);};
+ let savesAtDiscoveryStart;
+ s.discovery.discover=async()=>{savesAtDiscoveryStart??=saves.length;return {complete:true,activities:[]};};
+ await s.jobs.tick();
+ assert.equal(savesAtDiscoveryStart,1);
+ assert.equal(saves[0].progress.phase,'Resolving courses');
+ assert.equal(saves[0].progress.processed,51);
+ assert.equal(saves[0].courses.length,51);
+ const discoveryCheckpoints=saves.filter(snapshot=>snapshot.progress.phase==='Discovering activities');
+ assert.equal(discoveryCheckpoints.length,2);
+});
 test('resumed execution skips saved successes and flags in-flight work instead of repeating it',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(j._id,'a');
  const saved=s.data.get(j._id);saved.tasks[0].result={status:'updated'};saved.tasks[1].result={status:'running'};

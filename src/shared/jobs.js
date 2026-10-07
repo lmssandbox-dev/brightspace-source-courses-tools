@@ -54,7 +54,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});}
       } catch(e) {row.status='invalid';row.message=e.code==='ID_CODE_MISMATCH'?'ID and code identify different org units.':e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
       job.progress={phase:'Resolving courses',processed:++resolvedRows,total:job.rows.length};
-      if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
+      checkpoint++;
     });
     job.courses.sort((a,b)=>a.row-b.row);
     await save(job);
