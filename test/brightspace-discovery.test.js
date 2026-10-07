@@ -57,6 +57,20 @@ test('core discovery returns all supported dated and undated activities, stable 
   assert.equal(Object.hasOwn(r, 'raw'), false); assert.equal(calls.length, 6);
 });
 
+test('native collection records are available only to planning callers and align to normalized keys', async () => {
+  const { client } = mockClient();
+  const ordinary = await client.discover('999');
+  assert.equal(Object.hasOwn(ordinary, 'nativeActivities'), false);
+  const planned = await client.discover('999', { includeNative: true });
+  assert.equal(planned.nativeActivities.length, planned.activities.length);
+  const quiz = planned.activities.find(item => item.type === 'quiz' && item.id === '21');
+  const native = planned.nativeActivities.find(item => item.key === quiz.key);
+  assert.equal(native.data.QuizId, 21);
+  assert.equal(native.data.Password, 'raw-only-secret');
+  const topic = planned.activities.find(item => item.type === 'discussionTopic' && item.id === '41');
+  assert.equal(planned.nativeActivities.find(item => item.key === topic.key).data.ForumId, '32');
+});
+
 
 test('diagnostic raw responses are opt-in, preserve envelopes and redact secrets', async () => {
   const { client, calls } = mockClient();

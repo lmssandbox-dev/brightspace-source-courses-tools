@@ -75,7 +75,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,status:'ready',expiresAt:{$gt:time}},{$set:{status:'queued',confirmedAt:time}})).modifiedCount===1;
     },
     async cancel(_id,owner) {
-      const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'}, $or:[{status:{$in:['validating','ready','queued']}},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:now()}})).modifiedCount===1;
+      const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'}, $or:[{status:{$in:['validating','ready','queued']}},{kind:'dates',status:'planning'},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:now()}})).modifiedCount===1;
     },
     async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,status:'cancelled'},{projection:{_id:1}}));},
     async acquire(worker) {
@@ -139,7 +139,8 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
         for(const [field,indices] of Object.entries(job[DIRTY]))for(const index of new Set(indices.map(i=>Math.floor(i/CHUNK_SIZE))))data[`dateChunks.${field}.${index}`]=encoded.dateChunks[field][index];
       }
       if(Buffer.byteLength(JSON.stringify(data))>8*1024*1024)throw new Error('Job metadata exceeds storage limit.');
-      const r=await jobs.updateOne({_id,namespace,worker,status:{$in:['planning','running']}},{$set:data});
+      const statuses=job.kind==='dates'&&job.status==='cancelled'?{$in:['planning','cancelled']}:{$in:['planning','running']};
+      const r=await jobs.updateOne({_id,namespace,worker,status:statuses},{$set:data});
       if(!r.matchedCount)throw new Error('Job is no longer owned by this worker.');
       if(encoded.storageVersion===2){job.storageVersion=2;job.dateChunks=encoded.dateChunks;}
     },

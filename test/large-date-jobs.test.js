@@ -5,7 +5,7 @@ const {setup}=require('./bulk-jobs.test');
 const {createDateView}=require('../src/dates/view');
 const {installDateUploadLimit}=require('../src/shared/uploadLimit');
 const dates={start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'};
-function chunks(){const docs=new Map();return {docs,updateOne:async(q,u)=>{if(!docs.has(q._id))docs.set(q._id,{_id:q._id,...structuredClone(u.$setOnInsert)});},find:q=>({toArray:async()=>[...docs.values()].filter(d=>q._id.$in.includes(d._id)&&d.namespace===q.namespace&&d.jobId===q.jobId)})};}
+function chunks(){const docs=new Map(),batches=[];return {docs,batches,updateOne:async()=>{throw Error('chunk writes must use bulkWrite');},bulkWrite:async ops=>{batches.push(ops);for(const op of ops){const {filter,update,upsert}=op.updateOne;assert.equal(upsert,true);if(!docs.has(filter._id))docs.set(filter._id,{_id:filter._id,...structuredClone(update.$setOnInsert)});}},find:q=>({toArray:async()=>[...docs.values()].filter(d=>q._id.$in.includes(d._id)&&d.namespace===q.namespace&&d.jobId===q.jobId)})};}
 test('large job exceeds old 8 MB cap, round-trips chunks and preserves old checkpoint after partial update',async()=>{
  const collection=chunks(),job={_id:'large',kind:'dates',rows:[],courses:[],tasks:Array.from({length:10000},(_,i)=>({id:i,name:'x'.repeat(1000)}))};
  assert.ok(Buffer.byteLength(JSON.stringify(job))>8*1024*1024);
@@ -19,6 +19,18 @@ test('large job exceeds old 8 MB cap, round-trips chunks and preserves old check
  assert.equal((await decodeDateJob(structuredClone(second),collection,'n')).tasks[55].result.status,'updated');
  await assert.rejects(()=>decodeDateJob(structuredClone(second),collection,'wrong'),/incomplete/);
 });
+test('date chunk persistence batches at most 500 content-addressed upserts',async()=>{
+ const collection=chunks(),job={_id:'batch',kind:'dates',rows:[],courses:[],tasks:Array.from({length:5010},(_,i)=>({id:i}))};
+ const encoded=await encodeDateJob(job,collection,'n');
+ assert.equal(encoded.storageVersion,2);assert.deepEqual(collection.batches.map(batch=>batch.length),[500,1]);
+ assert.equal(collection.docs.size,501);
+ let chunkIndex=0;for(const batch of collection.batches)for(const op of batch){
+  assert.deepEqual(Object.keys(op),['updateOne']);assert.equal(op.updateOne.upsert,true);
+  assert.deepEqual(Object.keys(op.updateOne.update),['$setOnInsert']);
+  assert.equal(op.updateOne.filter._id,encoded.dateChunks.tasks[chunkIndex++]);
+ }
+ assert.equal((await decodeDateJob(structuredClone(encoded),collection,'n')).tasks.length,5010);
+});
 test('resumed planning does not repeat resolved rows or duplicate partially previewed activities',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n2,',dates});
  await s.jobs.tick();const saved=s.data.get(j._id);
@@ -31,7 +43,7 @@ test('course resolution saves once before discovery and keeps discovery checkpoi
  const saves=[];const originalSave=s.store.save;
  s.store.save=async job=>{saves.push(structuredClone(job));await originalSave(job);};
  let savesAtDiscoveryStart;
- s.discovery.discover=async()=>{savesAtDiscoveryStart??=saves.length;return {complete:true,activities:[]};};
+ s.discovery.discover=async()=>{savesAtDiscoveryStart??=saves.length;return {complete:true,activities:[],nativeActivities:[]};};
  await s.jobs.tick();
  assert.equal(savesAtDiscoveryStart,1);
  assert.equal(saves[0].progress.phase,'Resolving courses');

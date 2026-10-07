@@ -27,6 +27,7 @@ function interruptJob(job) {
 function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
   let busy=false;
   const worker=randomUUID();
+  const cancelledJobs=new Set(),activePlans=new Map();
   const countCache=new WeakMap();
   const checkpoint=require('./checkpointQueue').createCheckpointQueue(saveCheckpoint);
   function save(job,dirty) {
@@ -40,54 +41,76 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     try {await store.save(job,worker);} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
+    let checkedAt=-Infinity,cancelCheck;
+    const checkCancelled=async(force=false)=>{
+      if(cancelledJobs.has(job._id)){job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
+      if(force||now()-checkedAt>=100){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{
+        if(await store.isCancelled?.(job._id,job.owner)){cancelledJobs.add(job._id);job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
+      });}
+      await cancelCheck;
+    };
+    try {
     const resolved=new Map(job.courses.map(c=>[c.orgUnitId,c.row])),resolutionCache=new Map();
-    const codeSession=await courses.prepare?.(job.rows.filter(r=>r.status==='pending'));
+    await checkCancelled(true);
+    const codeSession=await courses.prepare?.(job.rows.filter(r=>r.status==='pending'),checkCancelled);
+    await checkCancelled(true);
     let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
     let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
     await pool(job.rows.filter(r=>r.status==='pending'),8,async row=>{
       try {
-        const course=await courses.resolve(row,{cache:resolutionCache,resolver:codeSession});
+        const course=await courses.resolve(row,{cache:resolutionCache,resolver:codeSession,check:checkCancelled});
         row.resolvedId=course.orgUnitId;
         if(resolved.has(course.orgUnitId)){row.status='duplicate';row.duplicateOf=resolved.get(course.orgUnitId);row.message='Same resolved course; processed once.';}
         else {
         resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});}
-      } catch(e) {row.status='invalid';row.message=e.code==='ID_CODE_MISMATCH'?'ID and code identify different org units.':e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
+      } catch(e) {if(e.code==='JOB_CANCELLED')throw e;row.status='invalid';row.message=e.code==='ID_CODE_MISMATCH'?'ID and code identify different org units.':e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
       job.progress={phase:'Resolving courses',processed:++resolvedRows,total:job.rows.length};
       checkpoint++;
-    });
+    },async()=>{await checkCancelled();return true;});
+    await checkCancelled(true);
     job.courses.sort((a,b)=>a.row-b.row);
     await save(job);
     let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
     await pool(job.courses.filter(c=>c.status==='pending'),4,async (course,index,stopped)=>{
       let checkpointFailure;
       try {
-        const found=await discovery.discover(course.orgUnitId,{includeUndated:true});
+        const found=await discovery.discover(course.orgUnitId,{includeUndated:true,includeNative:true});
+        course.counts=Object.fromEntries(TYPES.map(t=>[t,(found.activities||[]).filter(a=>a.type===t).length]));
+        await checkCancelled();
         if(!found.complete)throw new Error('Incomplete discovery');
+        const nativeByKey=new Map((found.nativeActivities||[]).map(item=>[item.key,item.data]));
         const additional=new Set(found.activities.filter(a=>!previewed.has(`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`)).map(a=>`${a.type}:${a.id}:${a.parentId||''}`)).size;
         if(reserved+additional>MAX_ACTIVITIES)throw new Error('Activity limit exceeded');
         reserved+=additional;
-        course.counts=Object.fromEntries(TYPES.map(t=>[t,found.activities.filter(a=>a.type===t).length]));
         for(const a of found.activities) {
+          await checkCancelled();
           if(stopped())return;
           if(!TYPES.includes(a.type))throw new Error('Unsupported type');
           const taskKey=`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`;
           if(previewed.has(taskKey))continue;
           const activity={type:a.type,id:a.id,parentId:a.parentId,orgUnitId:course.orgUnitId,key:a.key};
-          const request={orgUnitId:course.orgUnitId,activity,dates:job.dates,dryRun:true};
+          const nativeActivity=nativeByKey.get(a.key);
+          if(!nativeActivity)throw new Error('Native activity data missing from discovery');
+          const request={orgUnitId:course.orgUnitId,activity,dates:job.dates,dryRun:true,nativeActivity};
           const preview=await writers[a.type].updateActivityDates(request);
           job.tasks.push({orgUnitId:course.orgUnitId,activity,name:a.name,preview});previewed.add(taskKey);
           if(!['ready','unchanged'].includes(preview.status))course.previewInvalid=true;
           if(++checkpoint%CHECKPOINT_SIZE===0)try{await save(job);}catch(error){checkpointFailure=error;throw error;}
         }
         course.status=course.previewInvalid?'invalid':'valid';
-      } catch(error) {if(checkpointFailure)throw checkpointFailure;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
+      } catch(error) {if(checkpointFailure)throw checkpointFailure;if(error.code==='JOB_CANCELLED')throw error;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
       job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:job.tasks.length};
       if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
-    });
+    },async()=>{await checkCancelled();return true;});
+    await checkCancelled(true);
     job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
     job.expiresAt=now()+30*60*1000;
     if(!job.tasks.length)job.message='No eligible activities were found.';
+    } catch(error) {
+      if(error.code!=='JOB_CANCELLED')throw error;
+      job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';
+    }
   }
   async function execute(job) {
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
@@ -135,7 +158,11 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     activate:(id,owner)=>store.activate(id,owner,now()),
     review:(id,owner)=>store.review(id,owner,now()),
     async confirm(id,owner) {return store.confirm(id,owner,now());},
-    async cancel(id,owner) {return store.cancel(id,owner);},
+    async cancel(id,owner) {
+      const cancelled=await store.cancel(id,owner);
+      if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}}
+      return cancelled;
+    },
     async tick() {
       if(busy)return;busy=true;
       let job,held=false,heartbeat;
@@ -146,7 +173,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         job.performance ||= {};const phase=job.status==='planning'?'preparation':job.operation==='check'?'check':'submission';
         job.performance[phase+'StartedAt']=now();
         if(job.status==='planning') {
-          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else await plan(job);
+          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else {activePlans.set(job._id,job);try{await plan(job);}finally{activePlans.delete(job._id);cancelledJobs.delete(job._id);}}
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.

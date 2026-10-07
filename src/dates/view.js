@@ -16,7 +16,7 @@ function createDateView({writeEnabled}){return {
  const stage=['validating','planning'].includes(job.status)?0:job.status==='ready'?1:2;
  const issues=job.tasks.filter(t=>['failed','skipped','uncertain'].includes(t.result?.status)).length+job.rows.filter(r=>r.status==='invalid').length+job.courses.filter(c=>c.status==='invalid').length;
  const outcomes={
- cancelled:['Job Cancelled','This job was cancelled before activity date updates started.'],
+ cancelled:['Job Cancelled','This job was cancelled during planning. No activity date updates were started.'],
  failed:['Needs Attention','The job could not complete. Download the CSV report to review the issues before starting a new job.'],
  completedWithErrors:['Completed with Issues',`${updated} activities were updated and ${unchanged} already had the requested dates. Some activities could not be updated. Download the CSV report for details.`],
  interrupted:['Processing Interrupted','Processing stopped before completion. Some dates may have changed. Review the CSV report before starting another job.'],
@@ -29,7 +29,7 @@ function createDateView({writeEnabled}){return {
  ${job.status==='ready'&&job.expiresAt>now()&&permitted?`<section class="confirmation"><h2>Ready to apply</h2><p>This will update all <strong>${job.tasks.length} ${job.tasks.length===1?'activity':'activities'}</strong> in <strong>${job.courses.length} source ${job.courses.length===1?'course':'courses'}</strong>. Confirm the requested dates above before continuing.</p><div class="confirmation-actions">${button(res,'apply',job._id,'3. Apply & Update')}</div></section>`:''}
  ${job.status==='ready'&&!permitted?notice('Apply is unavailable. Configure the required write scopes for every activity type in this plan.','warning'):''}${job.status==='ready'&&job.expiresAt<=now()?notice('This preview expired. Select Bulk Activity Dates Manager in the sidebar and create a new preview.','warning'):''}
  ${active?`<div class="processing" role="status"><d2l-loading-spinner size="24"></d2l-loading-spinner><div><strong>${updating?'Updating your Source Courses':'Checking your Source Courses'}</strong><p>Results refresh every 10 seconds. You can close this page and return through Job history.</p></div></div>`:''}
- <div class="toolbar">${button(res,'status',job._id,'Refresh status',`id="job-refresh" data-page="${page}"`)}${button(res,'report',job._id,'Download CSV report')}${['validating','ready','queued'].includes(job.status)?button(res,'cancel',job._id,'Cancel this job'):''}</div>
+ <div class="toolbar">${button(res,'status',job._id,'Refresh status',`id="job-refresh" data-page="${page}"`)}${button(res,'report',job._id,'Download CSV report')}${['validating','planning','ready','queued'].includes(job.status)?button(res,'cancel',job._id,'Cancel this job'):''}</div>
  ${active?'<script>setTimeout(()=>document.getElementById("job-refresh").requestSubmit(),10000);</script>':''}`;
  }
 };}

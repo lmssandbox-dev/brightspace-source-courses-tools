@@ -37,6 +37,16 @@ test('quiz attempts, rich text and version-specific fields map explicitly',()=>{
  assert.equal(Object.hasOwn(p,'IsSingleSession'),false);assert.equal(Object.hasOwn(p,'AnnotationToolsEnabled'),false);
  row.AttemptsAllowed={IsUnlimited:false,NumberOfAttemptsAllowed:0};assert.throws(()=>buildQuizPayload(row,dates,()=>true));
 });
+test('collection native data previews without an item GET and apply retains both safety reads',async()=>{
+ const s=setup('quiz');
+ const preview=await s.writer.updateActivityDates({...s.request,dryRun:true,nativeActivity:structuredClone(s.current)});
+ assert.equal(preview.status,'ready');assert.deepEqual(preview.verifiedDates,{start:null,due:null,end:null});
+ assert.equal(s.calls.length,0);
+ const unchanged=await s.writer.updateActivityDates({...s.request,dryRun:true,nativeActivity:{...structuredClone(s.current),StartDate:dates.start,DueDate:dates.due,EndDate:dates.end}});
+ assert.equal(unchanged.status,'unchanged');assert.equal(s.calls.length,0);
+ const result=await s.writer.updateActivityDates({...s.request,expectedDates:preview.verifiedDates});
+ assert.equal(result.status,'updated');assert.deepEqual(s.calls.map(call=>call[0]),['GET','PUT','GET']);
+});
 test('Discussion Topic requires valid forum, strictly later due date and known calendar/availability values',async()=>{
  const s=setup('discussionTopic');let result=await s.writer.updateActivityDates({...s.request,dates:{...dates,due:dates.start}});assert.equal(result.error.category,'INVALID_DATES');assert.equal(s.calls.length,0);
  result=await s.writer.updateActivityDates({...s.request,activity:{type:'discussionTopic',id:'11'}});assert.equal(result.status,'failed');assert.equal(s.calls.length,0);

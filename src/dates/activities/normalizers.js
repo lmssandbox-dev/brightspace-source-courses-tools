@@ -29,13 +29,17 @@ function recordWarning(source, error, itemId) {
     message: error.code === 'INVALID_DATE' ? 'An activity has an invalid timestamp and was excluded.' : 'An invalid activity record was excluded.',
     details: { ...(itemId != null ? { id: String(itemId) } : {}), ...(error.field ? { field: error.field } : {}) } };
 }
-function normalizeRows(rows, normalize, orgUnitId, source, getId) {
-  const activities = [], warnings = [];
+function normalizeRows(rows, normalize, orgUnitId, source, getId, includeNative = false) {
+  const activities = [], warnings = [], nativeActivities = includeNative ? [] : undefined;
   for (const row of rows) {
-    try { activities.push(normalize(row, orgUnitId)); }
+    try {
+      const normalized = normalize(row, orgUnitId);
+      activities.push(normalized);
+      if (nativeActivities) nativeActivities.push({ key: normalized.key, data: row });
+    }
     catch (error) { warnings.push(recordWarning(source, error, row && getId(row))); }
   }
-  return { activities, warnings };
+  return { activities, warnings, ...(nativeActivities ? { nativeActivities } : {}) };
 }
 
 

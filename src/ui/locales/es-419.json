@@ -176,7 +176,7 @@
   "Please wait for the CSV to finish loading.": "Espera a que termine de cargar el CSV.",
   "Could not read this file. Save it as UTF-8 CSV and try again.": "No se pudo leer el archivo. Guárdalo como CSV UTF-8 e inténtalo de nuevo.",
   "This file exceeds 5 MB. Choose a smaller CSV.": "Este archivo supera los 5 MB. Selecciona un CSV más pequeño.",
-  "This job was cancelled before activity date updates started.": "Esta tarea se canceló antes de iniciar la actualización de fechas.",
+  "This job was cancelled during planning. No activity date updates were started.": "Esta tarea se canceló durante la planificación. No se inició ninguna actualización de fechas.",
   "The job could not complete. Download the CSV report to review the issues before starting a new job.": "No se pudo completar la tarea. Descarga el informe CSV para revisar los problemas antes de iniciar otra.",
   "Processing stopped before completion. Some dates may have changed. Review the CSV report before starting another job.": "El procesamiento se detuvo antes de finalizar. Algunas fechas pueden haber cambiado. Revisa el informe CSV antes de iniciar otra tarea.",
   "The saved results do not confirm that all activities have the requested dates. Download the CSV report for details.": "Los resultados guardados no confirman que todas las actividades tengan las fechas solicitadas. Descarga el informe CSV.",

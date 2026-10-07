@@ -15,10 +15,13 @@ function createDiscussionsClient({ list, coursePath }) {
       }
       return { forumIds: [...new Set(forumIds)], warnings };
     },
-    async getDiscussionTopics(orgUnitId, forumId, raw) {
+    async getDiscussionTopics(orgUnitId, forumId, raw, includeNative = false) {
       const rows = await list(coursePath(orgUnitId, `discussions/forums/${id(forumId)}/topics/`), raw);
       const result = normalizeRows(rows, row => normalizeDiscussionTopic({ ...row, ForumId: forumId }, orgUnitId),
-        orgUnitId, 'discussionTopics', row => row.TopicId);
+        orgUnitId, 'discussionTopics', row => row.TopicId, includeNative);
+      if (includeNative) result.nativeActivities = result.nativeActivities.map(item => ({
+        ...item, data: { ...item.data, ForumId: forumId }
+      }));
       return result;
     }
   };

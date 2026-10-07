@@ -1,10 +1,11 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBulkStore}=require('../src/shared/store');
-function setup({lost=false,duplicate=false,recover=[]}={}){
+function setup({lost=false,duplicate=false,recover=[],failChunkWrite=false}={}){
  const calls=[];
  const collection=name=>({
   updateOne:async(filter,update)=>{calls.push({name,op:'updateOne',filter,update});return {matchedCount:lost?0:1,modifiedCount:1};},
+  bulkWrite:async operations=>{calls.push({name,op:'bulkWrite',operations});if(failChunkWrite)throw Error('chunk write failed');},
   updateMany:async(filter,update)=>{calls.push({name,op:'updateMany',filter,update});},
   findOneAndUpdate:async(filter,update,options)=>{calls.push({name,op:'claim',filter,update,options});if(duplicate)throw {code:11000};return {value:name==='bulk_date_locks'?{worker:'w'}:{_id:'j',...update.$set}};},
   find:filter=>({toArray:async()=>recover}),findOne:async filter=>{calls.push({name,op:'get',filter});return null;},insertOne:async doc=>calls.push({name,op:'insert',doc})
@@ -13,6 +14,12 @@ function setup({lost=false,duplicate=false,recover=[]}={}){
  const store=createBulkStore({uri:'mongodb://localhost/brightspace_source_courses_tools',namespace:'n',mongoClient,now:()=>100});
  return {store,calls};
 }
+test('date job document is not published if a chunk batch fails',async()=>{
+ const s=setup({failChunkWrite:true});
+ await assert.rejects(()=>s.store.insert({_id:'date',kind:'dates',owner:'owner',rows:Array.from({length:11},(_,i)=>({row:i})),courses:[],tasks:[]}),/chunk write failed/);
+ assert.equal(s.calls.filter(c=>c.name==='bulk_date_chunks'&&c.op==='bulkWrite').length,1);
+ assert.equal(s.calls.some(c=>c.name==='bulk_date_jobs'&&c.op==='insert'),false);
+});
 test('Mongo confirmation is a single owner/status/expiry-guarded mutation',async()=>{
  const s=setup();await s.store.confirm('j','owner',100);
  assert.deepEqual(s.calls[0].filter,{_id:'j',owner:'owner',namespace:'n',status:'ready',expiresAt:{$gt:100}});
@@ -42,6 +49,11 @@ test('activation queues atomically for the owner and removes preview expiry',asy
 });
 test('activation jobs cannot be cancelled and leave inactive replicas untracked',async()=>{
  const s=setup();await s.store.cancel('j','owner');assert.deepEqual(s.calls[0].filter.operation,{$ne:'activate'});
+});
+test('Date Manager planning cancellation is owner-scoped and fenced checkpoints retain cancelled state',async()=>{
+ const s=setup();await s.store.cancel('j','owner');const cancel=s.calls[0];assert.equal(cancel.filter.owner,'owner');assert.ok(cancel.filter.$or.some(condition=>condition.kind==='dates'&&condition.status==='planning'));
+ s.calls.length=0;await s.store.save({_id:'j',kind:'dates',status:'cancelled',worker:'w',rows:[],courses:[],tasks:[]},'w');
+ const save=s.calls.find(call=>call.name==='bulk_date_jobs');assert.deepEqual(save.filter.status,{$in:['planning','cancelled']});
 });
 
 test('chunked date recovery requeues checkpoints without rewriting tasks',async()=>{

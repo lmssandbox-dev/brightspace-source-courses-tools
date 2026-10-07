@@ -78,7 +78,7 @@ test('CSV checking screens stay compact while retaining refresh, report and canc
  const body=createDateView({writeEnabled:()=>true}).render({},job,helpers);
  const html=page(body,{ltik:'session'});
  assert.match(html,/Checking your Source Courses/);assert.match(html,/Refresh status/);assert.match(html,/Download CSV report/);assert.match(html,/setTimeout/);
- if(status==='validating')assert.match(html,/Cancel this job/);
+ assert.match(html,/Cancel this job/);
  assert.doesNotMatch(html,/Review your date updates|My recent jobs|CSV validation|Course validation|Job details|Page 1 of|>Workspace<|Checking courses/);
  }
 });

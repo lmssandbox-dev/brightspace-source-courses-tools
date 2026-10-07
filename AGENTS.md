@@ -23,6 +23,8 @@ All bulk workflows validate and save a plan, require explicit confirmation befor
 - Source deployment: validate source-to-replica mappings, deactivate and verify replicas, submit deployment batches, then reactivate accepted replicas. Copy-log checks are user-requested and separate from activation.
 - Course copy: copy all or selected component types from an existing Course Offering to an existing Offering or Source Course; save native job tokens and check status on request.
 
+Date Manager supports cancellation while Step 2 resolves course identifiers or discovers/previews activities. Cancellation stops new planning work, drains in-flight read-only requests, retains saved progress, and prevents the job from becoming ready or starting writes.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.
@@ -35,6 +37,7 @@ All bulk workflows validate and save a plan, require explicit confirmation befor
 - Escape rendered HTML and spreadsheet CSV values; sanitize API diagnostics and never expose credentials or raw request configuration.
 - Visible UI text belongs in all three catalogs under `src/ui/locales/` (English, Latin American Spanish, Brazilian Portuguese). Keep catalog keys/placeholders aligned.
 - Do not casually change Brightspace API payloads, minimum API versions, job persistence/checkpoint semantics, tenant/database namespacing, scopes, or retry behavior; inspect the related tests and subsystem docs first.
+- Preserve phase-specific persistence semantics: persist read-only resolution at its phase boundary before dependent discovery; discovery plans and write outcomes require durable checkpointing. Keep large MongoDB chunk writes batched rather than issuing high-volume sequential round trips.
 
 ## Development checks
 

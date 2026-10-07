@@ -176,7 +176,7 @@
   "Please wait for the CSV to finish loading.": "Please wait for the CSV to finish loading.",
   "Could not read this file. Save it as UTF-8 CSV and try again.": "Could not read this file. Save it as UTF-8 CSV and try again.",
   "This file exceeds 5 MB. Choose a smaller CSV.": "This file exceeds 5 MB. Choose a smaller CSV.",
-  "This job was cancelled before activity date updates started.": "This job was cancelled before activity date updates started.",
+  "This job was cancelled during planning. No activity date updates were started.": "This job was cancelled during planning. No activity date updates were started.",
   "The job could not complete. Download the CSV report to review the issues before starting a new job.": "The job could not complete. Download the CSV report to review the issues before starting a new job.",
   "Processing stopped before completion. Some dates may have changed. Review the CSV report before starting another job.": "Processing stopped before completion. Some dates may have changed. Review the CSV report before starting another job.",
   "The saved results do not confirm that all activities have the requested dates. Download the CSV report for details.": "The saved results do not confirm that all activities have the requested dates. Download the CSV report for details.",

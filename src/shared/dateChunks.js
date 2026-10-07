@@ -1,6 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const CHUNK_SIZE=10;
+const BULK_WRITE_SIZE=500;
 const DIRTY=Symbol('dateJobDirty');
 const fields=['rows','courses','tasks'];
 // Immutable, content-addressed chunks: a job pointer is published only after every
@@ -28,7 +29,10 @@ async function encodeDateJob(job,collection,namespace,previous={}) {
   data.dateChunks[field]=refs;delete data[field];
  }
  // Capture every chunk before yielding: workers may mutate tasks during persistence.
- for(const {_id,items} of writes)await collection.updateOne({_id},{$setOnInsert:{namespace,jobId:job._id,items}},{upsert:true});
+ for(let i=0;i<writes.length;i+=BULK_WRITE_SIZE){
+  const batch=writes.slice(i,i+BULK_WRITE_SIZE).map(({_id,items})=>({updateOne:{filter:{_id},update:{$setOnInsert:{namespace,jobId:job._id,items}},upsert:true}}));
+  await collection.bulkWrite(batch,{ordered:true});
+ }
  return data;
 }
 async function decodeDateJob(job,collection,namespace){
@@ -46,4 +50,4 @@ async function decodeDateJob(job,collection,namespace){
  }
  return job;
 }
-module.exports={encodeDateJob,decodeDateJob,CHUNK_SIZE,DIRTY};
+module.exports={encodeDateJob,decodeDateJob,CHUNK_SIZE,BULK_WRITE_SIZE,DIRTY};

@@ -145,7 +145,7 @@ function createActivityWriter({api,put,type}) {
   const normalize=assignment?normalizeAssignment:topic?normalizeDiscussionTopic:normalizeQuiz;
   const compare=assignment?preservedSettings:settings;
   const build=assignment?buildAssignmentPayload:topic?buildDiscussionTopicPayload:buildQuizPayload;
-  return { async updateActivityDates({orgUnitId,activity,dates,expectedDates,beforeWrite,dryRun=false}) {
+  return { async updateActivityDates({orgUnitId,activity,dates,expectedDates,beforeWrite,dryRun=false,nativeActivity}) {
     const result={courseOrgUnitId:null,activityKey:null,type,name:null,status:'failed',requestedDates:null,verifiedDates:null,writeAttempted:false,error:null};
     let stage='validation';
     try {
@@ -158,11 +158,13 @@ function createActivityWriter({api,put,type}) {
       if(topic&&instantKey(result.requestedDates.start)>=instantKey(result.requestedDates.due))throw fail('INVALID_DATES','Discussion Topic Due must be later than Start.');
       const path=api.coursePath(orgUnitId,assignment?`dropbox/folders/${itemId}`:topic?`discussions/forums/${parentId}/topics/${itemId}`:`quizzes/${itemId}`);
       const check=row=>{if(id(row[assignment?'Id':topic?'TopicId':'QuizId'])!==itemId||(topic&&id(row.ForumId)!==parentId))throw fail('INVALID_IDENTITY','API returned an unexpected activity or parent forum.');};
-      stage='read';const before=await api.read(path);check(before);
+      stage='read';const before=dryRun&&nativeActivity?nativeActivity:await api.read(path);check(before);
       const normalized=normalize(before,orgUnitId);result.name=normalized.name;result.verifiedDates=normalized.dates;
-      if(sameDates(normalized.dates,result.requestedDates))return {...result,status:'unchanged'};
+      const alreadyMatches=sameDates(normalized.dates,result.requestedDates);
+      if(alreadyMatches&&!(dryRun&&nativeActivity))return {...result,status:'unchanged'};
       if(expectedDates && !sameDates(normalized.dates,expectedDates))throw fail('STALE_PREVIEW','Dates changed since preview. Create a new preview before updating this activity.');
       const payload=build(before,result.requestedDates,api.supportsLeVersion);
+      if(alreadyMatches)return {...result,status:'unchanged'};
       if(dryRun)return {...result,status:'ready'};
       if(beforeWrite)await beforeWrite();
       stage='write';result.writeAttempted=true;
