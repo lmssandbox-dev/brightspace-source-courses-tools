@@ -42,11 +42,13 @@ test('deployment planner is read-only; valid mappings group replicas by source',
  const s=workflow();await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'ready');assert.equal(s.job.tasks.length,2);assert.equal(s.job.tasks[0].targets.length,2);assert.ok(s.calls.every(c=>typeof c==='string'));
  await s.engine.execute(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');assert.equal(s.calls.filter(c=>typeof c==='object').length,2);
 });
-test('ID-only planning skips checks; execution preparation and missing scopes still prevent unsafe POSTs',async()=>{
- const s=workflow({badTarget:true});await s.engine.plan(s.job,async()=>{});assert.equal(s.job.status,'ready');assert.equal(s.calls.length,0);
- for(const option of [{badTarget:true},{enabled:false}]){
-  const good=workflow();await good.engine.plan(good.job,async()=>{});const bad=workflow(option);await bad.engine.execute(good.job,async()=>{},async()=>{});assert.equal(good.job.status,'failed');assert.ok(bad.calls.every(c=>typeof c==='string'));
- }
+test('deployment skips source/target preflight reads while retaining activation and scope checks',async()=>{
+ const s=workflow({badTarget:true});await s.engine.plan(s.job,async()=>{});assert.equal(s.calls.length,0);
+ await s.engine.execute(s.job,async()=>{},async()=>{});assert.equal(s.job.status,'activated');
+ assert.equal(s.calls.includes('source'),false);assert.equal(s.calls.includes('target'),false);
+ assert.ok(s.calls.includes('deactivate'));assert.ok(s.calls.includes('activate'));
+ const blocked=workflow({enabled:false});await blocked.engine.plan(blocked.job,async()=>{});
+ await blocked.engine.execute(blocked.job,async()=>{},async()=>{});assert.equal(blocked.job.status,'failed');assert.equal(blocked.calls.length,0);
 });
 test('uncertain source-group outcome does not block unrelated batches',async()=>{
  const s=workflow({result:'uncertain'});await s.engine.plan(s.job,async()=>{});await s.engine.execute(s.job,async()=>{},async()=>{});
@@ -144,8 +146,8 @@ test('isolated rejection and uncertain outcome continue; batches prepare just in
  for(let i=1;i<=3;i++)assert.ok(s.events.indexOf(`prepare:${100+i}`)<s.events.indexOf(`deploy:${i}`));assert.ok(s.events.indexOf('activate:103')>s.events.indexOf('deploy:3'));
  assert.equal(s.job.status,'outcomeUnknown');
 });
-test('isolated validation and preparation failures leave other batches available',async()=>{
- for(const options of [{validationError:{httpStatus:404}},{preparationError:{httpStatus:400}}]){
+test('isolated preparation failures leave other batches available',async()=>{
+ for(const options of [{preparationError:{httpStatus:404}},{preparationError:{httpStatus:400}}]){
  const s=batchScenario([{status:'submitted'},{status:'submitted'}],options);await s.run();
  assert.equal(s.job.tasks[0].result.targets[0].status,'notAttempted');assert.equal(s.job.tasks[1].result.status,'submitted');assert.equal(s.job.status,'submittedWithErrors');
  }

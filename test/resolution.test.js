@@ -50,12 +50,12 @@ test('Course Copy cached ID+code mismatch is rejected and IDs use no API',async(
  await assert.rejects(resolve({originCode:'A',originId:'9'},'origin'),/different/);
  assert.equal((await resolve({originId:'8'},'origin')).orgUnitId,'8');
 });
-test('Date Manager uses shared code directory but still reads current course details',async()=>{
+test('Date Manager uses shared code directory without course-detail requests',async()=>{
  let gets=0;const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map([['A',[record('1','A')]]])}});
  const client=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',orgResolver,api:{...noApi,async read(){gets++;return record('1','A');}}});
  const resolver=await client.prepare([{orgUnitCode:'A'}]);
  await assert.rejects(client.resolve({orgUnitCode:'A',orgUnitId:'2'},{resolver}),{code:'ID_CODE_MISMATCH'});assert.equal(gets,0);
- assert.equal((await client.resolve({orgUnitCode:'A'},{resolver})).orgUnitId,'1');assert.equal(gets,1);
+ assert.equal((await client.resolve({orgUnitCode:'A'},{resolver})).orgUnitId,'1');assert.equal(gets,0);
 });
 test('Source Deployer uses cached pairs and excludes mismatches',async()=>{
  const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map([['A',[record('1','A')]],['B',[record('2','B')]]])}});
@@ -220,4 +220,14 @@ test('reported five historical org units yield only the unrecycled destination',
 test('previous normalization policy rebuilds even when extract timestamps have not changed',async()=>{
  const f=incrementalFixture();await createDirectorySync({...f,root}).run();f.state.syncVersion=2;
  assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,3);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
+});
+
+test('5,000 cached date identifiers resolve without course-detail API requests',async()=>{
+ const records=Array.from({length:5000},(_,i)=>record(String(i+1),'C'+i));
+ const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map(records.map(r=>[r.Code,[r]]))}});
+ const client=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',orgResolver,api:noApi});
+ const rows=records.map(r=>({orgUnitCode:r.Code,orgUnitId:r.Identifier}));
+ const resolver=await client.prepare(rows);
+ const resolved=await Promise.all(rows.map(row=>client.resolve(row,{resolver})));
+ assert.equal(resolved.length,5000);assert.equal(resolved[4999].orgUnitId,'5000');
 });

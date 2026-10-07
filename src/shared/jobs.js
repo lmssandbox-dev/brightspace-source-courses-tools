@@ -92,11 +92,6 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function execute(job) {
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
     if(job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
-    let inaccessible=false;
-    await pool(job.courses,4,async course=>{
-      try {await courses.get(course.orgUnitId);} catch {inaccessible=true;}
-    });
-    if(inaccessible){job.status='failed';job.message='A course is no longer accessible. No updates were started.';return;}
     let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running').length;
     const groups=new Map();
     job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});

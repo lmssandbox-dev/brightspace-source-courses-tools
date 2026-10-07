@@ -54,7 +54,7 @@ test('date workers overlap independent courses, serialize each course and persis
  const pause=()=>new Promise(resolve=>setTimeout(resolve,2));
  const writer={updateActivityDates:async r=>{
   assert.ok(!perCourse.has(r.orgUnitId));perCourse.add(r.orgUnitId);peak=Math.max(peak,++active);
-  if(!r.dryRun){assert.equal(validated.size,8);const saved=[...s.data.values()][0];assert.equal(saved.tasks.find(t=>t.orgUnitId===r.orgUnitId&&t.activity.id===r.activity.id).result.status,'running');}
+  if(!r.dryRun){assert.equal(validated.size,0);const saved=[...s.data.values()][0];assert.equal(saved.tasks.find(t=>t.orgUnitId===r.orgUnitId&&t.activity.id===r.activity.id).result.status,'running');}
   await pause();active--;perCourse.delete(r.orgUnitId);return {status:r.dryRun?'ready':'updated',verifiedDates:{}};
  }};
  const jobs=createBulkJobs({store:s.store,courses:{resolve:async r=>({orgUnitId:r.orgUnitId}),get:async id=>{await pause();validated.add(id);}},discovery:{discover:async()=>({complete:true,activities:[{type:'quiz',id:'1'},{type:'quiz',id:'2'}]})},writers:{quiz:writer},writeEnabled:()=>true});

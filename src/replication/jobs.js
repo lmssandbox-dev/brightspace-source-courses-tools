@@ -111,9 +111,6 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     const checkpoint=()=>save(job,{tasks:[index]});
     if(task.result)return;
     if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};await checkpoint();return;}
-    // Validate only this batch before touching its replicas.
-    try{await client.source(task.sourceId);for(const target of task.targets)await client.target(target.orgUnitId);}
-    catch(error){recordFailure(error);task.result=notSent(task,'Batch validation failed. No deployment was sent; review the source and replica access.');await checkpoint();return;}
     let preparationFailed=false;
     for(const target of task.targets){
      target.deactivation={status:'running',writeAttempted:false};await checkpoint();
@@ -124,8 +121,6 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
      }
     }
     if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');await checkpoint();return;}
-    try{for(const target of task.targets)if((await client.target(target.orgUnitId)).isActive!==false)throw {httpStatus:409};}
-    catch(error){recordFailure(error);task.result=notSent(task,'Replica inactivity could not be confirmed. No deployment was sent for this batch.');await checkpoint();return;}
     task.submittedAt=now();
     task.result={status:'running',writeAttempted:false};await checkpoint();
     task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await checkpoint();});

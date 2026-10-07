@@ -1,0 +1,8 @@
+node_modules/
+.env
+render.env
+*.pem
+
+.DS_Store
+
+.local-tools/

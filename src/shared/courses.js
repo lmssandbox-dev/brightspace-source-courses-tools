@@ -15,9 +15,9 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient, orgResolve
     },
     async resolve(row,{cache=new Map(),resolver}={}) {
       const cached=(key,load)=>{if(!cache.has(key))cache.set(key,Promise.resolve().then(load));return cache.get(key);};
-      const get=value=>cached(`id:${value}`,()=>this.get(value));
+      
       configured();
-      if (row.orgUnitId && !row.orgUnitCode) return get(row.orgUnitId);
+      if (row.orgUnitId && !row.orgUnitCode) return {orgUnitId:id(row.orgUnitId),name:'',code:null};
       const url = new URL(`${root}/orgstructure/`);
       url.searchParams.set('exactOrgUnitCode',row.orgUnitCode);
       const matches = await cached(`code:${row.orgUnitCode}`,()=>resolver?resolver.resolve(row.orgUnitCode).then(r=>[r]):api.list(url.href));
@@ -25,9 +25,8 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient, orgResolve
       const ids=[...new Set(matches.filter(r=>r.Code===row.orgUnitCode).map(r=>id(r.Identifier)))];
       if(ids.length!==1) throw new Error(ids.length?'Course code is ambiguous.':'Course code was not found.');
       if(row.orgUnitId && id(row.orgUnitId)!==ids[0])throw Object.assign(new Error('ID and code identify different org units.'),{code:'ID_CODE_MISMATCH'});
-      const course=await get(ids[0]);
-      if(course.code!==row.orgUnitCode) throw new Error('Course code changed during validation.');
-      return course;
+      const match=matches.find(r=>id(r.Identifier)===ids[0]);
+      return {orgUnitId:ids[0],name:typeof match.Name==='string'?match.Name:'',code:row.orgUnitCode};
     }
   };
 }

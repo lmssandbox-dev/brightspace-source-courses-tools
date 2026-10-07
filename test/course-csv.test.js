@@ -12,12 +12,12 @@ test('CSV rejects malformed headers, quoting, empty input and limits',()=>{
  for(const csv of ['', 'id,code\n1,', 'OrgUnitId,OrgUnitId\n1,', 'OrgUnitId,OrgUnitCode\n"bad', 'OrgUnitId,OrgUnitCode\n,', 'OrgUnitId,OrgUnitCode\n'+('1,\n'.repeat(10001)), 'x'.repeat(5*1024*1024+1)])assert.throws(()=>parseCourseCsv(csv));
  assert.equal(parseCourseCsv('OrgUnitId,OrgUnitCode\ninvalid,')[0].status,'invalid');
 });
-test('resolver uses exact code query, all paged matches and offering endpoint; no numeric inference',async()=>{
+test('resolver uses exact code query, all paged matches without course-detail requests; no numeric inference',async()=>{
  const calls=[];const api={list:async url=>{calls.push(url);return [{Identifier:'9524',Code:'00123'}];},read:async url=>{calls.push(url);return {Identifier:'9524',Code:'00123',Name:'Course'};}};
  const c=createCoursesClient({api,baseUrl:'https://tenant.example',lpVersion:'1.49'});
  assert.equal((await c.resolve({orgUnitCode:'00123'})).orgUnitId,'9524');
- assert.equal(new URL(calls[0]).searchParams.get('exactOrgUnitCode'),'00123');assert.match(calls[1],/\/courses\/9524$/);
- calls.length=0;await c.resolve({orgUnitId:'9524'});assert.equal(calls.length,1);
+ assert.equal(new URL(calls[0]).searchParams.get('exactOrgUnitCode'),'00123');assert.equal(calls.length,1);
+ calls.length=0;await c.resolve({orgUnitId:'9524'});assert.equal(calls.length,0);
 });
 test('resolver rejects unknown/ambiguous codes, wrong IDs and inaccessible/non-offerings',async()=>{
  for(const matches of [[],[{Identifier:'1',Code:'x'},{Identifier:'2',Code:'x'}]]) {
@@ -41,13 +41,13 @@ test('accepts 10,000 unique course rows',()=>{const rows=parseCourseCsv('OrgUnit
 
 test('date resolution caches concurrent ID/code aliases within a job but refreshes for a new job',async()=>{
  let lists=0,reads=0;const c=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',api:{list:async url=>{assert.equal(new URL(url).searchParams.get('exactOrgUnitCode'),'001');lists++;return [{Identifier:'1',Code:'001'}];},read:async()=>{reads++;return {Identifier:'1',Name:'Course',Code:'001'};}}});
- const cache=new Map();await Promise.all([c.resolve({orgUnitId:'1'},{cache}),c.resolve({orgUnitCode:'001'},{cache}),c.resolve({orgUnitCode:'001'},{cache})]);assert.equal(lists,1);assert.equal(reads,1);
- await c.resolve({orgUnitCode:'001'},{cache:new Map()});assert.equal(lists,2);assert.equal(reads,2);
+ const cache=new Map();await Promise.all([c.resolve({orgUnitId:'1'},{cache}),c.resolve({orgUnitCode:'001'},{cache}),c.resolve({orgUnitCode:'001'},{cache})]);assert.equal(lists,1);assert.equal(reads,0);
+ await c.resolve({orgUnitCode:'001'},{cache:new Map()});assert.equal(lists,2);assert.equal(reads,0);
 });
 
 test('date ID/code pairs are matched before course reads and cannot be hidden by ID deduplication',async()=>{
  const rows=parseCourseCsv('OrgUnitId,OrgUnitCode\n1,\n1,A\n1,B\n1,A');assert.deepEqual(rows.map(r=>r.status),['pending','pending','pending','duplicate']);
  let reads=0;const c=createCoursesClient({baseUrl:'https://t.example',lpVersion:'1.63',api:{list:async url=>{const code=new URL(url).searchParams.get('exactOrgUnitCode');return [{Identifier:code==='A'?'1':'2',Code:code}];},read:async()=>{reads++;return {Identifier:'1',Name:'Course',Code:'A'};}}});
- assert.equal((await c.resolve(rows[1])).orgUnitId,'1');assert.equal(reads,1);
- await assert.rejects(()=>c.resolve(rows[2]),{code:'ID_CODE_MISMATCH'});assert.equal(reads,1);
+ assert.equal((await c.resolve(rows[1])).orgUnitId,'1');assert.equal(reads,0);
+ await assert.rejects(()=>c.resolve(rows[2]),{code:'ID_CODE_MISMATCH'});assert.equal(reads,0);
 });
