@@ -12,6 +12,9 @@ test('large job exceeds old 8 MB cap, round-trips chunks and preserves old check
  const first=await encodeDateJob(job,collection,'n');
  assert.ok(Buffer.byteLength(JSON.stringify(first))<1000000);
  assert.equal((await decodeDateJob(structuredClone(first),collection,'n')).tasks.length,10000);
+ const existingBatches=collection.batches.length;
+ const unchanged=await encodeDateJob(job,collection,'n',first.dateChunks);
+ assert.equal(collection.batches.length,existingBatches);assert.deepEqual(unchanged.dateChunks,first.dateChunks);
  job.tasks[55].result={status:'updated'};job[DIRTY]={tasks:[55]};
  const second=await encodeDateJob(job,collection,'n',first.dateChunks);
  assert.equal(collection.docs.size,1001);

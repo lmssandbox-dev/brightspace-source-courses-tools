@@ -17,12 +17,13 @@ async function encodeDateJob(job,collection,namespace,previous={}) {
   const indices=dirty?[...new Set([...(dirty[field]||[]).map(i=>Math.floor(i/CHUNK_SIZE)),...Array.from({length:Math.max(0,Math.ceil(values.length/CHUNK_SIZE)-refs.length)},(_,i)=>refs.length+i)])]:Array.from({length:Math.ceil(values.length/CHUNK_SIZE)},(_,i)=>i);
   for(const index of indices){
    const offset=index*CHUNK_SIZE;
-   const items=JSON.parse(JSON.stringify(values.slice(offset,offset+CHUNK_SIZE)));
-   const hash=createHash('sha256').update(JSON.stringify(items)).digest('hex');
+   const serialized=JSON.stringify(values.slice(offset,offset+CHUNK_SIZE));
+   const items=JSON.parse(serialized);
+   const hash=createHash('sha256').update(serialized).digest('hex');
    const key=`${namespace}:${job._id}:${field}:${offset}:${hash}`;
    refs[index]=key;
    if(previous[field]?.[offset/CHUNK_SIZE]!==key){
-    if(Buffer.byteLength(JSON.stringify(items))>8*1024*1024)throw Error('A date-job chunk exceeds 8 MB.');
+    if(Buffer.byteLength(serialized)>8*1024*1024)throw Error('A date-job chunk exceeds 8 MB.');
     writes.push({_id:key,items});
    }
   }

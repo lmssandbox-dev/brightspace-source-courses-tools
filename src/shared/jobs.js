@@ -6,6 +6,7 @@ const {validateZone,DEFAULT_ZONE}=require('../dates/timeZone');
 const TYPES=['assignment','quiz','discussionTopic'];
 const MAX_ACTIVITIES=250000;
 const DISCOVERY_CHECKPOINT_SIZE=500;
+const STEP3_CHECKPOINT_DELAY_MS=25;
 const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
@@ -33,11 +34,14 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const cancelledJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
   const countCache=new WeakMap();
-  const checkpoint=require('./checkpointQueue').createCheckpointQueue(saveCheckpoint);
-  function save(job,dirty) {
+  const createCheckpointQueue=require('./checkpointQueue').createCheckpointQueue;
+  const checkpoint=createCheckpointQueue(saveCheckpoint);
+  const step3Checkpoint=createCheckpointQueue(saveCheckpoint,{delayMs:STEP3_CHECKPOINT_DELAY_MS});
+  function save(job,dirty,queue=checkpoint) {
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
-    return checkpoint(job,dirty);
+    return queue(job,dirty);
   }
+  const saveStep3=(job,dirty)=>save(job,dirty,step3Checkpoint);
   async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
@@ -127,7 +131,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(stopped()||unsafeWorkerJobs.has(job._id))return;
       if(task.result?.status==='running'||(task.result?.status==='uncertain'&&task.result.error?.category==='UNCERTAIN_OUTCOME')){
         task.result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',stage:'interruption',message:'The activity was in flight when processing stopped. Brightspace is checked read-only; no PUT is repeated.'}};
-        await save(job,{tasks:[taskIndex]});
+        await saveStep3(job,{tasks:[taskIndex]});
         try {
           const reconciled=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,dates:job.dates,expectedSettingsFingerprint:task.preview?.settingsFingerprint,reconcileOnly:true,dryRun:false});
           if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(reconciled.error?.category))throw Object.assign(Error('Worker or persistence state could not be confirmed.'),{persistenceFailure:reconciled.error.category==='PERSISTENCE_FAILURE',workerLease:reconciled.error.category==='WORKER_LEASE_INTERRUPTION'});
@@ -138,14 +142,14 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           if(category!=='API_TRANSPORT_FAILURE')throw error;
           task.result.error={category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:'Read-only reconciliation could not establish the result. Manual review is required; no write was repeated.'};
         }
-        processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.systemicFailure=stop;await save(job,{tasks:[taskIndex]});continue;
+        processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.systemicFailure=stop;await saveStep3(job,{tasks:[taskIndex]});continue;
       }
       if(task.result)continue;
-      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
+      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {await store.renew(worker);} catch(error) {unsafeWorkerJobs.add(job._id);throw error;} // Lease failure stops every worker before a later write.
       if(unsafeWorkerJobs.has(job._id))return;
-      task.result={status:'running',writeAttempted:false};await save(job,{tasks:[taskIndex]});
-      if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
+      task.result={status:'running',writeAttempted:false};await saveStep3(job,{tasks:[taskIndex]});
+      if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
           dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});},dryRun:false});
@@ -160,7 +164,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(error?.category)){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Date Manager worker state could not be safely persisted.'),{persistenceFailure:error.category==='PERSISTENCE_FAILURE',workerLease:error.category==='WORKER_LEASE_INTERRUPTION'});}
       job.systemicFailure=stop;
       job.progress={phase:'Applying dates',processed:++processed,total:job.tasks.length};
-      await save(job,{tasks:[taskIndex]});
+      await saveStep3(job,{tasks:[taskIndex]});
      }
     },async()=>!unsafeWorkerJobs.has(job._id));
     job.progress={phase:'Applying dates',processed,total:job.tasks.length};

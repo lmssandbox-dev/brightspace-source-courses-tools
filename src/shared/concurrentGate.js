@@ -3,7 +3,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {MongoClient}=require('mongodb');
 const {performance}=require('node:perf_hooks');
 const hash=s=>createHash('sha256').update(s).digest('hex');
-const LIMIT=4,RESOLUTION_LIMIT=8,BUDGET=30000;
+const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
 const dateDiscoveryPath=/^\/d2l\/api\/le\/[^/]+\/[1-9]\d*\/(?:dropbox\/folders\/|quizzes\/|discussions\/forums\/|discussions\/forums\/[1-9]\d*\/topics\/)$/;
 const isDateDiscovery=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&dateDiscoveryPath.test(url.pathname);};
@@ -16,7 +16,7 @@ const isDeploymentRequest=config=>{
  ||method==='POST'&&/^\/d2l\/api\/lp\/[^/]+\/sourceCourses\/[1-9]\d*\/deploy$/.test(path);
 };
 function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance.now(),mongoClient}){
- const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready,initialized;let notBefore=0,slotRetryAt=0,ordinarySlotRetryAt=0,slotWait=250,reservations=Promise.resolve();
+ const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready,initialized;let notBefore=0,slotRetryAt=0,ordinarySlotRetryAt=0,slotWait=250,reservationActive=0;const reservationWaiters=[];
  const pendingCompletion=new Map();
  async function collection(){ready ||= client.connect().catch(e=>{ready=null;throw e;});await ready;return client.db().collection('api_rate_limits');}
  async function initialize(c,time){
@@ -59,13 +59,15 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
  }
  return {
   reserve(route,options){
-   // Serialize short reservation attempts locally; HTTP requests still overlap.
    const queuedAt=monotonicNow();
-   const pending=reservations.then(async()=>{
+   const pending=(async()=>{
+    await acquireReservationSlot();
+    try {
     const localReservationQueueMs=Math.max(0,monotonicNow()-queuedAt);
     const result=await reserve(route,options);
     return {...result,localReservationQueueMs};
-   });reservations=pending.catch(()=>{});return pending;
+    }finally{releaseReservationSlot();}
+   })();return pending;
   },
   async complete(permit,sample){
    const c=await collection(),time=now(),prefix='costs.'+hash(sample.route);
@@ -99,6 +101,13 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
   },
   async close(){await client.close();}
  };
+ function acquireReservationSlot(){
+  if(reservationActive<RESERVATION_LIMIT){reservationActive++;return Promise.resolve();}
+  return new Promise(resolve=>reservationWaiters.push(()=>{reservationActive++;resolve();}));
+ }
+ function releaseReservationSlot(){
+  const next=reservationWaiters.shift();if(next)next();else reservationActive--;
+ }
  function restorePending(entries){for(const [routeHash,value] of entries){const current=pendingCompletion.get(routeHash)||{totalMs:0,samples:0};current.totalMs+=value.totalMs;current.samples+=value.samples;pendingCompletion.set(routeHash,current);}}
  function waitReason(pacingDeadline,permitDeadline){
   const pacing=pacingDeadline>now(),permit=permitDeadline>now();

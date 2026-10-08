@@ -26,7 +26,7 @@ function mongoModel(onDbCall=()=>{}){
  }
  const collection={
   async updateOne(filter,update){
-   const kind=update.$setOnInsert?'initialize':'complete';calls[kind]++;onDbCall(kind);
+   const kind=update.$setOnInsert?'initialize':'complete';calls[kind]++;await onDbCall(kind);
    if(!doc&&update.$setOnInsert)doc={_id:filter._id,...structuredClone(update.$setOnInsert)};
    if(!doc||filter['permits.token']&&!doc.permits.some(p=>p.token===filter['permits.token']))return {matchedCount:0};
    for(const [k,v] of Object.entries(update.$set||{}))put(doc,k,v);
@@ -37,10 +37,10 @@ function mongoModel(onDbCall=()=>{}){
    return {matchedCount:1};
   },
   async findOneAndUpdate(filter,pipeline){
-   calls.reserve++;onDbCall('reserve');
+   calls.reserve++;await onDbCall('reserve');
    if(!doc||doc.nextAt>filter.nextAt.$lte||!evalExpr(filter.$expr))return {value:null};
    Object.assign(doc,evalExpr(pipeline[0].$set));return {value:structuredClone(doc)};
- },async findOne(){calls.read++;onDbCall('read');return structuredClone(doc);}
+ },async findOne(){calls.read++;await onDbCall('read');return structuredClone(doc);}
  };
  return {calls,client:{connect:async()=>{},db:()=>({collection:()=>collection}),close:async()=>{}},get doc(){return doc;}};
 }
@@ -52,6 +52,21 @@ test('atomic reservations share four permits across gate instances and release r
  assert.ok((await b.reserve(route)).wait>0);await a.complete(permits[0],sample);now+=250;assert.ok((await b.reserve(route)).token);
  const metrics=m.doc.costs[hash(route)];assert.equal(metrics.requests,1);assert.equal(metrics.timedRequests,1);assert.equal(metrics.totalLatencyMs,100);assert.equal(metrics.totalGateWaitMs,20);
  now=50000;assert.ok((await a.reserve(route)).token);await assert.rejects(()=>a.complete(permits[1],sample),/permit lost/);
+});
+test('one gate overlaps at most two local reservation attempts',async()=>{
+ let active=0,peak=0;const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const m=mongoModel(async kind=>{if(kind!=='reserve')return;active++;peak=Math.max(peak,active);await pause(5);active--;});
+ const gate=createConcurrentGate({key:'bounded-local-reservations',now:()=>Date.now(),mongoClient:m.client});
+ await Promise.all(Array.from({length:8},()=>gate.reserve(route)));
+ assert.equal(peak,2);
+});
+test('concurrent reservations from multiple gate instances retain global and ordinary ceilings',async()=>{
+ let clock=100000;const m=mongoModel(),a=createConcurrentGate({key:'concurrent-shared',now:()=>clock+=300,mongoClient:m.client}),b=createConcurrentGate({key:'concurrent-shared',now:()=>clock+=300,mongoClient:m.client});
+ const work=Array.from({length:12},(_,i)=>(i%2?a:b).reserve(i<6?route:'GET lookup',{dateDiscovery:i>=6}));
+ const results=await Promise.all(work),granted=results.filter(result=>result.token).length;
+ assert.ok(granted<=8);assert.ok(m.doc.permits.length<=8);
+ assert.ok(m.doc.budgetUsed<=30000);
+ assert.ok(m.doc.permits.filter(permit=>!permit.dateDiscovery&&!permit.copy&&!permit.resolution).length<=4);
 });
 test('gate timing separates reservation, denied-read, deliberate waits, and buffered completion persistence',async()=>{
  let mono=0,now=0;

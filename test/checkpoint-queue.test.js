@@ -18,3 +18,10 @@ test('failed persistence rejects active and queued waiters and prevents later wr
  const a=queue(job,{tasks:[0]});const caughtA=assert.rejects(a,/database/);await turn();const b=queue(job,{tasks:[1]}),caughtB=assert.rejects(b,/database/);
  fail(Error('database'));await Promise.all([caughtA,caughtB]);await assert.rejects(queue(job,{tasks:[2]}),/database/);assert.equal(calls,1);
 });
+test('separate workflow queues keep independent 10 ms and 25 ms collection windows',async()=>{
+ const original=global.setTimeout,delays=[];global.setTimeout=(callback,delay,...args)=>{delays.push(delay);return original(callback,0,...args);};
+ try{
+  const fast=createCheckpointQueue(async()=>{},{delayMs:10}),step3=createCheckpointQueue(async()=>{},{delayMs:25});
+  await Promise.all([fast({}),step3({})]);assert.deepEqual(delays,[10,25]);
+ }finally{global.setTimeout=original;}
+});
