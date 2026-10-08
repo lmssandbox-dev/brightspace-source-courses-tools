@@ -12,24 +12,29 @@ const {createCoursesClient}=require('../src/shared/courses');
 const {createDeploymentJobs}=require('../src/replication/jobs');
 const root='https://tenant.example/d2l/api/lp/1.63';
 const record=(Identifier,Code,observedAt=1,deleted=false)=>({Identifier,Code,Name:'Course',Type:{Code:'CourseOffering'},observedAt,deleted});
+const cached=(entries,safe=[])=>{const result=new Map(entries);result.safeCodes=new Set(safe);return result;};
 const noApi={async list(){assert.fail('unexpected API lookup');},async read(){assert.fail('unexpected API read');}};
 test('shared warm cache resolves codes once and IDs-only preparation does not touch Mongo',async()=>{
- let reads=0;const resolver=createOrgResolver({store:{async lookup(codes){reads++;assert.deepEqual(codes,['A']);return new Map([['A',[record('1','A')]]]);}},api:noApi,root});
+ let reads=0;const resolver=createOrgResolver({store:{async lookup(codes){reads++;assert.deepEqual(codes,['A']);return cached([['A',[record('1','A')]],],['A']);}},api:noApi,root});
  await resolver.prepare([]);assert.equal(reads,0);const session=await resolver.prepare(['A','A']);assert.equal((await session.resolve('A')).Identifier,'1');await session.resolve('A');assert.equal(reads,1);
 });
 test('cold lookup is deduplicated, exact, persisted, then reused by another job',async()=>{
  const cache=new Map();let calls=0,writes=0;
- const resolver=createOrgResolver({root,store:{lookup:async()=>new Map(cache),async remember(code,rows){writes++;cache.set(code,rows);}},api:{async list(url,raw,options){calls++;assert.equal(new URL(url).searchParams.get('exactOrgUnitCode'),'a/b ?');assert.equal(options.maxPages,100);return [record('1','a/b ?')];}}});
+ const resolver=createOrgResolver({root,store:{lookup:async()=>cached(cache,cache.keys()),async remember(code,rows){writes++;cache.set(code,rows);}},api:{async list(url,raw,options){calls++;assert.equal(new URL(url).searchParams.get('exactOrgUnitCode'),'a/b ?');assert.equal(options.maxPages,100);return [record('1','a/b ?')];}}});
  const session=await resolver.prepare(['a/b ?']);await Promise.all(Array.from({length:8},()=>session.resolve('a/b ?')));assert.equal(calls,1);assert.equal(writes,1);
  await (await resolver.prepare(['a/b ?'])).resolve('a/b ?');assert.equal(calls,1);
 });
 test('ambiguous cache is checked live; missing and genuinely ambiguous API results remain errors',async()=>{
- let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>new Map([['A',[record('1','A'),record('2','A')]]]),remember:async()=>{}},api:{list:async url=>{calls++;return new URL(url).searchParams.get('exactOrgUnitCode')==='A'?[record('1','A'),record('2','A')]:[];}}});
+ let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>cached([['A',[record('1','A'),record('2','A')]]],['A']),remember:async()=>{}},api:{list:async url=>{calls++;return new URL(url).searchParams.get('exactOrgUnitCode')==='A'?[record('1','A'),record('2','A')]:[];}}});
  const session=await resolver.prepare(['A','missing']);await assert.rejects(session.resolve('A'),{code:'CODE_NOT_UNIQUE'});await assert.rejects(session.resolve('missing'),{code:'CODE_NOT_FOUND'});assert.equal(calls,2);
+});
+test('unique filtered cache falls back to exact-code lookup to detect excluded-type collisions',async()=>{
+ let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>new Map([['A',[record('1','A')]]]),remember:async()=>{}},api:{list:async()=>{calls++;return [record('1','A'),{Identifier:'99',Code:'A',Name:'Template',Type:{Code:'Course Template'}}];}}});
+ await assert.rejects((await resolver.prepare(['A'])).resolve('A'),{code:'CODE_NOT_UNIQUE'});assert.equal(calls,1);
 });
 test('unique live answer replaces ambiguous cache and concurrent rows share the lookup',async()=>{
  let calls=0,saved;const cache=new Map([['A',[record('1','A'),record('2','A')]]]);
- const resolver=createOrgResolver({root,store:{lookup:async()=>new Map(cache),remember:async(code,records)=>{saved=records;cache.set(code,records);}},api:{list:async()=>{calls++;return [record('2','A')];}}});
+ const resolver=createOrgResolver({root,store:{lookup:async()=>cached(cache,cache.keys()),remember:async(code,records)=>{saved=records;cache.set(code,records);}},api:{list:async()=>{calls++;return [record('2','A')];}}});
  const session=await resolver.prepare(['A']);const rows=await Promise.all(Array.from({length:8},()=>session.resolve('A')));assert.ok(rows.every(r=>r.Identifier==='2'));assert.equal(calls,1);assert.deepEqual(saved,[record('2','A')].map(({observedAt,deleted,...r})=>r));
  await (await resolver.prepare(['A'])).resolve('A');assert.equal(calls,1);
 });
@@ -45,20 +50,20 @@ test('fresh live mappings survive old fulls; newer full/differentials invalidate
  assert.notEqual(namespaceFor('https://one.example','client'),namespaceFor('https://one.example','other'));
 });
 test('Course Copy cached ID+code mismatch is rejected and IDs use no API',async()=>{
- const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map([['A',[record('1','A')]]])}});
+ const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>cached([['A',[record('1','A')]]],['A'])}});
  const resolve=await createCopyResolver({api:noApi,root,orgResolver})([{originCode:'A'}],async()=>{},async()=>{},{direct:true});
  await assert.rejects(resolve({originCode:'A',originId:'9'},'origin'),/different/);
  assert.equal((await resolve({originId:'8'},'origin')).orgUnitId,'8');
 });
 test('Date Manager uses shared code directory without course-detail requests',async()=>{
- let gets=0;const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map([['A',[record('1','A')]]])}});
+ let gets=0;const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>cached([['A',[record('1','A')]]],['A'])}});
  const client=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',orgResolver,api:{...noApi,async read(){gets++;return record('1','A');}}});
  const resolver=await client.prepare([{orgUnitCode:'A'}]);
  await assert.rejects(client.resolve({orgUnitCode:'A',orgUnitId:'2'},{resolver}),{code:'ID_CODE_MISMATCH'});assert.equal(gets,0);
  assert.equal((await client.resolve({orgUnitCode:'A'},{resolver})).orgUnitId,'1');assert.equal(gets,0);
 });
 test('Source Deployer uses cached pairs and excludes mismatches',async()=>{
- const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map([['A',[record('1','A')]],['B',[record('2','B')]]])}});
+ const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>cached([['A',[record('1','A')]],['B',[record('2','B')]]],['A','B'])}});
  const jobs=createDeploymentJobs({orgResolver,client:{},enabled:()=>true});const rows=jobs.parse('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n1,A,2,B\n9,A,3,');
  const job={rows,tasks:[],courses:[]};await jobs.plan(job,async()=>{});assert.equal(rows[0].status,'valid');assert.equal(rows[1].status,'invalid');
 });
@@ -66,13 +71,13 @@ function fixture({broken=false}={}){
  const staged=new Map();let state={generation:'old',asOf:0},publishes=0,finished;
  const extract=(BdsType,at)=>({SchemaId:'schema',BdsType,QueuedForProcessingDate:new Date(at).toISOString(),Version:'11',DownloadLink:root+'/'+at});
  const extracts=[extract('Differential',3000),extract('Full',1000),extract('Differential',2000),extract('Full',500)];
- const store={claim:async()=> 'lease',renew:async()=>{},status:async()=>state,stage:async(g,rows)=>{for(const row of rows)staged.set(row.Identifier,row);},publish:async(t,g,fullAt,asOf,summary)=>{publishes++;state={generation:g,fullAt,asOf,...summary};},finish:async(t,next,error)=>{finished={next,error};},cleanup:async()=>{},discard:async()=>{staged.clear();}};
+ const store={claim:async()=> 'lease',renew:async()=>{},status:async()=>state,stage:async(g,rows)=>{for(const row of rows)staged.set(row.Identifier,row);},remove:async(g,ids)=>{for(const id of ids)staged.delete(id);},publish:async(t,g,fullAt,asOf,summary)=>{publishes++;state={generation:g,fullAt,asOf,...summary};},finish:async(t,next,error)=>{finished={next,error};},cleanup:async()=>{},discard:async()=>{staged.clear();}};
  const api={list:async url=>url.endsWith('/datasets/bds')?[{SchemaId:'schema',Full:{Name:'Organizational Units'},ExtractsLink:root+'/extracts'}]:extracts};
  const readExtract=async(e,consume)=>{if(broken&&e.at===3000)throw Object.assign(Error('bad archive'),{code:'BAD_ZIP'});await consume({OrgUnitId:'1',Code:e.at>=2000?'B':'A',Name:'n',Type:'Source Course',IsDeleted:e.at===3000?'1':'0'});};
  return {store,api,readExtract,staged,get state(){return state;},get publishes(){return publishes;},get finished(){return finished;}};
 }
-test('nightly full plus ordered differentials publish atomically, including deletion',async()=>{
- const f=fixture();const sync=createDirectorySync({...f,root,now:()=>10000});await sync.run();assert.equal(f.publishes,1);assert.equal(f.state.asOf,3000);assert.equal(f.staged.get('1').Code,'B');assert.equal(f.staged.get('1').deleted,true);
+test('nightly full plus ordered differentials publish atomically and remove deleted records',async()=>{
+ const f=fixture();const sync=createDirectorySync({...f,root,now:()=>10000});await sync.run();assert.equal(f.publishes,1);assert.equal(f.state.asOf,3000);assert.equal(f.staged.has('1'),false);
  await sync.run();assert.equal(f.publishes,1);
 });
 test('failed differential preserves previous published snapshot and schedules retry',async()=>{
@@ -177,9 +182,9 @@ function incrementalFixture(){
  let state=null,failAt=null;const generations=new Map(),downloads=[];
  const e=(type,day)=>({SchemaId:'schema',PluginId:type,CreatedDate:new Date(day*86400000+100).toISOString(),QueuedForProcessingDate:new Date(day*86400000).toISOString(),Version:'11',BdsType:type,DownloadLink:root+'/'+day});
  const available=[e('Full',1),e('Differential',4),e('Differential',7)];
- const store={claim:async()=> 'lease',renew:async()=>{},status:async()=>state,finish:async()=>{},cleanup:async()=>{},discard:async g=>generations.delete(g),stage:async(g,rows)=>{if(!generations.has(g))generations.set(g,new Map());for(const r of rows)generations.get(g).set(r.Identifier,r);},clone:async(s,g)=>generations.set(g,new Map(generations.get(s))),publish:async(t,g,fullAt,asOf,summary)=>{state={generation:g,fullAt,asOf,...summary};}};
+ const store={claim:async()=> 'lease',renew:async()=>{},status:async()=>state,finish:async()=>{},cleanup:async()=>{},discard:async g=>generations.delete(g),stage:async(g,rows)=>{if(!generations.has(g))generations.set(g,new Map());for(const r of rows)generations.get(g).set(r.Identifier,r);},remove:async(g,ids)=>{for(const id of ids)generations.get(g)?.delete(id);},clone:async(s,g)=>generations.set(g,new Map(generations.get(s))),publish:async(t,g,fullAt,asOf,summary)=>{state={generation:g,fullAt,asOf,...summary};}};
  const api={list:async url=>url.endsWith('/datasets/bds')?[{SchemaId:'schema',Full:{Name:'Organizational Units'},ExtractsLink:root+'/extracts'}]:available};
- const readExtract=async(e,consume)=>{const day=e.at/86400000;downloads.push(day);await consume({OrgUnitId:'1',Code:'C'+day,Type:'',Name:'',IsDeleted:day===10?'true':'false'});if(failAt===day)throw Error('Failed download');if(e.BdsType==='Full')await consume({OrgUnitId:'2',Code:'unchanged',Name:'',Type:'',IsDeleted:'false'});};
+ const readExtract=async(e,consume)=>{const day=e.at/86400000;downloads.push(day);await consume({OrgUnitId:'1',Code:'C'+day,Type:'Source Course',Name:'',IsDeleted:day===10?'true':'false'});if(failAt===day)throw Error('Failed download');if(e.BdsType==='Full')await consume({OrgUnitId:'2',Code:'unchanged',Name:'',Type:'Course Offering',IsDeleted:'false'});};
  return {store,api,readExtract,available,e,downloads,generations,get state(){return state;},set failAt(value){failAt=value;}};
 }
 test('initial full ignores calendar gaps; subsequent runs download only new differentials',async()=>{
@@ -187,7 +192,7 @@ test('initial full ignores calendar gaps; subsequent runs download only new diff
  assert.equal((await sync.run()).mode,'full');assert.deepEqual(f.downloads,[1,4,7]);
  assert.equal((await sync.run()).skipped,'already_current');assert.equal(f.downloads.length,3);
  f.available.push(f.e('Differential',10));assert.equal((await sync.run()).mode,'differential');assert.deepEqual(f.downloads,[1,4,7,10]);
- const records=f.generations.get(f.state.generation);assert.equal(records.get('1').deleted,true);assert.equal(records.get('2').Code,'unchanged');
+ const records=f.generations.get(f.state.generation);assert.equal(records.has('1'),false);assert.equal(records.get('2').Code,'unchanged');
  assert.equal(f.state.fullAt,86400000);assert.equal(f.state.appliedExtracts.length,4);
  f.available.push(f.e('Full',11),f.e('Differential',12));assert.equal((await sync.run()).mode,'full');assert.deepEqual(f.downloads,[1,4,7,10,11,12]);assert.equal(f.state.appliedExtracts.length,2);
 });
@@ -225,14 +230,57 @@ test('reported five historical org units yield only the unrecycled destination',
  assert.equal(normalize({...base,IsDeleted:'TRUE'},1).deleted,true);
  assert.equal(normalize({...base,DeletedDate:'2026-01-01'},1).deleted,true);
 });
-test('previous normalization policy rebuilds even when extract timestamps have not changed',async()=>{
- const f=incrementalFixture();await createDirectorySync({...f,root}).run();f.state.syncVersion=2;
- assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,3);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
+test('previous directory version requires a full rebuild even when extract timestamps have not changed',async()=>{
+ const f=incrementalFixture();await createDirectorySync({...f,root}).run();f.state.syncVersion=3;
+ assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,4);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
+});
+
+test('full import stages only active course types while validating all rows',async()=>{
+ const f=incrementalFixture();f.readExtract=async(e,consume)=>{
+  for(const row of [
+   {OrgUnitId:'1',Code:'offering',Type:' Course Offering ',IsDeleted:'false',IsActive:'false'},
+   {OrgUnitId:'2',Code:'source',Type:'Source Course',IsDeleted:'false'},
+   {OrgUnitId:'3',Code:'template',Type:'Course Template',IsDeleted:'false'},
+   {OrgUnitId:'4',Code:'deleted',Type:'Source Course',IsDeleted:'true'},
+   {OrgUnitId:'5',Code:'recycled',Type:'Course Offering',IsDeleted:'false',RecycledDate:'2026-01-01'},
+  ])await consume({...row,Name:''});
+ };
+ await createDirectorySync({...f,root}).run();const saved=f.generations.get(f.state.generation);
+ assert.deepEqual([...saved.keys()].sort(),['1','2']);assert.equal(f.state.fullRows,5);
+ const duplicate=incrementalFixture();duplicate.readExtract=async(e,consume)=>{for(const type of ['Course Template','Other'])await consume({OrgUnitId:'8',Code:'x',Name:'',Type:type,IsDeleted:'false'});};
+ await assert.rejects(createDirectorySync({...duplicate,root}).run(),{code:'DATASET_DUPLICATE_ID'});assert.equal(duplicate.state,null);
+});
+
+test('differentials update and rename, insert, remove deletions and type transitions',async()=>{
+ const f=incrementalFixture();f.available.splice(2);f.readExtract=async(e,consume)=>{
+  const day=e.at/86400000;
+  const rows=day===1?[
+   {OrgUnitId:'1',Code:'old',Type:'Source Course'},
+   {OrgUnitId:'5',Code:'template',Type:'Course Template'},
+  ]:day===4?[
+   {OrgUnitId:'1',Code:'renamed',Type:'Course Offering'},
+   {OrgUnitId:'3',Code:'new',Type:'Course Offering'},
+  ]:[
+   {OrgUnitId:'1',Code:'renamed',Type:'Course Template'},
+   {OrgUnitId:'5',Code:'became-course',Type:'Source Course'},
+   {OrgUnitId:'3',Code:'new',Type:'Source Course',IsDeleted:'true'},
+  ];
+  for(const row of rows)await consume({Name:'',IsDeleted:'false',...row});
+ };
+ await createDirectorySync({...f,root}).run();const renamed=f.generations.get(f.state.generation);
+ assert.equal(renamed.get('1').Code,'renamed');assert.equal(renamed.get('3').Code,'new');
+ f.available.push(f.e('Differential',7));await createDirectorySync({...f,root}).run();const records=f.generations.get(f.state.generation);
+ assert.equal(records.has('1'),false);assert.equal(records.has('3'),false);assert.equal(records.get('5').Code,'became-course');
+});
+
+test('failed filtered full rebuild preserves the old published generation',async()=>{
+ const f=fixture({broken:true});f.readExtract=async(e,consume)=>{if(e.BdsType==='Full')throw Object.assign(Error('bad full'),{code:'BAD_ZIP'});};
+ await assert.rejects(createDirectorySync({...f,root}).run(),{code:'BAD_ZIP'});assert.equal(f.state.generation,'old');assert.equal(f.publishes,0);
 });
 
 test('5,000 cached date identifiers resolve without course-detail API requests',async()=>{
  const records=Array.from({length:5000},(_,i)=>record(String(i+1),'C'+i));
- const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>new Map(records.map(r=>[r.Code,[r]]))}});
+ const orgResolver=createOrgResolver({root,api:noApi,store:{lookup:async()=>cached(records.map(r=>[r.Code,[r]]),records.map(r=>r.Code))}});
  const client=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',orgResolver,api:noApi});
  const rows=records.map(r=>({orgUnitCode:r.Code,orgUnitId:r.Identifier}));
  const resolver=await client.prepare(rows);

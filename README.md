@@ -186,7 +186,7 @@ Report downloads use the template name with `results` in place of `template`: `d
 
 ### Faster copy mapping validation
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+All three tools use the shared MongoDB org-code directory first, in 500-code batches. The directory stores non-deleted Course Offerings and Source Courses. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 The first step shows **Validating course mappings**, with mappings processed out of the CSV total. Cancel remains available. These are read-only checks; copying still requires confirmation. Actual speed depends on the number of unique supplied codes, API latency and result pagination. Automatic mapping retains local checks and unique code resolution; course type and access checks are deferred to the copy POST.
 
@@ -213,7 +213,7 @@ Code resolution uses eight mapping workers in Course Copy, Source Deployer and D
 
 ## Shared directory and nightly dataset refresh
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+All three tools use the shared MongoDB org-code directory first, in 500-code batches. The directory stores non-deleted Course Offerings and Source Courses. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 Run `node scripts/sync-org-units.js` to initialize/refresh after granting the Service User dataset access, then `node scripts/org-unit-cache-report.js` to inspect freshness. Scheduled refresh defaults to 06:00 UTC. The OAuth scope is `datasets:bds:read`; no extra credentials or CSV changes are needed. The 8-worker resolution / 4-worker ordinary API limits remain unchanged. A failed import preserves the previous generation.
 

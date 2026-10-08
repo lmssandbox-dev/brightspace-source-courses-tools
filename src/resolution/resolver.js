@@ -7,7 +7,9 @@ function createOrgResolver({store,api,root,now=Date.now}){
   await check();const found=await store.lookup(unique),pending=new Map();
   return {resolve(code,check=async()=>{}){if(!pending.has(code))pending.set(code,(async()=>{
    await check();let records=found.get(code);
-   if(!records||new Set(records.map(r=>id(r.Identifier))).size!==1){const started=now(),url=new URL(root+'/orgstructure/');url.searchParams.set('exactOrgUnitCode',code);
+   // A filtered directory cannot prove that an excluded org-unit type does not share this code.
+   // Only an exact-code API snapshot made after the latest directory sync is authoritative.
+   if(!found.safeCodes?.has(code)||!records||new Set(records.map(r=>id(r.Identifier))).size!==1){const started=now(),url=new URL(root+'/orgstructure/');url.searchParams.set('exactOrgUnitCode',code);
     records=(await api.list(url.href,undefined,{check,maxPages:100,maxItems:5000})).filter(r=>r.Code===code).map(r=>({Identifier:id(r.Identifier),Code:code,Name:typeof r.Name==='string'?r.Name:'',Type:r.Type}));
     await check();try{await store.remember(code,records,started);}catch(error){logFailure('resolution_cache_write_failed',error);}
    }

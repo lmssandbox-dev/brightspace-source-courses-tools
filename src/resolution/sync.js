@@ -3,6 +3,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {normalize,fail}=require('./extract');
 const {logFailure}=require('../shared/diagnostics');
 function nextNight(now,hour){const date=new Date(now);date.setUTCHours(hour,0,0,0);if(date.getTime()<=now)date.setUTCDate(date.getUTCDate()+1);return date.getTime();}
+function eligible(record){const type=record.Type.Code.trim().toLowerCase();return !record.deleted&&(type==='course offering'||type==='source course');}
 function extractList(rows,schemaId){
  const seen=new Set();
  return rows.filter(r=>r.SchemaId===schemaId&&['Full','Differential'].includes(r.BdsType)).map(r=>{
@@ -20,13 +21,14 @@ function selectExtracts(rows,schemaId){
 }
 function planSync(rows,schemaId,state){
  const available=extractList(rows,schemaId),full=available.filter(r=>r.BdsType==='Full').at(-1);
- const tracked=state?.generation&&state.syncVersion===3&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
+ const hasLedger=state?.generation&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
+ const tracked=hasLedger&&state.syncVersion===4;
  const rebuild=!tracked||full&&(full.at>state.fullAt||full.at===state.fullAt&&full.key!==state.fullKey);
  if(rebuild){
   if(!full)throw fail('DATASET_FULL_MISSING');
   const extracts=[full,...available.filter(r=>r.BdsType==='Differential'&&r.at>full.at)];
   // A new baseline must not discard already known changes whose files have expired.
-  if(tracked&&state.appliedExtracts.some(r=>r.at>full.at&&!extracts.some(e=>e.key===r.key)))throw fail('DATASET_HISTORY_UNAVAILABLE');
+  if(hasLedger&&state.appliedExtracts.some(r=>r.at>full.at&&!extracts.some(e=>e.key===r.key)))throw fail('DATASET_HISTORY_UNAVAILABLE');
   if(state?.asOf>extracts.at(-1).at)throw fail('DATASET_HISTORY_UNAVAILABLE');
   return {mode:'full',extracts,fullAt:full.at,fullKey:full.key,version:full.Version,applied:[]};
  }
@@ -75,19 +77,22 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
    // Clone locally for atomic publication; differential mode downloads no old dataset files.
    if(plan.mode==='differential')await store.clone(state.generation,generation,check);
    for(const extract of extracts){
-    await check();let batch=[],count=0;const seen=new Set();
+    await check();let batch=[],removed=[],count=0;const seen=new Set();
+    const flush=async()=>{if(batch.length){await store.stage(generation,batch);batch=[];}if(removed.length){await store.remove(generation,removed);removed=[];}};
     await readExtract(extract,async row=>{
      await check();let record;
      try{record=normalize(row,extract.at);}catch(error){error.datasetRecord=count+1;error.datasetExtract=extract.BdsType;throw error;}
      if(seen.has(record.Identifier))throw fail('DATASET_DUPLICATE_ID');seen.add(record.Identifier);
-     batch.push(record);count++;rows++;
-     if(batch.length>=500){await store.stage(generation,batch);batch=[];}
+     count++;rows++;
+     if(eligible(record))batch.push(record);
+     else if(extract.BdsType==='Differential')removed.push(record.Identifier);
+     if(batch.length+removed.length>=500)await flush();
     });
-    if(batch.length)await store.stage(generation,batch);
+    await flush();
     if(extract.BdsType==='Full'){fullRows=count;if(!count)throw fail('DATASET_EMPTY_FULL');}
    }
    await check();await store.renew(token);
-   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:3,liveInvalidBefore:state?.syncVersion===3?(state.liveInvalidBefore||0):now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
+   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:4,liveInvalidBefore:now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
    await store.finish(token,nextNight(now(),hour));
    await store.cleanup(generation,fullAt);
    return {status:'ready',mode:plan.mode,fullRows,importedRows:rows,extracts:extracts.length,asOf};
@@ -100,4 +105,4 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
  }
  return {run,async tick(){try{if(enabled||(await store.status())?.manualRequested)await run();}catch{/* Logged; old published directory remains usable. */}}};
 }
-module.exports={createDirectorySync,nextNight,selectExtracts,selectSchema,datasetSummary,planSync};
+module.exports={createDirectorySync,nextNight,selectExtracts,selectSchema,datasetSummary,planSync,eligible};

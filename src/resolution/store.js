@@ -17,16 +17,16 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
  async function db(){ready ||= (async()=>{await client.connect();const d=client.db();await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Code:1});await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Identifier:1},{unique:true});return d;})().catch(e=>{ready=null;throw e;});return ready;}
  const metaId=namespace,liveId=code=>namespace+':'+digest(code);
  return {
-  async lookup(codes){const d=await db(),meta=await d.collection('org_resolution_state').findOne({_id:metaId}),found=new Map();
+  async lookup(codes){const d=await db(),meta=await d.collection('org_resolution_state').findOne({_id:metaId}),found=new Map(),safeCodes=new Set();
    const parts=Array.from({length:Math.ceil(codes.length/500)},(_,i)=>codes.slice(i*500,(i+1)*500)),results=new Array(parts.length);
    await pool(parts,4,async(part,index)=>{const overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
     const ids=overlays.flatMap(o=>o.matches.map(r=>r.Identifier));const records=meta?.generation?await d.collection('org_resolution_units').find({namespace,generation:meta.generation,$or:[{Code:{$in:part}},{Identifier:{$in:ids}}]}).toArray():[];
     const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)).map(r=>[r.code,r]));
     for(const r of records){if(!byCode.has(r.Code))byCode.set(r.Code,[]);byCode.get(r.Code).push(r);}
-    const batch=new Map();for(const code of part){const matches=mergeMatches(code,byCode.get(code)||[],live.get(code),byId,meta?.fullAt||0);if(matches.length)batch.set(code,matches);}results[index]=batch;
+    const batch=new Map();for(const code of part){const overlay=live.get(code),matches=mergeMatches(code,byCode.get(code)||[],overlay,byId,meta?.fullAt||0);if(matches.length)batch.set(code,matches);if(overlay)safeCodes.add(code);}results[index]=batch;
    });
    for(const batch of results)for(const [code,matches] of batch)found.set(code,matches);
-   return found;
+   found.safeCodes=safeCodes;return found;
   },
   async remember(code,matches,verifiedAt){if(!matches.length)return;const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]}}}],{upsert:true});},
   async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},
@@ -42,6 +42,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   },
   async renew(token){const r=await (await db()).collection('org_resolution_state').updateOne({_id:metaId,token,leaseUntil:{$gt:now()}},{$set:{leaseUntil:now()+120000}});if(r.matchedCount!==1)throw Object.assign(Error('Sync lease lost'),{code:'RESOLUTION_LEASE_LOST'});},
   async stage(generation,records){if(!records.length)return;await (await db()).collection('org_resolution_units').bulkWrite(records.map(r=>({updateOne:{filter:{namespace,generation,Identifier:r.Identifier},update:{$set:{...r,namespace,generation,stagedAt:now()}},upsert:true}})),{ordered:true});},
+  async remove(generation,identifiers){if(!identifiers.length)return;await (await db()).collection('org_resolution_units').bulkWrite(identifiers.map(Identifier=>({deleteOne:{filter:{namespace,generation,Identifier}}})),{ordered:true});},
   async clone(source,generation,check=async()=>{}){
    if(source===generation)throw Error('Directory staging must be separate');
    const cursor=(await db()).collection('org_resolution_units').find({namespace,generation:source}).batchSize(500);

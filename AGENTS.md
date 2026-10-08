@@ -38,6 +38,7 @@ Date Manager discovery uses up to eight independent courses. Assignment, Quiz, F
 - Never automatically repeat a write with an uncertain outcome. Timeouts, process restarts, or lost responses can occur after Brightspace accepted a request; keep the saved result inspectable and require reconciliation.
 - Deployment preparation can leave replicas inactive if it fails. Surface per-replica outcomes and do not add rollback or resubmission assumptions casually. Activation does not establish that copying has completed.
 - Treat org-unit code cache hits as snapshots, not live identity checks. Do not resolve ambiguous codes by choosing the first match.
+- The shared org-unit directory stores only non-deleted Course Offerings and Source Courses. Because excluded types may share a code, directory-only matches require current live exact-code verification before resolution; successful verification can be reused until directory publication.
 - Escape rendered HTML and spreadsheet CSV values; sanitize API diagnostics and never expose credentials or raw request configuration.
 - Visible UI text belongs in all three catalogs under `src/ui/locales/` (English, Latin American Spanish, Brazilian Portuguese). Keep catalog keys/placeholders aligned.
 - Do not casually change Brightspace API payloads, minimum API versions, job persistence/checkpoint semantics, tenant/database namespacing, scopes, or retry behavior; inspect the related tests and subsystem docs first.
