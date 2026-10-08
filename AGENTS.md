@@ -27,6 +27,8 @@ Date Manager supports cancellation while Step 2 resolves course identifiers or d
 
 Date Manager chunk cleanup is an explicit administrative operation only. It must take the namespace worker lease, preserve every retained job reference, protect queued/resumable work, and never run as automatic background garbage collection.
 
+Completed Date Manager status views render from one lightweight metadata read; do not load or decode course/activity chunks for the summary. CSV reports still load the complete job. A redundant second metadata read was removed from the completed/non-ready status path. This reduces one MongoDB round trip, but does not establish or guarantee removal of large-job latency; verify server-side request timing after deployment before attributing production delays to this change.
+
 Date Manager discovery uses up to eight independent courses. Assignment, Quiz, Forum, and independent Forum Topic collection reads use the eight-request API allowance under the shared global ceiling of eight; unrelated ordinary requests remain limited to four. Discovery checkpoints batch 500 progress increments while retaining worker fencing, cancellation safety, and a final durable save before readiness. Planning previews reuse collection-returned native activity data; apply retains the pre-write GET and post-write read-back.
 
 ## Conventions and safety constraints

@@ -64,7 +64,9 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       if(action==='review'){if(kind!=='sourceDeployment'||req.body.confirmReviewed!=='yes')return res.status(400).send('Confirm review in Brightspace.');if(!await jobs.review(job._id,owner(res)))return res.status(409).send('Job cannot be reviewed in its current state.');}
       if(action==='cancel'&&!await jobs.cancel(job._id,owner(res)))return res.status(409).send('Job is already processing or finished.');
       if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition',`attachment; filename="${kind==='courseCopy'?'course-copy':kind==='sourceDeployment'?'deploy':'date-manager'}-results.csv"`);return res.send(translateReport(view?view.report(job):report(job),req.body.uiLanguage));}
-      const renderJob=statusOnly&&job.status!=='ready'?await jobs.getStatus(job._id,owner(res)):await jobs.get(job._id,owner(res));
+      // A non-ready status page has no intervening mutation, so render the
+      // metadata snapshot already fetched above instead of issuing it again.
+      const renderJob=statusOnly&&job.status!=='ready'?job:await jobs.get(job._id,owner(res));
       return res.send(render(res,renderJob,Number(req.body.page)||1));
     } catch(error) {require('./diagnostics').logFailure('job_request_failed',error,{kind,action,jobId:req.body?.jobId});return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
   };
