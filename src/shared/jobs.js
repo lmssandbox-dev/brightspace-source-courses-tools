@@ -178,7 +178,9 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),dates,timeZone,rows,courses:[],tasks:[],totals:{total:0}};
       await store.insert(job);return job;
     },
-    get:(id,owner)=>store.get(id,owner), list:(owner,kind)=>store.list(owner,kind),
+    get:(id,owner)=>store.get(id,owner),
+    ...(typeof store.getStatus==='function'?{getStatus:(id,owner)=>store.getStatus(id,owner)}:{}),
+    list:(owner,kind)=>store.list(owner,kind),
     requestCopyCheck:(id,owner)=>store.requestCopyCheck(id,owner),
     activate:(id,owner)=>store.activate(id,owner,now()),
     review:(id,owner)=>store.review(id,owner,now()),

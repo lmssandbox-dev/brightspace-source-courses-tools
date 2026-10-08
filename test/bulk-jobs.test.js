@@ -4,7 +4,7 @@ const {createBulkJobs,interruptJob}=require('../src/shared/jobs');
 const dates={start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'};
 function setup(options={}) {
  const data=new Map(),calls=[];let held=false;
- const store={insert:async j=>data.set(j._id,structuredClone(j)),get:async(id,owner)=>{const j=data.get(id);return j?.owner===owner?structuredClone(j):null;},list:async owner=>[...data.values()].filter(j=>j.owner===owner),
+ const store={insert:async j=>data.set(j._id,structuredClone(j)),get:async(id,owner)=>{const j=data.get(id);return j?.owner===owner?structuredClone(j):null;},getStatus:options.getStatus||(async()=>null),list:async owner=>[...data.values()].filter(j=>j.owner===owner),
  acquire:async()=>{if(held)return false;held=true;return true;},renew:async()=>{},release:async()=>{held=false;},save:async j=>data.set(j._id,structuredClone(j)),
  claim:async()=>{const j=[...data.values()].find(j=>['queued','validating'].includes(j.status));if(!j)return null;j.status=j.status==='queued'?'running':'planning';return structuredClone(j);},
  confirm:async(id,owner,time)=>{const j=data.get(id);if(!j||j.owner!==owner||j.status!=='ready'||j.expiresAt<=time)return false;j.status='queued';return true;},
@@ -16,6 +16,12 @@ function setup(options={}) {
  const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,now:options.now||(()=>1000)});
  return {jobs,data,calls,store,courses,discovery};
 }
+test('bulk job interface forwards metadata-only status reads from its store',async()=>{
+ const expected={_id:'completed',kind:'dates',status:'completed'};let calls=0;
+ const s=setup({getStatus:async(id,owner)=>{calls++;assert.equal(id,'completed');assert.equal(owner,'owner');return expected;}});
+ let fullReads=0;s.store.get=async()=>{fullReads++;throw Error('full job load was not expected');};
+ assert.equal(await s.jobs.getStatus('completed','owner'),expected);assert.equal(calls,1);assert.equal(fullReads,0);
+});
 test('all course validation and discovery are read-only; confirmation executes only stored deduplicated plan',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n,001\n2,',dates});
  await s.jobs.tick();const p=await s.jobs.get(j._id,'a');assert.equal(p.status,'ready');assert.equal(p.courses.length,2);assert.equal(p.tasks.length,6);assert.equal(p.rows[1].status,'duplicate');assert.ok(!s.calls.includes('write'));

@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createHash,createHmac}=require('node:crypto');
 const {createBulkDates,report}=require('../src/shared/routes');
+const {createBulkJobs}=require('../src/shared/jobs');
 function response(session='s',user='u',deploymentId='d') {return {locals:{ltik:session,token:{user,deploymentId,iss:'https://tenant.example'}},headers:{},code:200,set(k,v){this.headers[k]=v;return this;},status(c){this.code=c;return this;},send(v){this.body=v;return this;}};}
 function ticket(html,action){const form=html.match(new RegExp(`<form[^>]*action="/bulk/${action}"[^>]*>([\\s\\S]*?)</form>`));return form?.[1].match(/name="ticket" value="([^"]+)"/)[1];}
 function setup(){let time=1000;const calls=[];let cancels=0;const job={_id:'j',status:'ready',expiresAt:9999999,dates:{start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'},rows:[],courses:[],tasks:[{activity:{type:'quiz',id:'1'},orgUnitId:'1',name:'<script>alert(1)</script>',preview:{status:'ready',verifiedDates:{start:null,due:null,end:null}}}]};
@@ -39,7 +40,7 @@ test('completed Date Manager status renders small and large summaries from one m
  for(const [id,courseTotal,total] of [['small',1,1],['large',5000,20000]]){
   let statusReads=0,fullReads=0;
   const job={_id:id,kind:'dates',status:'completed',courseTotal,totals:{total,updated:total},dates:{start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'},timeZone:'America/Sao_Paulo'};
-  const jobs={getStatus:async(jobId,owner)=>{statusReads++;assert.equal(jobId,id);assert.ok(owner);return job;},get:async()=>{fullReads++;throw Error('completed status must not load chunks');}};
+  const jobs=createBulkJobs({store:{getStatus:async(jobId,owner)=>{statusReads++;assert.equal(jobId,id);assert.ok(owner);return job;},get:async()=>{fullReads++;throw Error('completed status must not load chunks');}},courses:{},discovery:{},writers:{},writeEnabled:()=>true});
   const routes=createBulkDates({jobs,deploymentId:'d',secret,writeEnabled:()=>true,now:()=>time});
   const tokenData=Buffer.from(JSON.stringify({kind:'dates',action:'status',id,session:createHash('sha256').update('s').digest('hex'),expires:time+1800000})).toString('base64url');
   const token=`${tokenData}.${createHmac('sha256',secret).update(tokenData).digest('hex')}`;
