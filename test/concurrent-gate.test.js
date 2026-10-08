@@ -3,10 +3,11 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {createHash}=require('node:crypto');
 const {createConcurrentGate}=require('../src/shared/concurrentGate');
 const {createRateLimitedHttp}=require('../src/shared/rateLimit');
+const {buildRows,durationSummary}=require('../scripts/api-cost-report');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 // Small expression model for the operators used by the atomic Mongo reservation.
 // This exercises the actual generated filter/pipeline, not a replacement gate algorithm.
-function mongoModel(){
+function mongoModel(onDbCall=()=>{}){
  const calls={initialize:0,reserve:0,read:0,complete:0};let doc;const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
  const put=(o,path,value)=>{const keys=path.split('.'),last=keys.pop();for(const key of keys)o=o[key]||=( {} );o[last]=value;};
  function evalExpr(v,vars={}){
@@ -25,7 +26,7 @@ function mongoModel(){
  }
  const collection={
   async updateOne(filter,update){
-   calls[update.$setOnInsert?'initialize':'complete']++;
+   const kind=update.$setOnInsert?'initialize':'complete';calls[kind]++;onDbCall(kind);
    if(!doc&&update.$setOnInsert)doc={_id:filter._id,...structuredClone(update.$setOnInsert)};
    if(!doc||filter['permits.token']&&!doc.permits.some(p=>p.token===filter['permits.token']))return {matchedCount:0};
    for(const [k,v] of Object.entries(update.$set||{}))put(doc,k,v);
@@ -36,10 +37,10 @@ function mongoModel(){
    return {matchedCount:1};
   },
   async findOneAndUpdate(filter,pipeline){
-   calls.reserve++;
+   calls.reserve++;onDbCall('reserve');
    if(!doc||doc.nextAt>filter.nextAt.$lte||!evalExpr(filter.$expr))return {value:null};
    Object.assign(doc,evalExpr(pipeline[0].$set));return {value:structuredClone(doc)};
-  },async findOne(){calls.read++;return structuredClone(doc);}
+ },async findOne(){calls.read++;onDbCall('read');return structuredClone(doc);}
  };
  return {calls,client:{connect:async()=>{},db:()=>({collection:()=>collection}),close:async()=>{}},get doc(){return doc;}};
 }
@@ -51,6 +52,24 @@ test('atomic reservations share four permits across gate instances and release r
  assert.ok((await b.reserve(route)).wait>0);await a.complete(permits[0],sample);now+=250;assert.ok((await b.reserve(route)).token);
  const metrics=m.doc.costs[hash(route)];assert.equal(metrics.requests,1);assert.equal(metrics.timedRequests,1);assert.equal(metrics.totalLatencyMs,100);assert.equal(metrics.totalGateWaitMs,20);
  now=50000;assert.ok((await a.reserve(route)).token);await assert.rejects(()=>a.complete(permits[1],sample),/permit lost/);
+});
+test('gate timing separates reservation, denied-read, deliberate waits, and buffered completion persistence',async()=>{
+ let mono=0,now=0;
+ const m=mongoModel(kind=>{mono+=({initialize:2,reserve:4,read:3,complete:5}[kind]||0);});
+ const gate=createConcurrentGate({key:'timings',now:()=>now,monotonicNow:()=>mono,mongoClient:m.client});
+ const first=await gate.reserve(route);assert.equal(first.mongoReservationMs,4);assert.equal(first.deniedReservationReadMs,0);
+ await gate.complete(first,{...sample,gateTimings:{localReservationQueue:2,mongoReservation:4,deniedReservationRead:0,permitContentionWait:0,pacingBudgetWait:0,mixedWait:0}});
+ let metrics=m.doc.costs[hash(route)];assert.equal(metrics.localReservationQueueTotalMs,2);assert.equal(metrics.mongoReservationTotalMs,4);assert.equal(metrics.completionPersistenceSamples,undefined);
+ now=250;const second=await gate.reserve(route);assert.equal(second.mongoReservationMs,4);
+ await gate.complete(second,{...sample,gateTimings:{localReservationQueue:1,mongoReservation:4,deniedReservationRead:0,permitContentionWait:0,pacingBudgetWait:0,mixedWait:0}});
+ metrics=m.doc.costs[hash(route)];assert.equal(metrics.completionPersistenceSamples,1);assert.equal(metrics.completionPersistenceTotalMs,5);
+ const pacing=await gate.reserve(route);assert.equal(pacing.waitReason,'pacingBudget');
+});
+test('denied atomic reservations separately measure their follow-up read and permit wait',async()=>{
+ let mono=0,now=0;const m=mongoModel(kind=>{mono+=({reserve:4,read:3}[kind]||0);});
+ const gate=createConcurrentGate({key:'denied-timing',now:()=>now,monotonicNow:()=>mono,mongoClient:m.client});
+ for(let i=0;i<4;i++){assert.ok((await gate.reserve(route)).token);now+=250;}
+ const denied=await gate.reserve(route);assert.equal(denied.mongoReservationMs,4);assert.equal(denied.deniedReservationReadMs,3);assert.equal(denied.waitReason,'permitContention');
 });
 test('reserved credit budget blocks starts until its window resets',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const initial=await gate.reserve(route);await gate.complete(initial,sample);
@@ -80,6 +99,20 @@ test('production transport never repeats ambiguous writes and poisons scheduling
   await assert.rejects(()=>request(config));assert.equal(calls,fail==='reserve'?0:1);
   if(fail!=='timeout'){await assert.rejects(()=>request(config));assert.equal(calls,fail==='reserve'?0:1);}
  }
+});
+test('transport aggregates gate timing categories without counting one wait twice',async()=>{
+ let mono=0;const samples=[];let reservations=0;
+ const request=createRateLimitedHttp({baseUrl:'https://tenant.example',monotonicNow:()=>mono,delay:async ms=>{mono+=ms;},gate:{reserve:async()=>++reservations===1
+  ?{wait:10,waitReason:'permitContention',localReservationQueueMs:2,mongoReservationMs:4,deniedReservationReadMs:3}
+  :{token:'t',reservedCost:10,localReservationQueueMs:1,mongoReservationMs:5,deniedReservationReadMs:0},complete:async(_permit,sample)=>samples.push(sample)},http:async()=>({status:200,headers:{'x-request-cost':'10'}})});
+ await request(config);assert.deepEqual(samples[0].gateTimings,{localReservationQueue:3,mongoReservation:9,deniedReservationRead:3,permitContentionWait:10,pacingBudgetWait:0,mixedWait:0});
+});
+test('API cost report preserves unknown historical timing fields',()=>{
+ assert.equal(durationSummary({},'newTotalMs','newSamples'),'unknown');
+ const [row]=buildRows({old:{route:'GET /d2l/api/le/:id/quizzes/',requests:1,lastSeenAt:0}});
+ assert.equal(row.localReservationQueue,'unknown');assert.equal(row.completionPersistence,'unknown');
+ const [measured]=buildRows({new:{route:'GET /d2l/api/le/:id/quizzes/',lastSeenAt:0,localReservationQueueTotalMs:15,localReservationQueueSamples:3}});
+ assert.equal(measured.localReservationQueue,'n=3 total=15ms avg=5ms');
 });
 test('production transport respects global reset waits before retrying an explicit 429',async()=>{
  let now=0,pauseUntil=0,calls=0;const samples=[];

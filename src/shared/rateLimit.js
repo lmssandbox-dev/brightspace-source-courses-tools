@@ -6,8 +6,8 @@ function seconds(value,now){
  const n=Number(value);if(Number.isFinite(n)&&n>=0)return n*1000;
  const date=Date.parse(value);return Number.isFinite(date)?Math.max(0,date-now):null;
 }
-function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,delay=sleep,intervalMs=20,maxRetries=5}){
- if(gate.reserve)return require('./concurrentGate').createConcurrentHttp({http,gate,baseUrl,now,delay,maxRetries,seconds});
+function createRateLimitedHttp({http,gate,baseUrl,now=Date.now,monotonicNow,delay=sleep,intervalMs=20,maxRetries=5}){
+ if(gate.reserve)return require('./concurrentGate').createConcurrentHttp({http,gate,baseUrl,now,monotonicNow,delay,maxRetries,seconds});
  let queue=Promise.resolve();
  const origin=new URL(baseUrl).origin;
  async function run(config){

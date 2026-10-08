@@ -1,6 +1,7 @@
 'use strict';
 const {randomUUID,createHash}=require('node:crypto');
 const {MongoClient}=require('mongodb');
+const {performance}=require('node:perf_hooks');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const LIMIT=4,RESOLUTION_LIMIT=8,BUDGET=30000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
@@ -14,43 +15,57 @@ const isDeploymentRequest=config=>{
  ||method==='PUT'&&/^\/d2l\/api\/lp\/[^/]+\/courses\/[1-9]\d*$/.test(path)
  ||method==='POST'&&/^\/d2l\/api\/lp\/[^/]+\/sourceCourses\/[1-9]\d*\/deploy$/.test(path);
 };
-function createConcurrentGate({uri,key,now=Date.now,mongoClient}){
+function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance.now(),mongoClient}){
  const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000});let ready,initialized;let notBefore=0,slotRetryAt=0,ordinarySlotRetryAt=0,slotWait=250,reservations=Promise.resolve();
+ const pendingCompletion=new Map();
  async function collection(){ready ||= client.connect().catch(e=>{ready=null;throw e;});await ready;return client.db().collection('api_rate_limits');}
  async function initialize(c,time){
   initialized ||= c.updateOne({_id:key},{$setOnInsert:{nextAt:0,pauseUntil:0,permits:[],budgetStart:time,budgetUsed:0}},{upsert:true}).catch(e=>{if(e.code!==11000){initialized=null;throw e;}});
   await initialized;
  }
  async function reserve(route,{resolution=false,copy=false,dateDiscovery=false}={}){
-   const deferred=Math.max(notBefore,slotRetryAt,...(resolution||copy||dateDiscovery?[]:[ordinarySlotRetryAt]))-now();if(deferred>0)return {wait:deferred};
+   const pacingDeadline=notBefore,permitDeadline=Math.max(slotRetryAt,...(resolution||copy||dateDiscovery?[]:[ordinarySlotRetryAt]));
+   const deferred=Math.max(pacingDeadline,permitDeadline)-now();if(deferred>0)return {wait:deferred,waitReason:waitReason(pacingDeadline,permitDeadline)};
    const c=await collection(),time=now(),token=randomUUID(),costPath='$costs.'+hash(route)+'.maxCost';
    await initialize(c,time);
    const cost={$max:[1,{$ifNull:[costPath,125]},{$ifNull:['$costs.'+hash(route)+'.fallbackCost',0]}]},fresh={$lte:[{$ifNull:['$budgetStart',0]},time-60000]},used={$cond:[fresh,0,{$ifNull:['$budgetUsed',0]}]};
    const active={$filter:{input:{$ifNull:['$permits',[]]},as:'permit',cond:{$gt:['$$permit.until',time]}}};
    const ordinary={$filter:{input:active,as:'permit',cond:{$and:[{$eq:[{$ifNull:['$$permit.resolution',false]},false]},{$eq:[{$ifNull:['$$permit.copy',false]},false]},{$eq:[{$ifNull:['$$permit.dateDiscovery',false]},false]}]}}};
+   const reservationStarted=monotonicNow();
    const result=await c.findOneAndUpdate({_id:key,nextAt:{$lte:time},$expr:{$and:[{$lte:[{$ifNull:['$pauseUntil',0]},time]},{$lt:[{$size:active},RESOLUTION_LIMIT]},...(resolution||copy||dateDiscovery?[]:[{$lt:[{$size:ordinary},LIMIT]}]),{$lte:[{$add:[used,cost]},BUDGET]}]}},[{$set:{
     permits:{$concatArrays:[active,[{token,until:time+45000,resolution,copy,dateDiscovery}]]},
     nextAt:{$add:[time,{$max:[20,{$multiply:[cost,2]},{$ifNull:['$adaptiveSpacing',0]}]}]},
     budgetStart:{$cond:[fresh,time,{$ifNull:['$budgetStart',time]}]},budgetUsed:{$add:[used,cost]},
     lastReservationCost:cost
    }}],{returnDocument:'after'});
-   if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost};}
-   const row=await c.findOne({_id:key});if(!row)throw Error('API gate missing');
+   const mongoReservationMs=Math.max(0,monotonicNow()-reservationStarted);
+   if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost,mongoReservationMs,deniedReservationReadMs:0};}
+   const deniedReadStarted=monotonicNow();
+   const row=await c.findOne({_id:key});
+   const deniedReservationReadMs=Math.max(0,monotonicNow()-deniedReadStarted);
+   if(!row)throw Error('API gate missing');
    const estimate=Math.max(1,row.costs?.[hash(route)]?.maxCost??125,row.costs?.[hash(route)]?.fallbackCost||0);
    if(estimate>BUDGET)throw Error('Observed API cost exceeds the application budget');
    const current=now(),windowEnd=(row.budgetStart??0)+60000;
-   notBefore=Math.max(notBefore,row.pauseUntil||0,row.nextAt||0,windowEnd>current&&(row.budgetUsed||0)+estimate>BUDGET?windowEnd:0);
+   const rowPacingDeadline=Math.max(row.pauseUntil||0,row.nextAt||0,windowEnd>current&&(row.budgetUsed||0)+estimate>BUDGET?windowEnd:0);
+   notBefore=Math.max(notBefore,rowPacingDeadline);
    const totalFull=(row.permits||[]).filter(p=>p.until>current).length>=RESOLUTION_LIMIT;
    const ordinaryFull=!resolution&&!copy&&!dateDiscovery&&(row.permits||[]).filter(p=>p.until>current&&!p.resolution&&!p.copy&&!p.dateDiscovery).length>=LIMIT;
    if(totalFull)slotRetryAt=current+slotWait;
    if(ordinaryFull)ordinarySlotRetryAt=current+slotWait;
    if(totalFull||ordinaryFull)slotWait=Math.min(1000,slotWait*2);
-   return {wait:Math.max(20,Math.max(notBefore,slotRetryAt)-current)};
+   const requestPermitDeadline=Math.max(slotRetryAt,...(resolution||copy||dateDiscovery?[]:[ordinarySlotRetryAt]));
+   return {wait:Math.max(20,Math.max(notBefore,requestPermitDeadline)-current),waitReason:waitReason(notBefore,requestPermitDeadline),mongoReservationMs,deniedReservationReadMs};
  }
  return {
   reserve(route,options){
    // Serialize short reservation attempts locally; HTTP requests still overlap.
-   const pending=reservations.then(()=>reserve(route,options));reservations=pending.catch(()=>{});return pending;
+   const queuedAt=monotonicNow();
+   const pending=reservations.then(async()=>{
+    const localReservationQueueMs=Math.max(0,monotonicNow()-queuedAt);
+    const result=await reserve(route,options);
+    return {...result,localReservationQueueMs};
+   });reservations=pending.catch(()=>{});return pending;
   },
   async complete(permit,sample){
    const c=await collection(),time=now(),prefix='costs.'+hash(sample.route);
@@ -60,13 +75,40 @@ function createConcurrentGate({uri,key,now=Date.now,mongoClient}){
    if(sample.remaining!=null)update.$set.lastRemainingCredits=sample.remaining;
    if(sample.status===429)update.$inc.rateLimitResponses=1;
    if(sample.pauseMs)update.$max.pauseUntil=time+sample.pauseMs+1000;
-   const r=await c.updateOne({_id:key,'permits.token':permit.token},update);if(r.matchedCount!==1)throw Error('API permit lost');
+   update.$inc[prefix+'.gateTimingRequests']=1;
+   for(const [name,value] of Object.entries(sample.gateTimings||{})){
+    if(!Number.isFinite(value)||value<0)continue;
+    update.$inc[prefix+'.'+name+'TotalMs']=value;
+    update.$inc[prefix+'.'+name+'Samples']=1;
+   }
+   const flush=[...pendingCompletion.entries()];pendingCompletion.clear();
+   for(const [routeHash,value] of flush){
+    const completionPrefix='costs.'+routeHash;
+    update.$inc[completionPrefix+'.completionPersistenceTotalMs']=value.totalMs;
+    update.$inc[completionPrefix+'.completionPersistenceSamples']=value.samples;
+   }
+   const completionStarted=monotonicNow();
+   let r;
+   try{r=await c.updateOne({_id:key,'permits.token':permit.token},update);}
+   catch(error){restorePending(flush);throw error;}
+   const completionPersistenceMs=Math.max(0,monotonicNow()-completionStarted);
+   if(r.matchedCount!==1){restorePending(flush);throw Error('API permit lost');}
+   const routeHash=hash(sample.route),buffered=pendingCompletion.get(routeHash)||{totalMs:0,samples:0};
+   buffered.totalMs+=completionPersistenceMs;buffered.samples++;pendingCompletion.set(routeHash,buffered);
    slotRetryAt=0;ordinarySlotRetryAt=0;slotWait=250;if(sample.pauseMs)notBefore=Math.max(notBefore,time+sample.pauseMs+1000);
   },
   async close(){await client.close();}
  };
+ function restorePending(entries){for(const [routeHash,value] of entries){const current=pendingCompletion.get(routeHash)||{totalMs:0,samples:0};current.totalMs+=value.totalMs;current.samples+=value.samples;pendingCompletion.set(routeHash,current);}}
+ function waitReason(pacingDeadline,permitDeadline){
+  const pacing=pacingDeadline>now(),permit=permitDeadline>now();
+  if(pacing&&permit)return 'mixed';
+  if(pacing)return 'pacingBudget';
+  if(permit)return 'permitContention';
+  return 'mixed';
+ }
 }
-function createConcurrentHttp({http,gate,baseUrl,now=Date.now,delay=ms=>new Promise(r=>setTimeout(r,ms)),maxRetries=5,seconds}){
+function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>performance.now(),delay=ms=>new Promise(r=>setTimeout(r,ms)),maxRetries=5,seconds}){
  const origin=new URL(baseUrl).origin;let active=0,ordinaryActive=0,poisoned=false;const waiting=[];
  async function run(config){
   const url=new URL(config.url);if(url.origin!==origin||!url.pathname.startsWith('/d2l/api/'))throw Error('Rate-limited transport only accepts tenant API URLs');
@@ -74,14 +116,28 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,delay=ms=>new Prom
   for(let attempt=0;;attempt++){
    if(poisoned)throw Error('API gate unavailable; requests stopped');
    const waitingAt=now();let permit;
-   try{while(!(permit=await gate.reserve(route,{resolution:isCodeResolution(config),copy:isCopyRequest(config)||isDeploymentRequest(config),dateDiscovery:isDateDiscovery(config)})).token){await delay(permit.wait);if(poisoned)throw Error('API gate unavailable');}}catch(e){poisoned=true;throw e;}
+   const gateTimings={localReservationQueue:0,mongoReservation:0,deniedReservationRead:0,permitContentionWait:0,pacingBudgetWait:0,mixedWait:0};
+   try{while(!(permit=await gate.reserve(route,{resolution:isCodeResolution(config),copy:isCopyRequest(config)||isDeploymentRequest(config),dateDiscovery:isDateDiscovery(config)})).token){
+    gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
+    gateTimings.mongoReservation+=permit.mongoReservationMs||0;
+    gateTimings.deniedReservationRead+=permit.deniedReservationReadMs||0;
+    const waitedAt=monotonicNow();await delay(permit.wait);const waited=Math.max(0,monotonicNow()-waitedAt);
+    if(permit.waitReason==='permitContention')gateTimings.permitContentionWait+=waited;
+    else if(permit.waitReason==='pacingBudget')gateTimings.pacingBudgetWait+=waited;
+    else gateTimings.mixedWait+=waited;
+    if(poisoned)throw Error('API gate unavailable');
+   }
+   gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
+   gateTimings.mongoReservation+=permit.mongoReservationMs||0;
+   gateTimings.deniedReservationRead+=permit.deniedReservationReadMs||0;
+   }catch(e){poisoned=true;throw e;}
    const startedAt=now();let response,error;
    try{response=await http({...config,timeout:Math.min(config.timeout||15000,30000),maxRedirects:0});}catch(e){error=e;}
    const headers=(response||error?.response)?.headers||{},read=name=>headers.get?.(name)??headers[name]??Object.entries(headers).find(([k])=>k.toLowerCase()===name)?.[1];
    const status=error?.response?.status??response?.status,reset=Math.max(seconds(read('retry-after'),now())||0,seconds(read('x-rate-limit-reset'),now())||0);
    const cost=Number(read('x-request-cost')??NaN),remaining=Number(read('x-rate-limit-remaining')??NaN),known=Number.isFinite(cost)&&cost>=0;
    const pauseMs=status===429||Number.isFinite(remaining)&&remaining<=Math.max(10000,known?cost:125)?Math.max(60000,reset):0;
-   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;throw e;}
+   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,gateTimings,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;throw e;}
    if(!error)return response;
    if(status!==429||attempt>=maxRetries)throw error;
   }
