@@ -106,11 +106,14 @@ const d2lGet = createBrightspaceGet({ http: apiHttp, oauth, baseUrl: BS_URL, ret
 // Setup ltijs (LTI 1.3 Provider)
 // ===============================
 const {installDateUploadLimit}=require('./src/shared/uploadLimit');
+const {installBulkStatusDiagnostics}=require('./src/shared/bulkStatusDiagnostics');
 lti.setup(
   LTI_KEY,
   databaseConfig(MONGODB_URL),
   {
     serverAddon: app => {
+      // This hook precedes ltijs session validation; scope diagnostics to one route.
+      installBulkStatusDiagnostics(app);
       installDateUploadLimit(app);
       installPageShell(app);
     },

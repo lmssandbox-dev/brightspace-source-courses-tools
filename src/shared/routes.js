@@ -5,6 +5,7 @@ const {DEFAULT_ZONE,validateZone,localDateToUtc}=require('../dates/timeZone');
 const {createDateView}=require('../dates/view');
 const {badge,table}=require('../ui/page');
 const {translateReport}=require('../ui/i18n');
+const {markBulkStatusHandler,startBulkStatusPhase,recordBulkStatusPhase,setBulkStatusSize,recordBulkStatusError}=require('./bulkStatusDiagnostics');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>v?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(v)):'—';
 function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,view,kind='dates'}) {
@@ -34,7 +35,12 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
   }
   const handlers={form,historyButton:res=>button(res,'history','',kind==='courseCopy'?'View Copy Jobs':kind==='dates'?'View Date Jobs':'View Deployment Jobs')};
   for(const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies'])handlers[action]=async(req,res)=>{
-    if(!authorize(req,res,action))return;
+    const timing=action==='status'&&kind==='dates'?markBulkStatusHandler(req):null;
+    let diagnosticStage='authorization';
+    const authStarted=timing?startBulkStatusPhase(req,'authorization'):null;
+    const authorized=authorize(req,res,action);
+    if(timing)recordBulkStatusPhase(req,'authorization',authStarted);
+    if(!authorized)return;
     try {
       if(action==='history'){const list=await jobs.list(owner(res),kind);return res.send(`<div class="section-heading"><div><span class="eyebrow">Job history</span><h1>${kind==='courseCopy'?'Course Copy Jobs':kind==='dates'?'Activity Dates Update Jobs':'Deployment Jobs'}</h1><p>Your latest 100 saved jobs. Open one to review results or continue.</p></div></div><section class="panel">${table(['Created · Brasília','Status','Job',''],list.map(j=>[escape(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'short'}).format(new Date(j.createdAt||now()))),badge(kind==='sourceDeployment'&&['activated','submitted'].includes(j.status)?(j.copySummary?.total>0&&j.copySummary.copied===j.copySummary.total?'copiesConcluded':'copiesInProcess'):j.status)+(kind==='sourceDeployment'?`<small>${j.copyMonitorCheckedAt?'Copy logs checked '+escape(new Date(j.copyMonitorCheckedAt).toISOString()):'Copy completion unconfirmed'}</small>`:''),escape(j._id),button(res,'status',j._id,'View job')]),'No jobs yet. Start a workflow from Workspace.')}</section>`);}
       if(action==='preview'){
@@ -48,7 +54,13 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         return res.send(render(res,job));
       }
       const statusOnly=action==='status'&&kind==='dates'&&typeof jobs.getStatus==='function';
-      const job=await (statusOnly?jobs.getStatus(req.body.jobId,owner(res)):jobs.get(req.body.jobId,owner(res)));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
+      diagnosticStage=statusOnly?'getStatus':'get';
+      const initialReadPhase=statusOnly?'get_status':'full_get';
+      const readStarted=timing?startBulkStatusPhase(req,initialReadPhase):null;
+      let job;
+      try {job=await (statusOnly?jobs.getStatus(req.body.jobId,owner(res)):jobs.get(req.body.jobId,owner(res)));if(timing)setBulkStatusSize(req,job);}
+      finally {if(timing)recordBulkStatusPhase(req,initialReadPhase,readStarted);}
+      if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
       if(action==='checkCopies'){if(!['sourceDeployment','courseCopy'].includes(kind)||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
       if(action==='apply') {
         if(kind==='courseCopy'&&req.body.confirmCopy!=='yes')return res.status(400).send('Confirm copying the selected components before continuing.');
@@ -66,9 +78,19 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition',`attachment; filename="${kind==='courseCopy'?'course-copy':kind==='sourceDeployment'?'deploy':'date-manager'}-results.csv"`);return res.send(translateReport(view?view.report(job):report(job),req.body.uiLanguage));}
       // A non-ready status page has no intervening mutation, so render the
       // metadata snapshot already fetched above instead of issuing it again.
-      const renderJob=statusOnly&&job.status!=='ready'?job:await jobs.get(job._id,owner(res));
-      return res.send(render(res,renderJob,Number(req.body.page)||1));
-    } catch(error) {require('./diagnostics').logFailure('job_request_failed',error,{kind,action,jobId:req.body?.jobId});return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
+      let renderJob=job;
+      if(!(statusOnly&&job.status!=='ready')){
+        diagnosticStage='get';
+        const fullReadStarted=timing?startBulkStatusPhase(req,'full_get'):null;
+        try {renderJob=await jobs.get(job._id,owner(res));}
+        finally {if(timing)recordBulkStatusPhase(req,'full_get',fullReadStarted);}
+      }
+      diagnosticStage='render';
+      const renderStarted=timing?startBulkStatusPhase(req,'render'):null;
+      const html=render(res,renderJob,Number(req.body.page)||1);
+      if(timing)recordBulkStatusPhase(req,'render',renderStarted);
+      return res.send(html);
+    } catch(error) {if(timing)recordBulkStatusError(req,diagnosticStage,error);require('./diagnostics').logFailure('job_request_failed',error,timing?{kind,action}:{kind,action,jobId:req.body?.jobId});return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
   };
   return handlers;
 }
