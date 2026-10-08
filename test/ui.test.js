@@ -48,7 +48,7 @@ test('page shell wraps an LTI launch registered after serverAddon',()=>{
 test('entry point installs page shell in serverAddon before launch routes',()=>{
  const fs=require('node:fs'),path=require('node:path');
  const source=fs.readFileSync(path.join(__dirname,'../index.js'),'utf8');
- assert.match(source,/serverAddon: app => \{\s*installDateUploadLimit\(app\);\s*installPageShell\(app\);/);
+ assert.match(source,/serverAddon: app => \{[\s\S]*?installBulkStatusDiagnostics\(app\);\s*installDateUploadLimit\(app\);\s*installPageShell\(app\);/);
  assert.match(source,/installUi\(lti,\{shell:false\}\)/);
 });
 
