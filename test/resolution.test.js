@@ -109,12 +109,20 @@ test('download follows signed HTTPS redirect without forwarding OAuth token',asy
  const rows=[];await reader({DownloadLink:root+'/download'},async r=>rows.push(r));assert.ok(external);assert.equal(rows.length,1);
  await assert.rejects(reader({DownloadLink:'https://other.example/steal'},async()=>{}),{code:'DATASET_DOWNLOAD_URL'});
 });
-test('Mongo cache queries are batched, tenant-scoped and use one snapshot generation',async()=>{
- const {createResolutionStore}=require('../src/resolution/store');const calls=[];
- const collection=name=>({createIndex:async()=>{},findOne:async()=>({generation:'g',fullAt:1}),find:filter=>({toArray:async()=>{calls.push({name,filter});return [];}})});
+test('Mongo cache lookup uses 500-code batches with four concurrent batches and preserves tenant snapshot results',async()=>{
+ const {createResolutionStore}=require('../src/resolution/store');const calls=[];let active=0,peak=0;
+ const collection=name=>({
+  createIndex:async()=>{},findOne:async()=>({generation:'g',fullAt:1}),
+  find:filter=>({toArray:async()=>{
+   calls.push({name,filter});
+   if(name==='org_resolution_live'){peak=Math.max(peak,++active);await new Promise(resolve=>setImmediate(resolve));active--;return [];}
+   return filter.$or[0].Code.$in.map(code=>record(`id-${code}`,code));
+  }})
+ });
  const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'tenant-client',mongoClient:{connect:async()=>{},db:()=>({collection})}});
- await store.lookup(Array.from({length:5000},(_,i)=>'C'+i));assert.equal(calls.length,20);
- for(const c of calls){assert.equal(c.filter.namespace,'tenant-client');if(c.name==='org_resolution_units'){assert.equal(c.filter.generation,'g');assert.equal(c.filter.$or[0].Code.$in.length,500);}}
+ const codes=Array.from({length:5000},(_,i)=>'C'+i),found=await store.lookup(codes);assert.equal(calls.length,20);assert.equal(peak,4);assert.equal(found.size,5000);
+ assert.deepEqual([...found.keys()],codes);assert.deepEqual(found.get('C2500'),[record('id-C2500','C2500')]);
+ for(const c of calls){assert.equal(c.filter.namespace,'tenant-client');if(c.name==='org_resolution_live')assert.equal(c.filter._id.$in.length,500);if(c.name==='org_resolution_units'){assert.equal(c.filter.generation,'g');assert.equal(c.filter.$or[0].Code.$in.length,500);}}
 });
 test('Mongo publish/renew are fenced, caches treat dollar-prefixed codes literally',async()=>{
  const {createResolutionStore}=require('../src/resolution/store');const calls=[];

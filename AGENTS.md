@@ -25,6 +25,10 @@ All bulk workflows validate and save a plan, require explicit confirmation befor
 
 Date Manager supports cancellation while Step 2 resolves course identifiers or discovers/previews activities. Cancellation stops new planning work, drains in-flight read-only requests, retains saved progress, and prevents the job from becoming ready or starting writes.
 
+Date Manager chunk cleanup is an explicit administrative operation only. It must take the namespace worker lease, preserve every retained job reference, protect queued/resumable work, and never run as automatic background garbage collection.
+
+Date Manager discovery uses up to eight independent courses. Assignment, Quiz, Forum, and independent Forum Topic collection reads use the eight-request API allowance under the shared global ceiling of eight; unrelated ordinary requests remain limited to four. Discovery checkpoints batch 500 progress increments while retaining worker fencing, cancellation safety, and a final durable save before readiness. Planning previews reuse collection-returned native activity data; apply retains the pre-write GET and post-write read-back.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.

@@ -38,25 +38,33 @@ test('resumed planning does not repeat resolved rows or duplicate partially prev
  const before=s.calls.filter(c=>c==='preview').length;
  await s.jobs.tick();assert.equal(s.data.get(j._id).tasks.length,6);assert.equal(s.calls.filter(c=>c==='preview').length-before,2);
 });
-test('course resolution saves once before discovery and keeps discovery checkpoint cadence',async()=>{
- const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:51},(_,i)=>`${i+1},`).join('\n'),dates});
+test('course resolution saves once and discovery checkpoints every 500 courses before the final ready save',async()=>{
+ const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:501},(_,i)=>`${i+1},`).join('\n'),dates});
  const saves=[];const originalSave=s.store.save;
- s.store.save=async job=>{saves.push(structuredClone(job));await originalSave(job);};
+ let readySaveStarted,releaseReadySave;
+ const readySave=new Promise(resolve=>{readySaveStarted=resolve;}),readyGate=new Promise(resolve=>{releaseReadySave=resolve;});
+ s.store.save=async job=>{if(job.status==='ready'){readySaveStarted();await readyGate;}saves.push(structuredClone(job));await originalSave(job);};
  let savesAtDiscoveryStart;
- s.discovery.discover=async()=>{savesAtDiscoveryStart??=saves.length;return {complete:true,activities:[],nativeActivities:[]};};
- await s.jobs.tick();
+ s.discovery.discover=async orgUnitId=>{savesAtDiscoveryStart??=saves.length;const key=`quiz:${orgUnitId}:1`,activities=[{type:'quiz',id:'1',key,name:'Quiz'}];return {complete:true,activities,nativeActivities:[{key,data:{QuizId:'1'}}]};};
+ const running=s.jobs.tick();
+ await readySave;
+ assert.notEqual((await s.jobs.get(j._id,'a')).status,'ready');
+ releaseReadySave();
+ await running;
  assert.equal(savesAtDiscoveryStart,1);
  assert.equal(saves[0].progress.phase,'Resolving courses');
- assert.equal(saves[0].progress.processed,51);
- assert.equal(saves[0].courses.length,51);
+ assert.equal(saves[0].progress.processed,501);
+ assert.equal(saves[0].courses.length,501);
  const discoveryCheckpoints=saves.filter(snapshot=>snapshot.progress.phase==='Discovering activities');
- assert.equal(discoveryCheckpoints.length,2);
+ assert.ok(discoveryCheckpoints.length>=2&&discoveryCheckpoints.length<=3,`expected batched discovery checkpoints, got ${discoveryCheckpoints.length}`);
+ assert.equal(discoveryCheckpoints.at(-1).status,'ready');
+ assert.equal(discoveryCheckpoints.at(-1).tasks.length,501);
 });
 test('resumed execution skips saved successes and flags in-flight work instead of repeating it',async()=>{
- const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(j._id,'a');
+ const s=setup({writer:{updateActivityDates:async request=>{s.calls.push(request.reconcileOnly?'reconcile':request.dryRun?'preview':'write');return request.reconcileOnly?{status:'uncertain',error:{category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:'Manual review required.'}}:{status:request.dryRun?'ready':'updated',verifiedDates:{},writeAttempted:!request.dryRun};}}}),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(j._id,'a');
  const saved=s.data.get(j._id);saved.tasks[0].result={status:'updated'};saved.tasks[1].result={status:'running'};
  await s.jobs.tick();const result=s.data.get(j._id);
- assert.equal(s.calls.filter(c=>c==='write').length,1);assert.equal(result.tasks[0].result.status,'updated');assert.equal(result.tasks[1].result.error.category,'UNCERTAIN_OUTCOME');assert.equal(result.status,'completedWithErrors');
+ assert.equal(s.calls.filter(c=>c==='write').length,1);assert.equal(s.calls.filter(c=>c==='reconcile').length,1);assert.equal(result.tasks[0].result.status,'updated');assert.equal(result.tasks[1].result.status,'uncertain');assert.equal(result.tasks[1].result.error.category,'UNCERTAIN_OUTCOME');assert.equal(result.status,'completedWithErrors');
 });
 test('date results paginate large task lists without rendering every activity',()=>{
  const job={_id:'j',status:'completedWithErrors',rows:[],courses:[],dates,tasks:Array.from({length:1000},(_,i)=>({name:`Activity-${i}`,activity:{type:'quiz',id:String(i)},result:{status:'updated'}}))};

@@ -99,5 +99,17 @@ test('stale bulk preview dates prevent PUT; matching requested dates still conve
 });
 test('lost bulk worker lease blocks write after reading native data',async()=>{
  const s=setup('quiz');const result=await s.writer.updateActivityDates({...s.request,beforeWrite:async()=>{throw Error('lease lost');}});
- assert.equal(result.status,'failed');assert.equal(result.writeAttempted,false);assert.equal(s.calls.filter(c=>c[0]==='PUT').length,0);
+ assert.equal(result.status,'failed');assert.equal(result.error.category,'WORKER_LEASE_INTERRUPTION');assert.equal(result.writeAttempted,false);assert.equal(s.calls.filter(c=>c[0]==='PUT').length,0);
+});
+test('uncertain activity reconciliation is read-only and reports only date matches as verified',async()=>{
+ const s=setup('quiz');const preview=await s.writer.updateActivityDates({...s.request,dryRun:true,nativeActivity:structuredClone(s.current)});Object.assign(s.current,{StartDate:dates.start,DueDate:dates.due,EndDate:dates.end});
+ const result=await s.writer.updateActivityDates({...s.request,reconcileOnly:true,expectedSettingsFingerprint:preview.settingsFingerprint});
+ assert.equal(result.status,'unchanged');assert.equal(result.reconciled,true);assert.deepEqual(s.calls.map(c=>c[0]),['GET']);assert.equal(s.calls.some(c=>c[0]==='PUT'),false);
+ s.current.Name='changed after preview';const changed=await s.writer.updateActivityDates({...s.request,reconcileOnly:true,expectedSettingsFingerprint:preview.settingsFingerprint});assert.equal(changed.status,'uncertain');assert.equal(changed.error.category,'UNCERTAIN_OUTCOME');
+ Object.assign(s.current,{StartDate:null,DueDate:null,EndDate:null});
+ const pending=await s.writer.updateActivityDates({...s.request,reconcileOnly:true});assert.equal(pending.status,'uncertain');assert.equal(pending.error.category,'UNCERTAIN_OUTCOME');assert.equal(s.calls.some(c=>c[0]==='PUT'),false);
+});
+test('Mongo persistence errors are not classified as Brightspace API failures',async()=>{
+ const s=setup('quiz');s.request.beforeWrite=async()=>{throw Object.assign(Error('database failed'),{name:'MongoNetworkError'});};
+ const result=await s.writer.updateActivityDates(s.request);assert.equal(result.error.category,'PERSISTENCE_FAILURE');assert.equal(result.writeAttempted,false);assert.equal(s.calls.some(c=>c[0]==='PUT'),false);
 });

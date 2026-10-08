@@ -72,6 +72,13 @@ test('successful date jobs show confirmation instead of review details; partial 
  const failed=view.render({},job,helpers);assert.doesNotMatch(failed,/success-confirmation/);assert.match(failed,/Verification failed/);
 });
 
+test('date progress uses persisted totals, separates uncertain work, and does not read task chunks',()=>{
+ const job={_id:'j',status:'running',dates:{},courseTotal:8,totals:{total:10,updated:5,unchanged:1,failed:1,skipped:1,uncertain:1,pending:1},progress:{phase:'Applying dates',processed:9,total:10}};
+ const html=createDateView({writeEnabled:()=>true}).render({},job,helpers);
+ assert.match(html,/Apply progress/);assert.match(html,/80%/);assert.match(html,/5 <span>Updated<\/span>/);assert.match(html,/1 <span>Uncertain<\/span>/);assert.match(html,/1 <span>Pending<\/span>/);assert.match(html,/Applying dates/);assert.doesNotMatch(html,/>100%<|success-confirmation/);
+ job.status='completedWithErrors';const terminal=page(createDateView({writeEnabled:()=>true}).render({},job,helpers),{ltik:'session'});assert.match(terminal,/Completed with Issues/);assert.doesNotMatch(terminal,/Activity Dates Updated|success-confirmation/);
+});
+
 test('CSV checking screens stay compact while retaining refresh, report and cancellation',()=>{
  for(const status of ['validating','planning']){
  const job={_id:'j',status,dates:{},rows:[],courses:[],tasks:[]};

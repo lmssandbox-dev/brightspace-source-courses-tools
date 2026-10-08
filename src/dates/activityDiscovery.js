@@ -2,9 +2,10 @@
 const { id } = require('../shared/id');
 const { hasDates } = require('./activities/normalizers');
 const { apiWarning } = require('../shared/client');
+const { pool } = require('../shared/pool');
 
 function createActivityDiscovery({ assignments, quizzes, discussions }) {
-  return { async discover(orgUnitId, { includeRaw = false, includeUndated = true, includeNative = false } = {}) {
+  return { async discover(orgUnitId, { includeRaw = false, includeUndated = true, includeNative = false, check = async () => {} } = {}) {
     orgUnitId = id(orgUnitId);
     const raw = includeRaw ? [] : undefined;
     const warnings = [], sources = {};
@@ -19,19 +20,29 @@ function createActivityDiscovery({ assignments, quizzes, discussions }) {
       } catch (error) {
         // Authentication, throttling, transport outages and invalid org-unit
         // collection requests must not become a misleading partial success.
-        if (error.fatal || (collection && [400, 404].includes(error.status))) throw error;
+        if (error.code === 'JOB_CANCELLED' || error.fatal || (collection && [400, 404].includes(error.status))) throw error;
         warnings.push(apiWarning(source, error));
         sources[source] = { status: 'failed' };
         return null;
       }
     }
-    const a = await attempt('assignments', () => assignments.getAssignments(orgUnitId, raw, includeNative));
-    const q = await attempt('quizzes', () => quizzes.getQuizzes(orgUnitId, raw, includeNative));
-    const f = await attempt('discussionForums', () => discussions.getDiscussionForums(orgUnitId, raw));
+    const initial = await Promise.allSettled([
+      attempt('assignments', () => assignments.getAssignments(orgUnitId, raw, includeNative)),
+      attempt('quizzes', () => quizzes.getQuizzes(orgUnitId, raw, includeNative)),
+      attempt('discussionForums', () => discussions.getDiscussionForums(orgUnitId, raw))
+    ]);
+    const initialFailure = initial.find(result => result.status === 'rejected');
+    if (initialFailure) throw initialFailure.reason;
+    const [a, q, f] = initial.map(result => result.value);
     const native = [...(a?.activities ?? []), ...(q?.activities ?? [])];
     const nativeActivities = [...(a?.nativeActivities ?? []), ...(q?.nativeActivities ?? [])];
-    for (const forumId of f?.forumIds ?? []) {
-      const topics = await attempt(`discussionTopics:${forumId}`, () => discussions.getDiscussionTopics(orgUnitId, forumId, raw, includeNative), false);
+    const topicResults = Array(f?.forumIds?.length ?? 0);
+    await pool(f?.forumIds ?? [], 8, async (forumId, index) => {
+      await check();
+      topicResults[index] = await attempt(`discussionTopics:${forumId}`,
+        () => discussions.getDiscussionTopics(orgUnitId, forumId, raw, includeNative), false);
+    });
+    for (const topics of topicResults) {
       native.push(...(topics?.activities ?? []));
       nativeActivities.push(...(topics?.nativeActivities ?? []));
     }

@@ -2,6 +2,7 @@
 const {MongoClient}=require('mongodb');
 const {createHash,randomUUID}=require('node:crypto');
 const {databaseConfig}=require('../shared/database');
+const {pool}=require('../shared/pool');
 const digest=s=>createHash('sha256').update(s).digest('hex');
 function namespaceFor(baseUrl,clientId){return digest(new URL(baseUrl).origin+'|'+clientId);}
 function mergeMatches(code,base,overlay,byId,fullAt){
@@ -17,12 +18,15 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
  const metaId=namespace,liveId=code=>namespace+':'+digest(code);
  return {
   async lookup(codes){const d=await db(),meta=await d.collection('org_resolution_state').findOne({_id:metaId}),found=new Map();
-   for(let i=0;i<codes.length;i+=500){const part=codes.slice(i,i+500),overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
+   const parts=Array.from({length:Math.ceil(codes.length/500)},(_,i)=>codes.slice(i*500,(i+1)*500)),results=new Array(parts.length);
+   await pool(parts,4,async(part,index)=>{const overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
     const ids=overlays.flatMap(o=>o.matches.map(r=>r.Identifier));const records=meta?.generation?await d.collection('org_resolution_units').find({namespace,generation:meta.generation,$or:[{Code:{$in:part}},{Identifier:{$in:ids}}]}).toArray():[];
     const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)).map(r=>[r.code,r]));
     for(const r of records){if(!byCode.has(r.Code))byCode.set(r.Code,[]);byCode.get(r.Code).push(r);}
-    for(const code of part){const matches=mergeMatches(code,byCode.get(code)||[],live.get(code),byId,meta?.fullAt||0);if(matches.length)found.set(code,matches);}
-   }return found;
+    const batch=new Map();for(const code of part){const matches=mergeMatches(code,byCode.get(code)||[],live.get(code),byId,meta?.fullAt||0);if(matches.length)batch.set(code,matches);}results[index]=batch;
+   });
+   for(const batch of results)for(const [code,matches] of batch)found.set(code,matches);
+   return found;
   },
   async remember(code,matches,verifiedAt){if(!matches.length)return;const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]}}}],{upsert:true});},
   async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},

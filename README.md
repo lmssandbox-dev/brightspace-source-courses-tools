@@ -66,9 +66,29 @@ The frontend was checked locally with synthetic jobs and no Brightspace writes. 
 
 ### Large date jobs
 
-Date-job records use immutable chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Planning checkpoints every 50 work items; execution saves before and after each activity. A restarted worker resumes resolution/discovery and skips saved results. An in-flight write is flagged as uncertain, never automatically repeated. Systemic API failures still stop writes. Replication supports 10,000 mappings / 5 MB; interrupted submissions remain available for inspection and are not automatically resubmitted.
+Date-job records use immutable, content-addressed chunks in `bulk_date_chunks`, publishing checkpoint references only after chunks are stored. Discovery batches progress checkpoints; execution saves write intent and each confirmed outcome. A restarted worker preserves confirmed outcomes, reconciles in-flight activities with read-only Brightspace reads, and resumes eligible pending activities. Uncertain PUTs are never repeated. The Step 3 progress panel reports outcome counts and state and refreshes every 10 seconds. Systemic API failures still stop writes.
 
-Date-job screens show compact summaries; the CSV report includes all records. Up to four courses are processed concurrently; activities within each course remain sequential under the shared API rate gate. The complete job is loaded into worker memory, so size the server for the activity ceiling; chunking removes the single MongoDB document limit but is not a streaming worker. Historical immutable chunks are retained and need a retention policy before sustained high-volume production use. Large jobs have been tested locally with synthetic data, not at 10,000-course scale against a live Brightspace tenant.
+Date-job screens show compact summaries; the CSV report includes all records. Up to four courses are processed concurrently; activities within each course remain sequential under the shared API rate gate. The complete job is loaded into worker memory, so size the server for the activity ceiling; chunking removes the single MongoDB document limit but is not a streaming worker. Immutable historical chunks can remain after checkpoints supersede them. Use the manual, namespace-scoped cleanup commands below; they acquire the workflow lease, refuse active or pending work, and never touch LTI/authentication or organizational directory collections.
+
+From the service's **Render Shell**, preview unreferenced Date Manager chunks (the default is dry-run):
+
+```sh
+node scripts/cleanup-date-jobs.js --dry-run
+```
+
+Delete those unreferenced chunks after reviewing the preview:
+
+```sh
+node scripts/cleanup-date-jobs.js --apply
+```
+
+To also delete terminal historical Date Manager jobs and their chunks, plus other unreferenced chunks, explicitly request all Date Manager jobs:
+
+```sh
+node scripts/cleanup-date-jobs.js --apply --all-date-jobs
+```
+
+The script aborts if a worker is planning or running any bulk workflow in the deployment namespace. It holds the shared lease so queued work cannot start during deletion, and retains queued, validating, ready, and other nonterminal jobs with all their chunks, including unpublished checkpoint chunks. Terminal Date Manager history is eligible only with `--all-date-jobs`. The report estimates logical JSON bytes affected; it does not predict physical Atlas storage reclaimed. Cleanup is manual and idempotent.
 
 ## Application identity
 

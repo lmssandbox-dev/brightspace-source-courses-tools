@@ -1,4 +1,5 @@
 'use strict';
+const {createHash}=require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { id } = require('../shared/id');
 const { normalizeAssignment, normalizeInstant, normalizeQuiz, normalizeDiscussionTopic } = require('./activities/normalizers');
@@ -139,13 +140,26 @@ function settings(payload, requested = payload) {
   }
   return copy;
 }
+function operationFailure(error,stage,writeAttempted){
+ const name=String(error?.name||'');const code=error?.code;
+ const status=Number.isInteger(error?.status)?error.status:Number.isInteger(error?.response?.status)?error.response.status:undefined;
+ const lease= /lease lost|lease.*interrupt/i.test(String(error?.message||''))||code==='WORKER_LEASE_LOST';
+ const persistence=name.startsWith('Mongo')||['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(name)||['ECONNRESET','ETIMEDOUT','ENOTFOUND','ECONNREFUSED'].includes(code)||error?.persistenceFailure===true;
+ let category,message;
+ if(lease){category='WORKER_LEASE_INTERRUPTION';message='Worker ownership could not be confirmed; no further updates were started.';}
+ else if(persistence){category='PERSISTENCE_FAILURE';message='Job progress could not be durably saved; processing paused.';}
+ else if(writeAttempted){category='UNCERTAIN_OUTCOME';message='The write outcome could not be verified. Inspect current dates before retrying.';}
+ else if(status!=null){category='HTTP_API_FAILURE';message='Brightspace rejected the activity operation; check the recorded HTTP status.';}
+ else {category='API_TRANSPORT_FAILURE';message='Brightspace could not be reached; check the API connection and Service User permissions.';}
+ return {category,stage,message,...(status==null?{}:{httpStatus:status})};
+}
 function createActivityWriter({api,put,type}) {
   if(!['assignment','quiz','discussionTopic'].includes(type))throw new Error('Unsupported writer type');
   const topic=type==='discussionTopic', assignment=type==='assignment';
   const normalize=assignment?normalizeAssignment:topic?normalizeDiscussionTopic:normalizeQuiz;
   const compare=assignment?preservedSettings:settings;
   const build=assignment?buildAssignmentPayload:topic?buildDiscussionTopicPayload:buildQuizPayload;
-  return { async updateActivityDates({orgUnitId,activity,dates,expectedDates,beforeWrite,dryRun=false,nativeActivity}) {
+  return { async updateActivityDates({orgUnitId,activity,dates,expectedDates,expectedSettingsFingerprint,beforeWrite,dryRun=false,nativeActivity,reconcileOnly=false}) {
     const result={courseOrgUnitId:null,activityKey:null,type,name:null,status:'failed',requestedDates:null,verifiedDates:null,writeAttempted:false,error:null};
     let stage='validation';
     try {
@@ -161,9 +175,18 @@ function createActivityWriter({api,put,type}) {
       stage='read';const before=dryRun&&nativeActivity?nativeActivity:await api.read(path);check(before);
       const normalized=normalize(before,orgUnitId);result.name=normalized.name;result.verifiedDates=normalized.dates;
       const alreadyMatches=sameDates(normalized.dates,result.requestedDates);
+      if(reconcileOnly){
+        const currentPayload=build(before,result.requestedDates,api.supportsLeVersion);
+        const fingerprint=createHash('sha256').update(JSON.stringify(compare(currentPayload))).digest('hex');
+        const settingsMatch=Boolean(expectedSettingsFingerprint)&&fingerprint===expectedSettingsFingerprint;
+        const verified=alreadyMatches&&settingsMatch;
+        const reason=!alreadyMatches?'Current dates do not confirm the requested update; no write was repeated.':!expectedSettingsFingerprint?'Requested dates match, but the saved preview has no settings fingerprint. Manual review is required.':'Requested dates match, but preserved settings differ from the saved preview. Manual review is required.';
+        return {...result,status:verified?'unchanged':'uncertain',reconciled:verified,writeAttempted:false,...(verified?{}:{error:{category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:reason}})};
+      }
       if(alreadyMatches&&!(dryRun&&nativeActivity))return {...result,status:'unchanged'};
       if(expectedDates && !sameDates(normalized.dates,expectedDates))throw fail('STALE_PREVIEW','Dates changed since preview. Create a new preview before updating this activity.');
       const payload=build(before,result.requestedDates,api.supportsLeVersion);
+      if(dryRun)result.settingsFingerprint=createHash('sha256').update(JSON.stringify(compare(payload))).digest('hex');
       if(alreadyMatches)return {...result,status:'unchanged'};
       if(dryRun)return {...result,status:'ready'};
       if(beforeWrite)await beforeWrite();
@@ -180,12 +203,12 @@ function createActivityWriter({api,put,type}) {
       return {...result,status:'updated',...(writeError?{reconciled:true}:{})};
     }catch(error){
       const known=['STALE_PREVIEW','INVALID_DATE','INVALID_DATES','INVALID_IDENTITY','INCOMPLETE_NATIVE_DATA','UNKNOWN_AVAILABILITY','SETTINGS_CHANGED','VERIFICATION_MISMATCH'].includes(error.code);
-      result.error={category:known?error.code:stage==='validation'?'INVALID_INPUT':'API_FAILURE',stage,
-        message:known?error.message:'Activity operation failed; check API configuration and Service User permissions.',
+      result.error=known?{category:error.code,stage,message:error.message}:operationFailure(error,stage,result.writeAttempted);
+      Object.assign(result.error,{
         ...(known&&error.fields?{fields:error.fields}:{}),...(Number.isInteger(error.status)?{httpStatus:error.status}:{}),
-        ...(error.status === 400 && Array.isArray(error.validation) ? { validation: error.validation } : {})};
+        ...(error.status === 400 && Array.isArray(error.validation) ? { validation: error.validation } : {})});
       return result;
     }
   }};
 }
-module.exports={createActivityWriter,buildAssignmentPayload,buildQuizPayload,buildDiscussionTopicPayload,validateDates};
+module.exports={createActivityWriter,buildAssignmentPayload,buildQuizPayload,buildDiscussionTopicPayload,validateDates,operationFailure};

@@ -391,5 +391,13 @@
   "An org unit sync is already pending or running.": "An org unit sync is already pending or running.",
   "Please wait a minute before requesting another sync.": "Please wait a minute before requesting another sync.",
   "Relaunch through Brightspace to sync org units.": "Relaunch through Brightspace to sync org units.",
-  "Could not request the sync. Please try again.": "Could not request the sync. Please try again."
+  "Could not request the sync. Please try again.": "Could not request the sync. Please try again.",
+  "Apply progress": "Apply progress",
+  "Current state:": "Current state:",
+  "Applying dates": "Applying dates",
+  "Completed": "Completed",
+  "Interrupted": "Interrupted",
+  "Total activities": "Total activities",
+  "Failed": "Failed",
+  "Uncertain": "Uncertain"
 }

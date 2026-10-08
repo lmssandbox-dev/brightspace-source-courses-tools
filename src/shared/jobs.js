@@ -5,7 +5,7 @@ const { validateDates } = require('../dates/activityWriters');
 const {validateZone,DEFAULT_ZONE}=require('../dates/timeZone');
 const TYPES=['assignment','quiz','discussionTopic'];
 const MAX_ACTIVITIES=250000;
-const CHECKPOINT_SIZE=50;
+const DISCOVERY_CHECKPOINT_SIZE=500;
 const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
@@ -18,8 +18,11 @@ function interruptJob(job) {
   }
   if(job.kind==='courseCopy'){job.message='Processing interrupted. Saved copy tokens are retained. Check submitted copies; unconfirmed submissions are never automatically repeated.';return job;}
   for(const task of job.tasks) {
-    if(task.result?.status==='running')task.result={status:'failed',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Read its current dates before retrying.'}};
-    else if(!task.result)task.result={status:'skipped',writeAttempted:false,error:{message:'Not executed before interruption.'}};
+    if(task.result?.status==='running')task.result=job.kind==='dates'
+      ?{status:'uncertain',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Reconcile its current dates before any further action.'}}
+      :{status:'failed',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Read its current dates before retrying.'}};
+    else if(!task.result&&job.kind!=='dates')task.result={status:'skipped',writeAttempted:false,error:{message:'Not executed before interruption.'}};
+    // For Date Manager, interruption alone does not prove untouched tasks were skipped.
   }
   if(job.kind==='sourceDeployment'){job.message='Deployment processing was interrupted. Check Brightspace before any new submission; saved acceptance IDs remain available.';for(const task of job.tasks)if(task.result?.error?.category==='UNCERTAIN_OUTCOME'){task.result.status='uncertain';task.result.error.message='Deployment outcome is unknown. Check Brightspace before retrying.';}}
   job.totals=counts(job.tasks);return job;
@@ -28,6 +31,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   let busy=false;
   const worker=randomUUID();
   const cancelledJobs=new Set(),activePlans=new Map();
+  const unsafeWorkerJobs=new Set();
   const countCache=new WeakMap();
   const checkpoint=require('./checkpointQueue').createCheckpointQueue(saveCheckpoint);
   function save(job,dirty) {
@@ -38,13 +42,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
     job[DIRTY]=dirty;const started=now();
-    try {await store.save(job,worker);} finally {delete job[DIRTY];}
+    try {await store.save(job,worker);} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
     let checkedAt=-Infinity,cancelCheck;
     const checkCancelled=async(force=false)=>{
       if(cancelledJobs.has(job._id)){job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
-      if(force||now()-checkedAt>=100){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{
+      if(force||now()-checkedAt>=1000){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{
         if(await store.isCancelled?.(job._id,job.owner)){cancelledJobs.add(job._id);job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
       });}
       await cancelCheck;
@@ -54,7 +58,6 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     await checkCancelled(true);
     const codeSession=await courses.prepare?.(job.rows.filter(r=>r.status==='pending'),checkCancelled);
     await checkCancelled(true);
-    let checkpoint=0;
     const previewed=new Set(job.tasks.map(t=>`${t.orgUnitId}:${t.activity.type}:${t.activity.id}:${t.activity.parentId||''}`));
     let resolvedRows=job.rows.filter(r=>r.status!=='pending').length;
     await pool(job.rows.filter(r=>r.status==='pending'),8,async row=>{
@@ -66,16 +69,17 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         resolved.set(course.orgUnitId,row.row);row.status='valid';job.courses.push({...course,row:row.row,status:'pending'});}
       } catch(e) {if(e.code==='JOB_CANCELLED')throw e;row.status='invalid';row.message=e.code==='ID_CODE_MISMATCH'?'ID and code identify different org units.':e.status ? `Course unavailable or inaccessible (HTTP ${e.status}).` : 'Course could not be resolved uniquely as an accessible Course Offering or Source Course. Check its identifier and LP API configuration.';}
       job.progress={phase:'Resolving courses',processed:++resolvedRows,total:job.rows.length};
-      checkpoint++;
     },async()=>{await checkCancelled();return true;});
     await checkCancelled(true);
     job.courses.sort((a,b)=>a.row-b.row);
+    job.courseTotal=job.courses.length;
     await save(job);
     let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
-    await pool(job.courses.filter(c=>c.status==='pending'),4,async (course,index,stopped)=>{
+    let discoveryCheckpoint=0;
+    await pool(job.courses.filter(c=>c.status==='pending'),8,async (course,index,stopped)=>{
       let checkpointFailure;
       try {
-        const found=await discovery.discover(course.orgUnitId,{includeUndated:true,includeNative:true});
+        const found=await discovery.discover(course.orgUnitId,{includeUndated:true,includeNative:true,check:checkCancelled});
         course.counts=Object.fromEntries(TYPES.map(t=>[t,(found.activities||[]).filter(a=>a.type===t).length]));
         await checkCancelled();
         if(!found.complete)throw new Error('Incomplete discovery');
@@ -96,12 +100,12 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           const preview=await writers[a.type].updateActivityDates(request);
           job.tasks.push({orgUnitId:course.orgUnitId,activity,name:a.name,preview});previewed.add(taskKey);
           if(!['ready','unchanged'].includes(preview.status))course.previewInvalid=true;
-          if(++checkpoint%CHECKPOINT_SIZE===0)try{await save(job);}catch(error){checkpointFailure=error;throw error;}
+          if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)try{await save(job);}catch(error){checkpointFailure=error;throw error;}
         }
         course.status=course.previewInvalid?'invalid':'valid';
       } catch(error) {if(checkpointFailure)throw checkpointFailure;if(error.code==='JOB_CANCELLED')throw error;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
       job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:job.tasks.length};
-      if(++checkpoint%CHECKPOINT_SIZE===0)await save(job);
+      if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)await save(job);
     },async()=>{await checkCancelled();return true;});
     await checkCancelled(true);
     job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
@@ -115,31 +119,52 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function execute(job) {
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
     if(job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
-    let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running').length;
+    let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running'&&t.result.status!=='pending').length;
     const groups=new Map();
     job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});
     await pool([...groups.values()],4,async (group,index,stopped)=>{
      for(const {task,taskIndex} of group){
-      if(stopped())return;
-      if(task.result?.status==='running'){task.result={status:'failed',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Interrupted during this activity. Inspect its dates before retrying; this write was not repeated.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
+      if(stopped()||unsafeWorkerJobs.has(job._id))return;
+      if(task.result?.status==='running'||(task.result?.status==='uncertain'&&task.result.error?.category==='UNCERTAIN_OUTCOME')){
+        task.result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',stage:'interruption',message:'The activity was in flight when processing stopped. Brightspace is checked read-only; no PUT is repeated.'}};
+        await save(job,{tasks:[taskIndex]});
+        try {
+          const reconciled=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,dates:job.dates,expectedSettingsFingerprint:task.preview?.settingsFingerprint,reconcileOnly:true,dryRun:false});
+          if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(reconciled.error?.category))throw Object.assign(Error('Worker or persistence state could not be confirmed.'),{persistenceFailure:reconciled.error.category==='PERSISTENCE_FAILURE',workerLease:reconciled.error.category==='WORKER_LEASE_INTERRUPTION'});
+          task.result=reconciled.status==='unchanged'?{...reconciled,status:task.preview?.status==='ready'?'updated':'unchanged',writeAttempted:true,error:null}:{...task.result,...(reconciled.error?{error:reconciled.error}:{})};
+          if(['HTTP_API_FAILURE','API_TRANSPORT_FAILURE'].includes(reconciled.error?.category)&&(reconciled.error.httpStatus==null||[401,403,429].includes(reconciled.error.httpStatus)||reconciled.error.httpStatus>=500))stop=true;
+        } catch(error) {
+          const category=error?.name?.startsWith('Mongo')||error?.persistenceFailure?'PERSISTENCE_FAILURE':error?.workerLease||/lease/i.test(String(error?.message||''))?'WORKER_LEASE_INTERRUPTION':'API_TRANSPORT_FAILURE';
+          if(category!=='API_TRANSPORT_FAILURE')throw error;
+          task.result.error={category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:'Read-only reconciliation could not establish the result. Manual review is required; no write was repeated.'};
+        }
+        processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.systemicFailure=stop;await save(job,{tasks:[taskIndex]});continue;
+      }
       if(task.result)continue;
-      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;continue;}
-      await store.renew(worker); // Storage/lease failure stops scheduling before any further write.
+      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
+      try {await store.renew(worker);} catch(error) {unsafeWorkerJobs.add(job._id);throw error;} // Lease failure stops every worker before a later write.
+      if(unsafeWorkerJobs.has(job._id))return;
       task.result={status:'running',writeAttempted:false};await save(job,{tasks:[taskIndex]});
-      if(stop||stopped()){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
+      if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await save(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
-          dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:()=>store.renew(worker),dryRun:false});
-      } catch {task.result={status:'failed',verifiedDates:null,writeAttempted:true,error:{category:'UNEXPECTED_FAILURE',message:'Outcome is uncertain; inspect the activity before retrying.'}};stop=true;}
+          dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});},dryRun:false});
+      } catch(error) {
+        const category=error?.name?.startsWith('Mongo')||error?.persistenceFailure?'PERSISTENCE_FAILURE':/lease/i.test(String(error?.message||''))?'WORKER_LEASE_INTERRUPTION':'UNCERTAIN_OUTCOME';
+        if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(category)){unsafeWorkerJobs.add(job._id);throw error;}
+        task.result={status:'uncertain',verifiedDates:null,writeAttempted:true,error:{category,stage:'execution',message:'Outcome is uncertain; inspect the activity before retrying.'}};stop=true;
+      }
       const error=task.result.error;
-      if(error?.category==='API_FAILURE' && (error.httpStatus==null || [401,403,429].includes(error.httpStatus) || error.httpStatus>=500))stop=true;
+      if(['HTTP_API_FAILURE','API_FAILURE','API_TRANSPORT_FAILURE'].includes(error?.category) && (error.httpStatus==null || [401,403,429].includes(error.httpStatus) || error.httpStatus>=500))stop=true;
+      if(error?.category==='UNCERTAIN_OUTCOME'&&(!task.result.verifiedDates||[401,403,429].includes(error.httpStatus)||error.httpStatus>=500))stop=true;
+      if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(error?.category)){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Date Manager worker state could not be safely persisted.'),{persistenceFailure:error.category==='PERSISTENCE_FAILURE',workerLease:error.category==='WORKER_LEASE_INTERRUPTION'});}
       job.systemicFailure=stop;
       job.progress={phase:'Applying dates',processed:++processed,total:job.tasks.length};
       await save(job,{tasks:[taskIndex]});
      }
-    });
+    },async()=>!unsafeWorkerJobs.has(job._id));
     job.progress={phase:'Applying dates',processed,total:job.tasks.length};
-    job.status=job.tasks.some(t=>['failed','skipped'].includes(t.result?.status))?'completedWithErrors':'completed';
+    job.status=job.tasks.some(t=>['failed','skipped','uncertain','pending','running'].includes(t.result?.status))?'completedWithErrors':'completed';
   }
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
@@ -187,9 +212,10 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       } catch(error) {
         if(error.code==='JOB_CANCELLED')return;
         require('./diagnostics').logFailure('job_worker_failed',error,{kind:job?.kind,jobId:job?._id});
-        if(job) {if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused; saved progress will resume. In-flight writes will be flagged for review.';}else interruptJob(job);
-          try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(held)await store.release(worker).catch(()=>{});busy=false;}
+        if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
+          if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
+          if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
+      } finally {clearInterval(heartbeat);if(job)unsafeWorkerJobs.delete(job._id);if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }

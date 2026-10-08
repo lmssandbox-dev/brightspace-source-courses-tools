@@ -71,6 +71,57 @@ test('native collection records are available only to planning callers and align
   assert.equal(planned.nativeActivities.find(item => item.key === topic.key).data.ForumId, '32');
 });
 
+test('independent collection reads and topic reads across forums run concurrently', async () => {
+  const initialStarted = [], topicStarted = [];
+  let releaseInitial, releaseTopics;
+  const initialBarrier = new Promise(resolve => { releaseInitial = resolve; });
+  const topicsBarrier = new Promise(resolve => { releaseTopics = resolve; });
+  let initialEntered, topicsEntered;
+  const initialReady = new Promise(resolve => { initialEntered = resolve; });
+  const topicsReady = new Promise(resolve => { topicsEntered = resolve; });
+  const empty = () => ({ activities: [], warnings: [] });
+  const discovery = createActivityDiscovery({
+    assignments: { async getAssignments() { initialStarted.push('assignments'); if (initialStarted.length === 3) initialEntered(); await initialBarrier; return empty(); } },
+    quizzes: { async getQuizzes() { initialStarted.push('quizzes'); if (initialStarted.length === 3) initialEntered(); await initialBarrier; return empty(); } },
+    discussions: {
+      async getDiscussionForums() { initialStarted.push('forums'); if (initialStarted.length === 3) initialEntered(); await initialBarrier; return { forumIds: ['31','32','33'], warnings: [] }; },
+      async getDiscussionTopics(_org, forumId) { topicStarted.push(forumId); if (topicStarted.length === 3) topicsEntered(); await topicsBarrier; return empty(); }
+    }
+  });
+  const pending = discovery.discover('9524');
+  await initialReady;
+  assert.deepEqual([...initialStarted].sort(), ['assignments','forums','quizzes']);
+  releaseInitial();
+  await topicsReady;
+  assert.deepEqual(topicStarted, ['31','32','33']);
+  releaseTopics();
+  const result = await pending;
+  assert.equal(result.complete, true);
+  assert.deepEqual(Object.keys(result.sources).sort(), ['assignments','discussionForums','discussionTopics:31','discussionTopics:32','discussionTopics:33','quizzes'].sort());
+});
+
+test('topic discovery checks cancellation before scheduling more forum reads and drains active reads', async () => {
+  let started = 0, release, entered;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { entered = resolve; });
+  const empty = () => ({ activities: [], warnings: [] });
+  const discovery = createActivityDiscovery({
+    assignments: { async getAssignments() { return empty(); } },
+    quizzes: { async getQuizzes() { return empty(); } },
+    discussions: {
+      async getDiscussionForums() { return { forumIds: Array.from({length:20},(_,i)=>String(i+1)), warnings: [] }; },
+      async getDiscussionTopics() { started++; if (started === 8) entered(); await barrier; return empty(); }
+    }
+  });
+  const check = async () => { if (started >= 8) throw Object.assign(new Error('cancelled'), {code:'JOB_CANCELLED'}); };
+  const pending = discovery.discover('9524', { check });
+  await ready;
+  assert.equal(started, 8);
+  release();
+  await assert.rejects(pending, error => error.code === 'JOB_CANCELLED');
+  assert.equal(started, 8);
+});
+
 
 test('diagnostic raw responses are opt-in, preserve envelopes and redact secrets', async () => {
   const { client, calls } = mockClient();

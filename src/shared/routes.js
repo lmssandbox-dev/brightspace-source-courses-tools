@@ -47,7 +47,8 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         catch(e){if(!['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code))require('./diagnostics').logFailure('job_create_failed',e,{kind});return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
         return res.send(render(res,job));
       }
-      const job=await jobs.get(req.body.jobId,owner(res));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
+      const statusOnly=action==='status'&&kind==='dates'&&typeof jobs.getStatus==='function';
+      const job=await (statusOnly?jobs.getStatus(req.body.jobId,owner(res)):jobs.get(req.body.jobId,owner(res)));if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
       if(action==='checkCopies'){if(!['sourceDeployment','courseCopy'].includes(kind)||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
       if(action==='apply') {
         if(kind==='courseCopy'&&req.body.confirmCopy!=='yes')return res.status(400).send('Confirm copying the selected components before continuing.');
@@ -63,7 +64,8 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       if(action==='review'){if(kind!=='sourceDeployment'||req.body.confirmReviewed!=='yes')return res.status(400).send('Confirm review in Brightspace.');if(!await jobs.review(job._id,owner(res)))return res.status(409).send('Job cannot be reviewed in its current state.');}
       if(action==='cancel'&&!await jobs.cancel(job._id,owner(res)))return res.status(409).send('Job is already processing or finished.');
       if(action==='report') {res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition',`attachment; filename="${kind==='courseCopy'?'course-copy':kind==='sourceDeployment'?'deploy':'date-manager'}-results.csv"`);return res.send(translateReport(view?view.report(job):report(job),req.body.uiLanguage));}
-      return res.send(render(res,await jobs.get(job._id,owner(res)),Number(req.body.page)||1));
+      const renderJob=statusOnly&&job.status!=='ready'?await jobs.getStatus(job._id,owner(res)):await jobs.get(job._id,owner(res));
+      return res.send(render(res,renderJob,Number(req.body.page)||1));
     } catch(error) {require('./diagnostics').logFailure('job_request_failed',error,{kind,action,jobId:req.body?.jobId});return res.status(503).send('Job storage is unavailable. Refresh or relaunch to check the saved status before retrying.');}
   };
   return handlers;

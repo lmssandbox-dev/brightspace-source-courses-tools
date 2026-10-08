@@ -109,6 +109,53 @@ test('resolution permits share an eight-request ceiling and ordinary requests re
  assert.ok((await b.reserve('GET lookup',{resolution:true})).wait);assert.ok((await b.reserve(route)).wait);
 });
 
+test('Date Manager discovery permits share the global eight-request ceiling without raising ordinary traffic',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'date-discovery',now:()=>now,mongoClient:m.client});
+ for(let i=0;i<4;i++){assert.ok((await gate.reserve(route)).token);now+=250;}
+ assert.ok((await gate.reserve(route)).wait);
+ for(let i=0;i<4;i++){
+  assert.ok((await gate.reserve('GET /d2l/api/le/1.99/9524/quizzes/',{dateDiscovery:true})).token);now+=250;
+ }
+ assert.equal(m.doc.permits.length,8);
+ assert.ok((await gate.reserve('GET /d2l/api/le/1.99/9524/discussions/forums/32/topics/',{dateDiscovery:true})).wait);
+ assert.ok((await gate.reserve(route)).wait);
+ now+=50000;
+ for(let i=0;i<8;i++){
+  assert.ok((await gate.reserve('GET /d2l/api/le/1.99/9524/dropbox/folders/',{dateDiscovery:true})).token);now+=250;
+ }
+ assert.equal(m.doc.permits.length,8);
+ assert.ok((await gate.reserve('GET /d2l/api/le/1.99/9524/quizzes/',{dateDiscovery:true})).wait);
+});
+
+test('Date Manager discovery routes alone use the elevated transport class',async()=>{
+ const classes=[];const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async(_route,options)=>{classes.push(options.dateDiscovery);return {token:'t'};},complete:async()=>{}},http:async()=>({status:200,headers:{}})});
+ for(const path of ['dropbox/folders/','quizzes/','discussions/forums/','discussions/forums/32/topics/'])
+  await request({method:'GET',url:`https://tenant.example/d2l/api/le/1.99/9524/${path}`});
+ for(const [method,path] of [['GET','quizzes/11'],['GET','discussions/forums/32/topics/41'],['GET','discussions/forums/32'],['PUT','quizzes/'],['GET','quizzes/?unrelated=true']])
+  await request({method,url:`https://tenant.example/d2l/api/le/1.99/9524/${path}`});
+ assert.deepEqual(classes,[true,true,true,true,false,false,false,false,true]);
+});
+
+test('Date Manager discovery transport reaches eight reads while ordinary traffic stays at four',async()=>{
+ let active=0,ordinary=0,discovery=0,peak=0,ordinaryPeak=0,discoveryPeak=0;const releases=[];
+ const discoveryPattern=/\/(?:dropbox\/folders|quizzes|discussions\/forums(?:\/\d+\/topics)?)\/$/;
+ const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async()=>({token:'t'}),complete:async()=>{}},http:async config=>{
+  const isDiscovery=discoveryPattern.test(new URL(config.url).pathname);active++;peak=Math.max(peak,active);
+  if(isDiscovery){discovery++;discoveryPeak=Math.max(discoveryPeak,discovery);}else{ordinary++;ordinaryPeak=Math.max(ordinaryPeak,ordinary);}
+  await new Promise(resolve=>releases.push(resolve));active--;if(isDiscovery)discovery--;else ordinary--;
+  return {status:200,headers:{}};
+ }});
+ const paths=['dropbox/folders/','quizzes/','discussions/forums/','discussions/forums/32/topics/'];
+ const work=Array.from({length:8},(_,i)=>request({method:'GET',url:`https://tenant.example/d2l/api/le/1.99/9524/${paths[i%paths.length]}`}));
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(active,8);assert.equal(discovery,8);
+ while(releases.length){releases.splice(0).forEach(resolve=>resolve());await new Promise(resolve=>setImmediate(resolve));}
+ await Promise.all(work);
+ const ordinaryWork=Array.from({length:8},()=>request({method:'GET',url:'https://tenant.example/d2l/api/le/1.99/9524/quizzes/11'}));
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(ordinary,4);
+ while(releases.length){releases.splice(0).forEach(resolve=>resolve());await new Promise(resolve=>setImmediate(resolve));}
+ await Promise.all(ordinaryWork);assert.equal(peak,8);assert.equal(discoveryPeak,8);assert.equal(ordinaryPeak,4);
+});
+
 test('transport permits eight exact-code reads but only four other calls with a shared total of eight',async()=>{
  let active=0,ordinary=0,peak=0,ordinaryPeak=0;const releases=[],classes=[];
  const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async(_route,options)=>{classes.push(options.resolution);return {token:'t'};},complete:async()=>{}},http:async config=>{

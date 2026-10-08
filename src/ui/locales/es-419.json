@@ -391,5 +391,13 @@
   "An org unit sync is already pending or running.": "Ya hay una sincronización pendiente o en curso.",
   "Please wait a minute before requesting another sync.": "Espera un minuto antes de solicitar otra sincronización.",
   "Relaunch through Brightspace to sync org units.": "Vuelve a abrir la aplicación desde Brightspace para sincronizar.",
-  "Could not request the sync. Please try again.": "No se pudo solicitar la sincronización. Inténtalo de nuevo."
+  "Could not request the sync. Please try again.": "No se pudo solicitar la sincronización. Inténtalo de nuevo.",
+  "Apply progress": "Progreso de la aplicación",
+  "Current state:": "Estado actual:",
+  "Applying dates": "Aplicando fechas",
+  "Completed": "Completado",
+  "Interrupted": "Interrumpido",
+  "Total activities": "Total de actividades",
+  "Failed": "Con errores",
+  "Uncertain": "Incierto"
 }
