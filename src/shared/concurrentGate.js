@@ -2,6 +2,7 @@
 const {randomUUID,createHash}=require('node:crypto');
 const {MongoClient}=require('mongodb');
 const {performance}=require('node:perf_hooks');
+const {currentStep3Utilization}=require('./step3Utilization');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
@@ -119,34 +120,41 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
 }
 function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>performance.now(),delay=ms=>new Promise(r=>setTimeout(r,ms)),maxRetries=5,seconds}){
  const origin=new URL(baseUrl).origin;let active=0,ordinaryActive=0,poisoned=false;const waiting=[];
- async function run(config){
+ async function run(config,tracker){
   const url=new URL(config.url);if(url.origin!==origin||!url.pathname.startsWith('/d2l/api/'))throw Error('Rate-limited transport only accepts tenant API URLs');
   const route=String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/(\/copy\/)[^/]+$/,'$1:token').replace(/\/\d+(?=\/|$)/g,'/:id');
   for(let attempt=0;;attempt++){
    if(poisoned)throw Error('API gate unavailable; requests stopped');
    const waitingAt=now();let permit;
+   const acquisitionStartedAt=monotonicNow();let acquisitionRecorded=false;
    const gateTimings={localReservationQueue:0,mongoReservation:0,deniedReservationRead:0,permitContentionWait:0,pacingBudgetWait:0,mixedWait:0};
+   const recordReservation=sample=>{if(!tracker)return;tracker.add('localReservationQueueMs',sample.localReservationQueueMs);tracker.add('mongoReservationMs',sample.mongoReservationMs);tracker.add('deniedReservationReadMs',sample.deniedReservationReadMs);};
    try{while(!(permit=await gate.reserve(route,{resolution:isCodeResolution(config),copy:isCopyRequest(config)||isDeploymentRequest(config),dateDiscovery:isDateDiscovery(config)})).token){
+    recordReservation(permit);
     gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
     gateTimings.mongoReservation+=permit.mongoReservationMs||0;
     gateTimings.deniedReservationRead+=permit.deniedReservationReadMs||0;
     const waitedAt=monotonicNow();await delay(permit.wait);const waited=Math.max(0,monotonicNow()-waitedAt);
-    if(permit.waitReason==='permitContention')gateTimings.permitContentionWait+=waited;
-    else if(permit.waitReason==='pacingBudget')gateTimings.pacingBudgetWait+=waited;
-    else gateTimings.mixedWait+=waited;
+    if(permit.waitReason==='permitContention'){gateTimings.permitContentionWait+=waited;tracker?.add('permitContentionWaitMs',waited);}
+    else if(permit.waitReason==='pacingBudget'){gateTimings.pacingBudgetWait+=waited;tracker?.add('pacingBudgetWaitMs',waited);}
+    else {gateTimings.mixedWait+=waited;tracker?.add('mixedWaitMs',waited);}
     if(poisoned)throw Error('API gate unavailable');
    }
+   recordReservation(permit);
+   tracker?.add('apiPermitAcquisitionMs',Math.max(0,monotonicNow()-acquisitionStartedAt));acquisitionRecorded=true;
    gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
    gateTimings.mongoReservation+=permit.mongoReservationMs||0;
    gateTimings.deniedReservationRead+=permit.deniedReservationReadMs||0;
-   }catch(e){poisoned=true;throw e;}
+   }catch(e){if(!acquisitionRecorded)tracker?.add('apiPermitAcquisitionMs',Math.max(0,monotonicNow()-acquisitionStartedAt));poisoned=true;throw e;}
+   tracker?.changePermit(1);
    const startedAt=now();let response,error;
-   try{response=await http({...config,timeout:Math.min(config.timeout||15000,30000),maxRedirects:0});}catch(e){error=e;}
+   if(tracker)tracker.changeHttp(1);
+   try{response=await http({...config,timeout:Math.min(config.timeout||15000,30000),maxRedirects:0});}catch(e){error=e;}finally{tracker?.changeHttp(-1);}
    const headers=(response||error?.response)?.headers||{},read=name=>headers.get?.(name)??headers[name]??Object.entries(headers).find(([k])=>k.toLowerCase()===name)?.[1];
    const status=error?.response?.status??response?.status,reset=Math.max(seconds(read('retry-after'),now())||0,seconds(read('x-rate-limit-reset'),now())||0);
    const cost=Number(read('x-request-cost')??NaN),remaining=Number(read('x-rate-limit-remaining')??NaN),known=Number.isFinite(cost)&&cost>=0;
    const pauseMs=status===429||Number.isFinite(remaining)&&remaining<=Math.max(10000,known?cost:125)?Math.max(60000,reset):0;
-   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,gateTimings,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;throw e;}
+   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,gateTimings,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;throw e;}finally{tracker?.changePermit(-1);}
    if(!error)return response;
    if(status!==429||attempt>=maxRetries)throw error;
   }
@@ -159,8 +167,10 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
  }
  return async config=>{
   const elevated=isCodeResolution(config)||isCopyRequest(config)||isDeploymentRequest(config)||isDateDiscovery(config);
+  const tracker=elevated?null:currentStep3Utilization(),queuedAt=monotonicNow();
   await new Promise(resolve=>{waiting.push({elevated,resolve});drain();});
-  try{return await run(config);}finally{active--;if(!elevated)ordinaryActive--;drain();}
+  if(tracker)tracker.add('httpAdmissionWaitMs',Math.max(0,monotonicNow()-queuedAt));
+  try{return await run(config,tracker);}finally{active--;if(!elevated)ordinaryActive--;drain();}
  };
 }
 module.exports={createConcurrentGate,createConcurrentHttp,LIMIT,RESOLUTION_LIMIT};

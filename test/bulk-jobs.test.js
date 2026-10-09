@@ -29,6 +29,14 @@ test('all course validation and discovery are read-only; confirmation executes o
  assert.equal(await s.jobs.confirm(j._id,'other'),false);assert.equal(await s.jobs.confirm(j._id,'a'),true);assert.equal(await s.jobs.confirm(j._id,'a'),false);
  await Promise.all([s.jobs.tick(),s.jobs.tick()]);assert.equal(s.calls.filter(c=>c==='write').length,6);assert.equal((await s.jobs.get(j._id,'a')).status,'completed');
 });
+test('Date Manager Step 3 persists compact utilization snapshots with the job checkpoints',async()=>{
+ const s=setup(),created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
+ const plan=await s.jobs.get(created._id,'a');await s.jobs.confirm(created._id,'a');await s.jobs.tick();
+ const completed=await s.jobs.get(created._id,'a'),metrics=completed.performance.dateStep3Utilization;
+ assert.equal(completed.status,'completed');assert.equal(metrics.version,1);assert.equal(metrics.httpMs.length,5);assert.equal(metrics.permitMs.length,5);
+ assert.ok(metrics.coveredMs>0);assert.equal(metrics.coveredMs,metrics.httpMs.reduce((sum,value)=>sum+value,0));
+ assert.equal(plan.performance?.dateStep3Utilization,undefined);
+});
 test('invalid course, incomplete discovery and missing scopes cannot write',async()=>{
  for(const options of [{csv:'OrgUnitId,OrgUnitCode\n1,\n999,'},{partial:true},{noScope:true}]){
   const s=setup(options),j=await s.jobs.create({owner:'a',csv:options.csv||'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(j._id,'a');await s.jobs.tick();

@@ -10,6 +10,7 @@ const STEP3_CHECKPOINT_DELAY_MS=25;
 const STEP2_PROGRESS_PERSIST_MS=5000;
 const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
+const {createStep3Utilization,withStep3Utilization}=require('./step3Utilization');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
 const counts = tasks => tasks.reduce((out,t)=>{const s=t.result?.status || 'pending';out[s]=(out[s]||0)+1;return out;},{total:tasks.length});
 function interruptJob(job) {
@@ -34,6 +35,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const worker=randomUUID();
   const cancelledJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
+  let activeStep3Tracker=null,activeStep3Job=null;
   let planningWriteQueue=Promise.resolve();
   const withPlanningWrite=operation=>{const result=planningWriteQueue.then(operation);planningWriteQueue=result.catch(()=>{});return result;};
   const countCache=new WeakMap();
@@ -44,7 +46,12 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
     return queue(job,dirty);
   }
-  const saveStep3=(job,dirty)=>save(job,dirty,step3Checkpoint);
+  const saveStep3=async(job,dirty)=>{
+    const tracker=activeStep3Job===job._id?activeStep3Tracker:null;
+    tracker?.checkpointWait(1);
+    try{return await save(job,dirty,step3Checkpoint);}
+    finally{tracker?.checkpointWait(-1);}
+  };
   async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
@@ -54,6 +61,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(!previous||previous.phase!==job.progress?.phase||previous.processed!==job.progress?.processed)job.step2CourseProgressAt=time;
       job.step2DurableProgress=job.progress?{...job.progress}:null;
     }
+    if(activeStep3Tracker&&activeStep3Job===job._id){job.performance ||= {};job.performance.dateStep3Utilization=activeStep3Tracker.snapshot();}
     job[DIRTY]=dirty;const started=now();
     try {await withPlanningWrite(()=>store.save(job,worker));} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
@@ -175,10 +183,11 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.step3StartedAt=step3Now;
     job.step3ProgressAt=step3Now;
     job.step3ElapsedMs=Number.isFinite(job.step3ElapsedMs)?job.step3ElapsedMs:0;
+    activeStep3Tracker=createStep3Utilization({prior:job.performance?.dateStep3Utilization});activeStep3Job=job._id;
     let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running'&&t.result.status!=='pending').length;
     const groups=new Map();
     job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});
-    await pool([...groups.values()],4,async (group,index,stopped)=>{
+    await withStep3Utilization(activeStep3Tracker,()=>pool([...groups.values()],4,async (group,index,stopped)=>{
      for(const {task,taskIndex} of group){
       if(stopped()||unsafeWorkerJobs.has(job._id))return;
       if(task.result?.status==='running'||(task.result?.status==='uncertain'&&task.result.error?.category==='UNCERTAIN_OUTCOME')){
@@ -219,11 +228,12 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       job.step3ProgressAt=now();
       await saveStep3(job,{tasks:[taskIndex]});
      }
-    },async()=>!unsafeWorkerJobs.has(job._id));
+    },async()=>!unsafeWorkerJobs.has(job._id)));
     job.progress={phase:'Applying dates',processed,total:job.tasks.length};
     job.status=job.tasks.some(t=>['failed','skipped','uncertain','pending','running'].includes(t.result?.status))?'completedWithErrors':'completed';
     job.step3ElapsedMs=(job.step3ElapsedMs||0)+Math.max(0,now()-job.step3StartedAt);
     job.step3StartedAt=null;
+    activeStep3Tracker.finish();
   }
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
@@ -271,12 +281,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         job.performance[phase+'FinishedAt']=now();job.performance[phase+'Ms']=now()-job.performance[phase+'StartedAt'];
         await save(job);
       } catch(error) {
+        if(activeStep3Job===job?._id)activeStep3Tracker?.finish();
         if(error.code==='JOB_CANCELLED')return;
         require('./diagnostics').logFailure('job_worker_failed',error,{kind:job?.kind,jobId:job?._id});
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
           if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(job)unsafeWorkerJobs.delete(job._id);if(held)await store.release(worker).catch(()=>{});busy=false;}
+      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }
