@@ -271,7 +271,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   }
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
-      if(kind==='courseCopy'){const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:courseCopy.parse(csv),components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);

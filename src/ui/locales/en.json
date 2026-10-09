@@ -447,12 +447,20 @@
   "Mapping Validation Progress": "Mapping Validation Progress",
   "mappings processed": "mappings processed",
   "Duplicates": "Duplicates",
-  "Copy Submission Progress": "Copy Submission Progress",
+  "Course Copy Progress": "Course Copy Progress",
   "Submitting": "Submitting",
   "submissions processed": "submissions processed",
   "Submitted": "Submitted",
   "Submitted copies may still be processing in Brightspace. Check copy results to confirm completion.": "Submitted copies may still be processing in Brightspace. Check copy results to confirm completion.",
   "Estimated submission time remaining": "Estimated submission time remaining",
   "Estimated submission time remaining: {0}": "Estimated submission time remaining: {0}",
-  "submissions/min": "submissions/min"
+  "submissions/min": "submissions/min",
+  "Copy Check Progress": "Copy Check Progress",
+  "Checking": "Checking",
+  "copy results checked": "copy results checked",
+  "Still processing": "Still processing",
+  "Needs review": "Needs review",
+  "Not checked": "Not checked",
+  "checks/min": "checks/min",
+  "Estimated copy check time remaining: {0}": "Estimated copy check time remaining: {0}"
 }

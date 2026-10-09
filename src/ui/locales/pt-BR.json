@@ -447,12 +447,20 @@
   "Mapping Validation Progress": "Progresso da validação dos mapeamentos",
   "mappings processed": "mapeamentos processados",
   "Duplicates": "Duplicados",
-  "Copy Submission Progress": "Progresso do envio das cópias",
+  "Course Copy Progress": "Progresso da cópia do curso",
   "Submitting": "Enviando",
   "submissions processed": "envios processados",
   "Submitted": "Enviados",
   "Submitted copies may still be processing in Brightspace. Check copy results to confirm completion.": "As cópias enviadas ainda podem estar sendo processadas no Brightspace. Verifique os resultados para confirmar a conclusão.",
   "Estimated submission time remaining": "Tempo estimado restante para envio",
   "Estimated submission time remaining: {0}": "Tempo estimado restante para envio: {0}",
-  "submissions/min": "envios/min"
+  "submissions/min": "envios/min",
+  "Copy Check Progress": "Progresso da verificação das cópias",
+  "Checking": "Verificando",
+  "copy results checked": "resultados de cópia verificados",
+  "Still processing": "Ainda em processamento",
+  "Needs review": "Requer atenção",
+  "Not checked": "Não verificados",
+  "checks/min": "verificações/min",
+  "Estimated copy check time remaining: {0}": "Tempo estimado restante para verificar cópias: {0}"
 }

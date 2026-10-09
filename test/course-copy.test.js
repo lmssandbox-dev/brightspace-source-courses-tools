@@ -47,13 +47,14 @@ test('status checks skip terminal results and retain tokens/status when checking
  const j=job('1,,2,\n1,,3,');const checked=[];const worker=createCopyJobs({client:client({check:async dest=>{checked.push(dest);throw Error();}})});await worker.plan(j,async()=>{});
  j.operation='check';j.tasks[0].result={status:'COMPLETE',jobToken:'saved'};j.tasks[1].result={status:'PROCESSING',jobToken:'pending'};
  await worker.execute(j,async()=>{},async()=>{});assert.deepEqual(checked,['3']);assert.equal(j.tasks[0].result.status,'COMPLETE');assert.equal(j.tasks[1].result.status,'PROCESSING');assert.equal(j.status,'copiesInProcess');
+ assert.deepEqual(j.copyCheckProgress,{processed:1,total:1,completed:0,stillProcessing:0,needsReview:1});assert.equal(j.copyCheckStartedAt,null);assert.ok(j.copyCheckElapsedMs>=0);
  const done=createCopyJobs({client:client({check:async()=>'COMPLETE'})});await done.execute(j,async()=>{},async()=>{});assert.equal(j.status,'copiesConcluded');
 });
 test('worker dispatches copy planning and execution without touching date writers',async()=>{
  let stored,locked=false;
  const store={insert:async j=>{stored=structuredClone(j);},acquire:async()=>{locked=true;return true;},renew:async()=>{assert.ok(locked);},release:async()=>{locked=false;},claim:async()=>{stored.status=stored.status==='validating'?'planning':'running';return structuredClone(stored);},save:async j=>{stored=structuredClone(j);}};
  const service=createBulkJobs({store,courseCopy:createCopyJobs({client:client({copy:async()=>({status:'PENDING',jobToken:'t'})})})});
- await service.create({owner:'owner',kind:'courseCopy',csv:csv('1,,2,'),copyMode:'selected',components:['Quizzes']});await service.tick();assert.equal(stored.status,'ready');stored.status='queued';await service.tick();assert.equal(stored.status,'copiesInProcess');assert.equal(stored.tasks[0].result.jobToken,'t');
+ await service.create({owner:'owner',kind:'courseCopy',csv:csv('1,,2,'),copyMode:'selected',components:['Quizzes']});assert.deepEqual(stored.progress,{phase:'mappings',processed:0,total:1});await service.tick();assert.equal(stored.status,'ready');stored.status='queued';await service.tick();assert.equal(stored.status,'copiesInProcess');assert.equal(stored.tasks[0].result.jobToken,'t');
 });
 test('report includes every row and saved cumulative statuses, quotes formulas; compact view keeps per-course details in report',()=>{
  const j=job('1,,2,');j.rows[0].originName='=formula';j.tasks=[{row:2,originId:'1',destinationId:'2',result:{status:'COMPLETE',jobToken:'t'}}];j.status='copiesConcluded';const view=createCopyView();assert.match(view.report(j),/'=formula/);assert.match(view.report(j),/COMPLETE/);

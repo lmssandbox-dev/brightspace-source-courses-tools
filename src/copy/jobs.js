@@ -82,14 +82,22 @@ function createCopyJobs({client,now=Date.now}){
   },
   async execute(job,save,renew){
    if(job.operation==='check'){
+    const eligible=job.tasks.filter(task=>task.result?.jobToken&&!terminalCopy.has(task.result.status));
+    const startedAt=now();job.copyCheckElapsedMs=0;job.copyCheckStartedAt=startedAt;job.copyCheckProgressAt=startedAt;
+    job.copyCheckProgress={processed:0,total:eligible.length,completed:0,stillProcessing:0,needsReview:0};
     await pool(job.tasks,8,async(task,index)=>{
      const result=task.result;if(!result?.jobToken||terminalCopy.has(result.status))return;
      await renew();
      try{result.status=await client.check(task.destinationId,result.jobToken);delete result.message;result.checkedAt=now();}
      catch{result.message='Status check unavailable. Saved results retained; try checking again.';}
+     job.copyCheckProgress.processed++;
+     if(result.message==='Status check unavailable. Saved results retained; try checking again.'||['COMPLETE_WITH_ERRORS','FAILED','CANCELLED'].includes(result.status))job.copyCheckProgress.needsReview++;
+     else if(result.status==='COMPLETE')job.copyCheckProgress.completed++;
+     else if(['PENDING','PROCESSING'].includes(result.status))job.copyCheckProgress.stillProcessing++;
+     job.copyCheckProgressAt=now();
      await save(job,{tasks:[index]});
     });
-    finish(job);return;
+    finish(job);job.copyCheckElapsedMs=Math.max(0,now()-startedAt);job.copyCheckStartedAt=null;return;
    }
    let stop=false;
    const startedAt=now();job.copyStep3ElapsedMs=Number(job.copyStep3ElapsedMs)||0;job.copyStep3StartedAt=startedAt;job.copyStep3ProgressAt=startedAt;

@@ -25,4 +25,15 @@ function step3(job,time){
  else if(job.status==='running'&&processed>=20&&elapsedMs>=15000&&throughput>0&&processed<total){const remaining=(total-processed)/throughput*60000;if(Number.isFinite(remaining)&&remaining>=0)estimate=`ETA: ${duration(remaining)}`;}
  return {processed,total,percent:percent(processed,total),submitted,failed,uncertain,inFlight,notAttempted,elapsed:duration(elapsedMs),throughput:throughput.toFixed(1),showThroughput:elapsedMs>0,terminal,estimate};
 }
-module.exports={duration,percent,step2,step3};
+function check(job,time){
+ const progress=job.copyCheckProgress||{},total=Math.max(0,Number(progress.total)||0),processed=Math.min(total,Math.max(0,Number(progress.processed)||0)),elapsedMs=elapsed(job,'copyCheck',time,job.status==='running'&&job.operation==='check');
+ const completed=Math.max(0,Number(progress.completed)||0),stillProcessing=Math.max(0,Number(progress.stillProcessing)||0),needsReview=Math.max(0,Number(progress.needsReview)||0);
+ const terminal=['copiesConcluded','copiesInProcess','copyNeedsAttention','interrupted'].includes(job.status),complete=['copiesConcluded','copiesInProcess','copyNeedsAttention'].includes(job.status),stalled=job.status==='running'&&job.operation==='check'&&Number.isFinite(job.copyCheckProgressAt)&&time-job.copyCheckProgressAt>=180000;
+ const throughput=elapsedMs>0?processed*60000/elapsedMs:0;
+ let estimate='Calculating ETA…';
+ if(stalled||job.status==='interrupted')estimate='Progress paused — ETA unavailable';
+ else if(complete||total>0&&processed>=total)estimate='';
+ else if(job.status==='running'&&job.operation==='check'&&processed>=20&&elapsedMs>=15000&&throughput>0&&processed<total){const remaining=(total-processed)/throughput*60000;if(Number.isFinite(remaining)&&remaining>=0)estimate=`ETA: ${duration(remaining)}`;}
+ return {processed,total,percent:percent(processed,total),completed,stillProcessing,needsReview,notChecked:Math.max(0,total-processed),elapsed:duration(elapsedMs),throughput:throughput.toFixed(1),showThroughput:elapsedMs>0,terminal,estimate};
+}
+module.exports={duration,percent,step2,step3,check};

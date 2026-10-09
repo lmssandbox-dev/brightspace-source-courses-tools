@@ -42,7 +42,8 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       if(copy?.kind==='courseCopy'){
         if(['queued','running'].includes(copy.status))return copy.operation==='check';
         if(!['copiesInProcess','copyNeedsAttention','interrupted'].includes(copy.status)||!copy.tasks.some(t=>t.result?.jobToken&&!['COMPLETE','COMPLETE_WITH_ERRORS','FAILED','CANCELLED'].includes(t.result.status)))return false;
-        return (await jobs.updateOne({_id,owner,namespace,status:copy.status},{$set:{status:'queued',operation:'check'},$unset:{expiresAt:''}})).modifiedCount===1;
+        const total=copy.tasks.filter(t=>t.result?.jobToken&&!['COMPLETE','COMPLETE_WITH_ERRORS','FAILED','CANCELLED'].includes(t.result.status)).length,time=now();
+        return (await jobs.updateOne({_id,owner,namespace,status:copy.status},{$set:{status:'queued',operation:'check',updatedAt:time,copyCheckProgress:{processed:0,total,completed:0,stillProcessing:0,needsReview:0},copyCheckElapsedMs:0,copyCheckStartedAt:null,copyCheckProgressAt:time},$unset:{expiresAt:''}})).modifiedCount===1;
       }
       const job=await jobs.findOne({_id,owner,namespace,kind:'sourceDeployment'});
       if(!job||['queued','running','planning','validating'].includes(job.status))return false;
@@ -108,6 +109,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
         const step2ElapsedMs=job.kind==='dates'?(Number(job.step2ElapsedMs)||0)+(Number.isFinite(job.step2StartedAt)&&Number.isFinite(job.step2ProgressAt)?Math.max(0,job.step2ProgressAt-job.step2StartedAt):0):undefined;
         const copyStep2ElapsedMs=job.kind==='courseCopy'?(Number(job.copyStep2ElapsedMs)||0)+(Number.isFinite(job.copyStep2StartedAt)&&Number.isFinite(job.copyStep2ProgressAt)?Math.max(0,job.copyStep2ProgressAt-job.copyStep2StartedAt):0):undefined;
         const copyStep3ElapsedMs=job.kind==='courseCopy'?(Number(job.copyStep3ElapsedMs)||0)+(Number.isFinite(job.copyStep3StartedAt)&&Number.isFinite(job.copyStep3ProgressAt)?Math.max(0,job.copyStep3ProgressAt-job.copyStep3StartedAt):0):undefined;
+        const copyCheckElapsedMs=job.kind==='courseCopy'?(Number(job.copyCheckElapsedMs)||0)+(Number.isFinite(job.copyCheckStartedAt)&&Number.isFinite(job.copyCheckProgressAt)?Math.max(0,job.copyCheckProgressAt-job.copyCheckStartedAt):0):undefined;
         const deploymentStep2ElapsedMs=job.kind==='sourceDeployment'?(Number(job.deploymentStep2ElapsedMs)||0)+(Number.isFinite(job.deploymentStep2StartedAt)&&Number.isFinite(job.deploymentStep2ProgressAt)?Math.max(0,job.deploymentStep2ProgressAt-job.deploymentStep2StartedAt):0):undefined;
         const deploymentStep3ElapsedMs=job.kind==='sourceDeployment'?(Number(job.deploymentStep3ElapsedMs)||0)+(Number.isFinite(job.deploymentStep3StartedAt)&&Number.isFinite(job.deploymentStep3ProgressAt)?Math.max(0,job.deploymentStep3ProgressAt-job.deploymentStep3StartedAt):0):undefined;
         const recoveredProgress=job.kind==='dates'?(job.step2DurableProgress||{phase:'Resolving courses',processed:0,total:job.progress?.total||0}):undefined;
@@ -124,7 +126,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
         }
         interruptJob(job);
         const recoveryFields={status:job.status,tasks:job.tasks,totals:job.totals,worker:null,updatedAt:now(),message:job.message};
-        if(job.kind==='courseCopy')Object.assign(recoveryFields,{copyStep2ElapsedMs,copyStep2StartedAt:null,copyStep3ElapsedMs,copyStep3StartedAt:null});
+        if(job.kind==='courseCopy')Object.assign(recoveryFields,{copyStep2ElapsedMs,copyStep2StartedAt:null,copyStep3ElapsedMs,copyStep3StartedAt:null,copyCheckElapsedMs,copyCheckStartedAt:null});
         if(job.kind==='sourceDeployment')Object.assign(recoveryFields,{deploymentStep2ElapsedMs,deploymentStep2StartedAt:null,deploymentStep3ElapsedMs,deploymentStep3StartedAt:null});
         await jobs.updateOne({_id:job._id,namespace,status:{$in:['planning','running']}},{$set:recoveryFields});
       }

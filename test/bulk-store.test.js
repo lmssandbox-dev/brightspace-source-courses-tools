@@ -119,10 +119,10 @@ test('chunked planning recovery counts only the last durable Step 2 progress poi
  assert.equal(change.update.$set.step2ElapsedMs,70);assert.equal(change.update.$set.step2StartedAt,null);assert.equal(change.update.$set.step2ProgressAt,null);assert.equal(change.update.$set.step2CourseProgressAt,null);assert.deepEqual(change.update.$set.progress,durable);assert.equal(change.update.$set.step2RatePerMs,0);
 });
 test('Course Copy recovery keeps active elapsed time only through each durable progress point',async()=>{
- const job={_id:'copy',kind:'courseCopy',status:'running',tasks:[],copyStep2ElapsedMs:5,copyStep2StartedAt:10,copyStep2ProgressAt:60,copyStep3ElapsedMs:7,copyStep3StartedAt:20,copyStep3ProgressAt:80};
+ const job={_id:'copy',kind:'courseCopy',status:'running',tasks:[],copyStep2ElapsedMs:5,copyStep2StartedAt:10,copyStep2ProgressAt:60,copyStep3ElapsedMs:7,copyStep3StartedAt:20,copyStep3ProgressAt:80,copyCheckElapsedMs:9,copyCheckStartedAt:30,copyCheckProgressAt:90};
  const s=setup({recover:[job]});await s.store.acquire('w');
  const write=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
- assert.equal(write.update.$set.copyStep2ElapsedMs,55);assert.equal(write.update.$set.copyStep2StartedAt,null);assert.equal(write.update.$set.copyStep3ElapsedMs,67);assert.equal(write.update.$set.copyStep3StartedAt,null);assert.equal(write.update.$set.status,'interrupted');
+ assert.equal(write.update.$set.copyStep2ElapsedMs,55);assert.equal(write.update.$set.copyStep2StartedAt,null);assert.equal(write.update.$set.copyStep3ElapsedMs,67);assert.equal(write.update.$set.copyStep3StartedAt,null);assert.equal(write.update.$set.copyCheckElapsedMs,69);assert.equal(write.update.$set.copyCheckStartedAt,null);assert.equal(write.update.$set.status,'interrupted');
 });
 test('legacy Date Manager recovery accumulates only the active segment and clears its start marker',async()=>{
  const s=setup({recover:[{_id:'r',kind:'dates',status:'running',tasks:[],step3StartedAt:20,step3ElapsedMs:10,step3ProgressAt:80}]});
@@ -150,7 +150,7 @@ test('native copy checks queue only pending tokens and preserve expiry-independe
  const collection={findOne:async f=>f.owner===job.owner&&f.kind===job.kind?job:null,updateOne:async(f,u)=>{assert.equal(f.owner,'owner');assert.equal(f.namespace,'n');assert.equal(f.status,job.status);assert.equal(u.$unset.expiresAt,'');writes++;Object.assign(job,u.$set);return {modifiedCount:1};}};
  const store=createBulkStore({uri:'mongodb://localhost/test_copy',namespace:'n',mongoClient:{connect:async()=>{},db:()=>({collection:()=>collection})}});
  assert.equal(await store.requestCopyCheck('copy','other'),false);
- assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(job.operation,'check');
+ assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(job.operation,'check');assert.deepEqual(job.copyCheckProgress,{processed:0,total:1,completed:0,stillProcessing:0,needsReview:0});assert.equal(job.copyCheckElapsedMs,0);assert.equal(job.copyCheckStartedAt,null);
  assert.equal(await store.requestCopyCheck('copy','owner'),true);assert.equal(writes,1);
  job.status='copiesConcluded';job.tasks[1].result.status='COMPLETE';assert.equal(await store.requestCopyCheck('copy','owner'),false);assert.equal(writes,1);
 });

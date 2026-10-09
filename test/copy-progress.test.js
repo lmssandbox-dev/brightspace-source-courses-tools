@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {step2,step3}=require('../src/copy/progress');
+const {step2,step3,check:copyProgressCheck}=require('../src/copy/progress');
 const {createCopyView}=require('../src/copy/view');
 
 test('Step 2 shows mappings percentage and waits for measured ETA samples',()=>{
@@ -20,7 +20,7 @@ test('Step 2 completion and interruption show final or paused timing without an 
 test('Step 2 panel renders the validation percentage and row result counters',()=>{
  const job={_id:'v',status:'validating',progress:{phase:'mappings',processed:2,total:4},rows:[{status:'valid'},{status:'invalid'},{status:'duplicate'},{status:'pending'}],tasks:[],components:null};
  const html=createCopyView().render({},job,{controls:()=>'',button:()=>'',now:()=>1000});
- assert.match(html,/Mapping Validation Progress/);assert.match(html,/>50%<\/strong>/);assert.match(html,/1<\/strong><span>Valid<\/span>/);assert.match(html,/1<\/strong><span>Invalid<\/span>/);assert.match(html,/1<\/strong><span>Duplicates<\/span>/);assert.match(html,/1<\/strong><span>Pending<\/span>/);
+ assert.match(html,/Mapping Validation Progress/);assert.match(html,/>50%<\/strong>/);assert.match(html,/1<\/strong><span>Valid<\/span>/);assert.match(html,/1<\/strong><span>Invalid<\/span>/);assert.match(html,/1<\/strong><span>Duplicates<\/span>/);assert.match(html,/1<\/strong><span>Pending<\/span>/);assert.match(html,/This page refreshes automatically/);assert.doesNotMatch(html,/<div class="processing"/);
 });
 
 test('Step 3 counts accepted PENDING and PROCESSING tokens as processed submissions',()=>{
@@ -49,5 +49,19 @@ test('Step 2 and Step 3 timing remain independent and status copy never claims s
  assert.equal(step2({...job,progress:{phase:'mappings',processed:2,total:2}},110000).elapsed,'1m 30s');
  assert.equal(step3(job,110000).elapsed,'15s');
  const html=createCopyView().render({},job,{controls:()=>'',button:()=>'',now:()=>110000});
- assert.match(html,/Copy Submission Progress/);assert.match(html,/Submitted copies may still be processing in Brightspace/);assert.match(html,/Estimated submission time remaining/);assert.doesNotMatch(html,/All 1 destinations were copied successfully/);
+ assert.match(html,/Course Copy Progress/);assert.match(html,/Submitted copies may still be processing in Brightspace/);assert.match(html,/Estimated submission time remaining/);assert.doesNotMatch(html,/All 1 destinations were copied successfully/);
+ assert.ok(html.indexOf('deployment-metrics')<html.indexOf('Components to Copy'));assert.ok(html.indexOf('Components to Copy')<html.indexOf('Course Copy Progress'));assert.match(html,/copy-submission-progress/);
+});
+
+test('copy check ETA uses checked tokens and its own active elapsed time',()=>{
+ const job={status:'running',operation:'check',tasks:[],copyCheckProgress:{processed:20,total:40,completed:8,stillProcessing:10,needsReview:2},copyCheckStartedAt:1000,copyCheckProgressAt:16000};
+ let view=copyProgressCheck(job,16000);assert.equal(view.percent,50);assert.equal(view.completed,8);assert.equal(view.stillProcessing,10);assert.equal(view.needsReview,2);assert.equal(view.notChecked,20);assert.equal(view.elapsed,'15s');assert.match(view.estimate,/^ETA: /);assert.equal(view.throughput,'80.0');
+ job.status='copiesInProcess';view=copyProgressCheck(job,90000);assert.equal(view.estimate,'');assert.equal(view.terminal,true);
+ job.status='interrupted';job.copyCheckStartedAt=null;job.copyCheckElapsedMs=12000;view=copyProgressCheck(job,90000);assert.equal(view.estimate,'Progress paused — ETA unavailable');assert.equal(view.elapsed,'12s');
+});
+
+test('manual check page keeps Course Copy Progress and renders a separate check panel below components',()=>{
+ const job={_id:'check',kind:'courseCopy',status:'running',operation:'check',confirmedAt:1,components:['Content'],rows:[],tasks:[{originId:'1',destinationId:'2',result:{status:'PROCESSING',jobToken:'t'}}],copyStep3ElapsedMs:20000,copyStep3ProgressAt:20000,copyCheckProgress:{processed:3,total:5,completed:1,stillProcessing:2,needsReview:0},copyCheckStartedAt:25000,copyCheckProgressAt:30000};
+ const html=createCopyView().render({},job,{controls:()=>'',button:()=>'',now:()=>31000});
+ assert.match(html,/Course Copy Progress/);assert.match(html,/Copy Check Progress/);assert.match(html,/copy results checked/);assert.match(html,/Estimated copy check time remaining/);assert.ok(html.indexOf('Components to Copy')<html.indexOf('Course Copy Progress'));assert.ok(html.indexOf('Course Copy Progress')<html.indexOf('Copy Check Progress'));
 });
