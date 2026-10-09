@@ -6,7 +6,6 @@ const {currentStep3Utilization}=require('./step3Utilization');
 const {currentStep2Utilization}=require('./step2Utilization');
 const {logMongoOperationFailure}=require('./diagnostics');
 const hash=s=>createHash('sha256').update(s).digest('hex');
-const reportDiagnostic=callback=>{try{callback?.();}catch{}};
 const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000,BUDGET_WINDOW_MS=60000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
 const dateDiscoveryPath=/^\/d2l\/api\/le\/[^/]+\/[1-9]\d*\/(?:dropbox\/folders\/|quizzes\/|discussions\/forums\/|discussions\/forums\/[1-9]\d*\/topics\/)$/;
@@ -27,7 +26,7 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
   initialized ||= c.updateOne({_id:key},{$setOnInsert:{nextAt:0,pauseUntil:0,permits:[],budgetStart:time,budgetUsed:0}},{upsert:true}).catch(e=>{if(e.code!==11000){initialized=null;throw e;}});
   await initialized;
  }
- async function reserve(route,{resolution=false,copy=false,dateDiscovery=false,onReservationAttempt,onDeniedReservationRead}={}){
+ async function reserve(route,{resolution=false,copy=false,dateDiscovery=false}={}){
    const pacingDeadline=notBefore,permitDeadline=Math.max(slotRetryAt,...(resolution||copy||dateDiscovery?[]:[ordinarySlotRetryAt]));
    const deferred=Math.max(pacingDeadline,permitDeadline)-now();if(deferred>0)return {wait:deferred,waitReason:waitReason(pacingDeadline,permitDeadline)};
    const c=await collection(),time=now(),token=randomUUID(),costPath='$costs.'+hash(route)+'.maxCost';
@@ -36,7 +35,6 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
    const active={$filter:{input:{$ifNull:['$permits',[]]},as:'permit',cond:{$gt:['$$permit.until',time]}}};
    const ordinary={$filter:{input:active,as:'permit',cond:{$and:[{$eq:[{$ifNull:['$$permit.resolution',false]},false]},{$eq:[{$ifNull:['$$permit.copy',false]},false]},{$eq:[{$ifNull:['$$permit.dateDiscovery',false]},false]}]}}};
    const reservationStarted=monotonicNow();
-   reportDiagnostic(onReservationAttempt);
    const result=await c.findOneAndUpdate({_id:key,nextAt:{$lte:time},$expr:{$and:[{$lte:[{$ifNull:['$pauseUntil',0]},time]},{$lt:[{$size:active},RESOLUTION_LIMIT]},...(resolution||copy||dateDiscovery?[]:[{$lt:[{$size:ordinary},LIMIT]}]),{$lte:[{$add:[used,cost]},BUDGET]}]}},[{$set:{
     permits:{$concatArrays:[active,[{token,until:time+45000,resolution,copy,dateDiscovery,reservationSequence,budgetStart}]]},
     nextAt:{$add:[time,{$max:[20,{$multiply:[cost,2]},{$ifNull:['$adaptiveSpacing',0]}]}]},
@@ -46,7 +44,6 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
    const mongoReservationMs=Math.max(0,monotonicNow()-reservationStarted);
    if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost,reservationSequence:result.value.reservationSequence,budgetStart:result.value.budgetStart,mongoReservationMs,deniedReservationReadMs:0};}
    const deniedReadStarted=monotonicNow();
-   reportDiagnostic(onDeniedReservationRead);
    const row=await c.findOne({_id:key});
    const deniedReservationReadMs=Math.max(0,monotonicNow()-deniedReadStarted);
    if(!row)throw Error('API gate missing');
@@ -138,7 +135,7 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
 }
 function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>performance.now(),delay=ms=>new Promise(r=>setTimeout(r,ms)),maxRetries=5,seconds}){
  const origin=new URL(baseUrl).origin;let active=0,ordinaryActive=0,poisoned=false;const waiting=[];
- async function run(config,tracker,deploymentRequest){
+ async function run(config,tracker){
   const url=new URL(config.url);if(url.origin!==origin||!url.pathname.startsWith('/d2l/api/'))throw Error('Rate-limited transport only accepts tenant API URLs');
   const route=String(config.method||'GET').toUpperCase()+' '+url.pathname.replace(/(\/copy\/)[^/]+$/,'$1:token').replace(/\/\d+(?=\/|$)/g,'/:id');
   for(let attempt=0;;attempt++){
@@ -147,9 +144,7 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
    const acquisitionStartedAt=monotonicNow();let acquisitionRecorded=false;
    const gateTimings={localReservationQueue:0,mongoReservation:0,deniedReservationRead:0,permitContentionWait:0,pacingBudgetWait:0,mixedWait:0};
    const recordReservation=sample=>{if(!tracker)return;tracker.add('localReservationQueueMs',sample.localReservationQueueMs);tracker.add('mongoReservationMs',sample.mongoReservationMs);tracker.add('deniedReservationReadMs',sample.deniedReservationReadMs);};
-   try{
-   if(deploymentRequest)reportDiagnostic(()=>tracker?.changeAdmissionBlocker?.('gate',1));
-   try{while(!(permit=await gate.reserve(route,{resolution:isCodeResolution(config),copy:isCopyRequest(config)||deploymentRequest,dateDiscovery:isDateDiscovery(config),onReservationAttempt:deploymentRequest?()=>reportDiagnostic(()=>tracker?.recordReservationAttempt?.()):undefined,onDeniedReservationRead:deploymentRequest?()=>reportDiagnostic(()=>tracker?.recordDeniedReservationRead?.()):undefined})).token){
+   try{while(!(permit=await gate.reserve(route,{resolution:isCodeResolution(config),copy:isCopyRequest(config)||isDeploymentRequest(config),dateDiscovery:isDateDiscovery(config)})).token){
     recordReservation(permit);
     gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
     gateTimings.mongoReservation+=permit.mongoReservationMs||0;
@@ -160,7 +155,7 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
     else if(permit.waitReason==='pacingBudget'){gateTimings.pacingBudgetWait+=waited;tracker?.add('pacingBudgetWaitMs',waited);}
     else {gateTimings.mixedWait+=waited;tracker?.add('mixedWaitMs',waited);}
     if(poisoned)throw Error('API gate unavailable');
-   }}finally{if(deploymentRequest)reportDiagnostic(()=>tracker?.changeAdmissionBlocker?.('gate',-1));}
+   }
    recordReservation(permit);
    tracker?.add('apiPermitAcquisitionMs',Math.max(0,monotonicNow()-acquisitionStartedAt));acquisitionRecorded=true;
    gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
@@ -183,20 +178,15 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
  function drain(){
   for(let i=0;i<waiting.length&&active<RESOLUTION_LIMIT;){
    const entry=waiting[i];if(!entry.elevated&&ordinaryActive>=LIMIT){i++;continue;}
-   waiting.splice(i,1);active++;if(!entry.elevated)ordinaryActive++;entry.admitted=true;entry.resolve();
+   waiting.splice(i,1);active++;if(!entry.elevated)ordinaryActive++;entry.resolve();
   }
  }
  return async config=>{
-  const deploymentRequest=isDeploymentRequest(config),elevated=isCodeResolution(config)||isCopyRequest(config)||deploymentRequest||isDateDiscovery(config);
-  const tracker=isDateDiscovery(config)?currentStep2Utilization():deploymentRequest||!elevated?currentStep3Utilization():null,queuedAt=monotonicNow();
-  if(deploymentRequest)reportDiagnostic(()=>tracker?.recordLogicalApiRequest?.());
-  tracker?.changeWait?.('httpAdmission',1);try{await new Promise(resolve=>{
-   const entry={elevated,deploymentRequest,tracker,queued:false,admitted:false,resolve:()=>{if(entry.queued)reportDiagnostic(()=>tracker?.changeAdmissionBlocker?.('queued',-1));resolve();}};
-   waiting.push(entry);drain();
-   if(deploymentRequest&&!entry.admitted){entry.queued=true;reportDiagnostic(()=>tracker?.changeAdmissionBlocker?.('queued',1));}
-  });}finally{tracker?.changeWait?.('httpAdmission',-1);}
+  const elevated=isCodeResolution(config)||isCopyRequest(config)||isDeploymentRequest(config)||isDateDiscovery(config);
+  const tracker=isDateDiscovery(config)?currentStep2Utilization():isDeploymentRequest(config)||!elevated?currentStep3Utilization():null,queuedAt=monotonicNow();
+  tracker?.changeWait?.('httpAdmission',1);try{await new Promise(resolve=>{waiting.push({elevated,resolve});drain();});}finally{tracker?.changeWait?.('httpAdmission',-1);}
   if(tracker)tracker.add('httpAdmissionWaitMs',Math.max(0,monotonicNow()-queuedAt));
-  try{return await run(config,tracker,deploymentRequest);}finally{active--;if(!elevated)ordinaryActive--;drain();}
+  try{return await run(config,tracker);}finally{active--;if(!elevated)ordinaryActive--;drain();}
  };
 }
 module.exports={createConcurrentGate,createConcurrentHttp,LIMIT,RESOLUTION_LIMIT};

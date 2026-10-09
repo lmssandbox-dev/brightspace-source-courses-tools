@@ -48,20 +48,18 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const checkpoint=createCheckpointQueue(saveCheckpoint);
   const step3Checkpoint=createCheckpointQueue(saveCheckpoint,{delayMs:STEP3_CHECKPOINT_DELAY_MS});
   function save(job,dirty,queue=checkpoint) {
-    const checkpointTracker=activeDeploymentStep3Job===job._id?activeDeploymentStep3Tracker:null;
-    const checkpointTiming=checkpointTracker?.checkpointSaveStarted?.();
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
-    checkpointTracker?.checkpointRequested?.();
+    if(activeDeploymentStep3Job===job._id)activeDeploymentStep3Tracker?.checkpointRequested?.();
     if(job.kind==='sourceDeployment'&&['ready','failed'].includes(job.status)&&Number.isFinite(job.performance.preparationStartedAt)&&job.performance.preparationMs==null){
       job.performance.preparationFinishedAt=now();job.performance.preparationMs=Math.max(0,job.performance.preparationFinishedAt-job.performance.preparationStartedAt);
       pendingPreparationTiming.add(job);
     }
     const tracker=activeStep2Job===job._id?activeStep2Tracker:null;tracker?.checkpointWait(1);
     let result;try{
-      const enqueue=()=>queue(job,dirty,checkpointTiming);
+      const enqueue=()=>queue(job,dirty);
       result=activeDeploymentStep3Job===job._id&&activeDeploymentStep3Tracker?withStep3Utilization(activeDeploymentStep3Tracker,enqueue):enqueue();
-    }catch(error){checkpointTracker?.checkpointSaveSettled?.(checkpointTiming);tracker?.checkpointWait(-1);throw error;}
-    return Promise.resolve(result).then(()=>{pendingPreparationTiming.delete(job);}).finally(()=>{checkpointTracker?.checkpointSaveSettled?.(checkpointTiming);tracker?.checkpointWait(-1);});
+    }catch(error){tracker?.checkpointWait(-1);throw error;}
+    return Promise.resolve(result).then(()=>{pendingPreparationTiming.delete(job);}).finally(()=>tracker?.checkpointWait(-1));
   }
   const saveStep3=async(job,dirty)=>{
     const tracker=activeStep3Job===job._id?activeStep3Tracker:null;
