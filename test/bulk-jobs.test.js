@@ -149,7 +149,7 @@ test('date workers overlap independent courses, serialize each course and persis
  const jobs=createBulkJobs({store:s.store,courses:{resolve:async r=>({orgUnitId:r.orgUnitId}),get:async id=>{await pause();validated.add(id);}},discovery:{discover:async orgUnitId=>{const activities=['1','2'].map(id=>({type:'quiz',id,key:`quiz:${orgUnitId}:${id}`}));return {complete:true,activities,nativeActivities:activities.map(a=>({key:a.key,data:{QuizId:a.id}}))};}},writers:{quiz:writer},writeEnabled:()=>true});
  const j=await jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:8},(_,i)=>`${i+1},`).join('\n'),dates});
  await jobs.tick();assert.equal(peak,8);peak=0;await jobs.confirm(j._id,'a');await jobs.tick();
- const result=await jobs.get(j._id,'a');assert.equal(peak,6);assert.equal(result.status,'completed');assert.equal(result.totals.updated,16);
+ const result=await jobs.get(j._id,'a');assert.equal(peak,8);assert.equal(result.status,'completed');assert.equal(result.totals.updated,16);
 });
 
 test('date chunk snapshots cannot change while database writes are pending',async()=>{

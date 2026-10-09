@@ -187,7 +187,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running'&&t.result.status!=='pending').length;
     const groups=new Map();
     job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});
-    await withStep3Utilization(activeStep3Tracker,()=>pool([...groups.values()],6,async (group,index,stopped)=>{
+    await withStep3Utilization(activeStep3Tracker,()=>pool([...groups.values()],8,async (group,index,stopped)=>{
      for(const {task,taskIndex} of group){
       if(stopped()||unsafeWorkerJobs.has(job._id))return;
       if(task.result?.status==='running'||(task.result?.status==='uncertain'&&task.result.error?.category==='UNCERTAIN_OUTCOME')){
