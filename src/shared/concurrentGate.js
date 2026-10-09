@@ -5,7 +5,7 @@ const {performance}=require('node:perf_hooks');
 const {currentStep3Utilization}=require('./step3Utilization');
 const {currentStep2Utilization}=require('./step2Utilization');
 const hash=s=>createHash('sha256').update(s).digest('hex');
-const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000;
+const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000,BUDGET_WINDOW_MS=60000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
 const dateDiscoveryPath=/^\/d2l\/api\/le\/[^/]+\/[1-9]\d*\/(?:dropbox\/folders\/|quizzes\/|discussions\/forums\/|discussions\/forums\/[1-9]\d*\/topics\/)$/;
 const isDateDiscovery=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&dateDiscoveryPath.test(url.pathname);};
@@ -30,18 +30,18 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
    const deferred=Math.max(pacingDeadline,permitDeadline)-now();if(deferred>0)return {wait:deferred,waitReason:waitReason(pacingDeadline,permitDeadline)};
    const c=await collection(),time=now(),token=randomUUID(),costPath='$costs.'+hash(route)+'.maxCost';
    await initialize(c,time);
-   const cost={$max:[1,{$ifNull:[costPath,125]},{$ifNull:['$costs.'+hash(route)+'.fallbackCost',0]}]},fresh={$lte:[{$ifNull:['$budgetStart',0]},time-60000]},used={$cond:[fresh,0,{$ifNull:['$budgetUsed',0]}]};
+   const cost={$max:[1,{$ifNull:[costPath,125]},{$ifNull:['$costs.'+hash(route)+'.fallbackCost',0]}]},fresh={$lte:[{$ifNull:['$budgetStart',0]},time-BUDGET_WINDOW_MS]},budgetStart={$cond:[fresh,time,{$ifNull:['$budgetStart',time]}]},used={$cond:[fresh,0,{$ifNull:['$budgetUsed',0]}]},reservationSequence={$add:[{$ifNull:['$reservationSequence',0]},1]};
    const active={$filter:{input:{$ifNull:['$permits',[]]},as:'permit',cond:{$gt:['$$permit.until',time]}}};
    const ordinary={$filter:{input:active,as:'permit',cond:{$and:[{$eq:[{$ifNull:['$$permit.resolution',false]},false]},{$eq:[{$ifNull:['$$permit.copy',false]},false]},{$eq:[{$ifNull:['$$permit.dateDiscovery',false]},false]}]}}};
    const reservationStarted=monotonicNow();
    const result=await c.findOneAndUpdate({_id:key,nextAt:{$lte:time},$expr:{$and:[{$lte:[{$ifNull:['$pauseUntil',0]},time]},{$lt:[{$size:active},RESOLUTION_LIMIT]},...(resolution||copy||dateDiscovery?[]:[{$lt:[{$size:ordinary},LIMIT]}]),{$lte:[{$add:[used,cost]},BUDGET]}]}},[{$set:{
-    permits:{$concatArrays:[active,[{token,until:time+45000,resolution,copy,dateDiscovery}]]},
+    permits:{$concatArrays:[active,[{token,until:time+45000,resolution,copy,dateDiscovery,reservationSequence,budgetStart}]]},
     nextAt:{$add:[time,{$max:[20,{$multiply:[cost,2]},{$ifNull:['$adaptiveSpacing',0]}]}]},
-    budgetStart:{$cond:[fresh,time,{$ifNull:['$budgetStart',time]}]},budgetUsed:{$add:[used,cost]},
+    reservationSequence,budgetStart,budgetUsed:{$add:[used,cost]},
     lastReservationCost:cost
    }}],{returnDocument:'after'});
    const mongoReservationMs=Math.max(0,monotonicNow()-reservationStarted);
-   if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost,mongoReservationMs,deniedReservationReadMs:0};}
+   if(result.value){notBefore=Math.max(notBefore,result.value.nextAt||0);slotWait=250;return {token,reservedCost:result.value.lastReservationCost,reservationSequence:result.value.reservationSequence,budgetStart:result.value.budgetStart,mongoReservationMs,deniedReservationReadMs:0};}
    const deniedReadStarted=monotonicNow();
    const row=await c.findOne({_id:key});
    const deniedReservationReadMs=Math.max(0,monotonicNow()-deniedReadStarted);
@@ -73,27 +73,40 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
   },
   async complete(permit,sample){
    const c=await collection(),time=now(),prefix='costs.'+hash(sample.route);
-   const update={$pull:{permits:{token:permit.token}},$set:{[prefix+'.route']:sample.route,[prefix+'.lastSeenAt']:time,lastResetMs:sample.resetMs,adaptiveSpacing:sample.adaptiveSpacing||0},$inc:{[prefix+'.requests']:1,[prefix+'.timedRequests']:1,[prefix+'.totalLatencyMs']:sample.latencyMs||0,[prefix+'.totalGateWaitMs']:sample.gateWaitMs||0},$max:{[prefix+'.maxLatencyMs']:sample.latencyMs||0}};
-   if(sample.cost!=null){update.$inc[prefix+'.observedRequests']=1;update.$inc[prefix+'.totalCredits']=sample.cost;update.$min={[prefix+'.minCost']:sample.cost};update.$max[prefix+'.maxCost']=sample.cost;update.$inc.budgetUsed=Math.max(0,sample.cost-permit.reservedCost);}
-   if(sample.cost==null)update.$max[prefix+'.fallbackCost']=125;
+   const field=path=>'$'+path,existing=path=>({$ifNull:[field(path),0]}),increment=(path,value)=>({$add:[existing(path),value]}),maximum=(path,value)=>({$max:[existing(path),value]}),minimum=(path,value)=>({$min:[{$ifNull:[field(path),value]},value]});
+   const update={$set:{permits:{$filter:{input:{$ifNull:['$permits',[]]},as:'permit',cond:{$ne:['$$permit.token',permit.token]}}},[prefix+'.route']:sample.route,[prefix+'.lastSeenAt']:time,lastResetMs:sample.resetMs,adaptiveSpacing:sample.adaptiveSpacing||0,[prefix+'.requests']:increment(prefix+'.requests',1),[prefix+'.timedRequests']:increment(prefix+'.timedRequests',1),[prefix+'.totalLatencyMs']:increment(prefix+'.totalLatencyMs',sample.latencyMs||0),[prefix+'.totalGateWaitMs']:increment(prefix+'.totalGateWaitMs',sample.gateWaitMs||0),[prefix+'.maxLatencyMs']:maximum(prefix+'.maxLatencyMs',sample.latencyMs||0),[prefix+'.gateTimingRequests']:increment(prefix+'.gateTimingRequests',1)}};
+   if(sample.cost!=null){
+    const sequence=permit.reservationSequence,observationPath=prefix+'.costObservationSequence',fallbackPath=prefix+'.fallbackCost',observationMissing={$eq:[{$ifNull:[field(observationPath),null]},null]},isLatest=sequence==null?observationMissing:{$or:[observationMissing,{$gte:[sequence,field(observationPath)]}]};
+    update.$set[prefix+'.observedRequests']=increment(prefix+'.observedRequests',1);update.$set[prefix+'.totalCredits']=increment(prefix+'.totalCredits',sample.cost);update.$set[prefix+'.minCost']=minimum(prefix+'.minCost',sample.cost);update.$set[prefix+'.maxCost']=maximum(prefix+'.maxCost',sample.cost);
+    update.$set.budgetUsed=permit.budgetStart==null||!Number.isFinite(permit.reservedCost)?field('budgetUsed'):{$cond:[{$and:[{$eq:[field('budgetStart'),permit.budgetStart]},{$gt:[permit.budgetStart+BUDGET_WINDOW_MS,time]}]},{$max:[0,{$add:[existing('budgetUsed'),sample.cost-permit.reservedCost]}]},field('budgetUsed')]};
+    update.$set[observationPath]=sequence==null?field(observationPath):{$cond:[isLatest,sequence,field(observationPath)]};
+    update.$set[fallbackPath]={$cond:[isLatest,'$$REMOVE',{$ifNull:[field(fallbackPath),'$$REMOVE']}]};
+   }else{
+    const sequence=permit.reservationSequence,observationPath=prefix+'.costObservationSequence',fallbackPath=prefix+'.fallbackCost';
+    if(sequence==null)update.$set[fallbackPath]={$max:[existing(fallbackPath),125]};
+    else{
+     const observationMissing={$eq:[{$ifNull:[field(observationPath),null]},null]},isLatest={$or:[observationMissing,{$gte:[sequence,field(observationPath)]}]};
+     update.$set[observationPath]={$cond:[isLatest,sequence,field(observationPath)]};
+     update.$set[fallbackPath]={$cond:[isLatest,125,{$ifNull:[field(fallbackPath),'$$REMOVE']}]};
+    }
+   }
    if(sample.remaining!=null)update.$set.lastRemainingCredits=sample.remaining;
-   if(sample.status===429)update.$inc.rateLimitResponses=1;
-   if(sample.pauseMs)update.$max.pauseUntil=time+sample.pauseMs+1000;
-   update.$inc[prefix+'.gateTimingRequests']=1;
+   if(sample.status===429)update.$set.rateLimitResponses=increment('rateLimitResponses',1);
+   if(sample.pauseMs)update.$set.pauseUntil=maximum('pauseUntil',time+sample.pauseMs+1000);
    for(const [name,value] of Object.entries(sample.gateTimings||{})){
     if(!Number.isFinite(value)||value<0)continue;
-    update.$inc[prefix+'.'+name+'TotalMs']=value;
-    update.$inc[prefix+'.'+name+'Samples']=1;
+    update.$set[prefix+'.'+name+'TotalMs']=increment(prefix+'.'+name+'TotalMs',value);
+    update.$set[prefix+'.'+name+'Samples']=increment(prefix+'.'+name+'Samples',1);
    }
    const flush=[...pendingCompletion.entries()];pendingCompletion.clear();
    for(const [routeHash,value] of flush){
     const completionPrefix='costs.'+routeHash;
-    update.$inc[completionPrefix+'.completionPersistenceTotalMs']=value.totalMs;
-    update.$inc[completionPrefix+'.completionPersistenceSamples']=value.samples;
+    update.$set[completionPrefix+'.completionPersistenceTotalMs']=increment(completionPrefix+'.completionPersistenceTotalMs',value.totalMs);
+    update.$set[completionPrefix+'.completionPersistenceSamples']=increment(completionPrefix+'.completionPersistenceSamples',value.samples);
    }
    const completionStarted=monotonicNow();
    let r;
-   try{r=await c.updateOne({_id:key,'permits.token':permit.token},update);}
+   try{r=await c.updateOne({_id:key,'permits.token':permit.token},[update]);}
    catch(error){restorePending(flush);throw error;}
    const completionPersistenceMs=Math.max(0,monotonicNow()-completionStarted);
    if(r.matchedCount!==1){restorePending(flush);throw Error('API permit lost');}

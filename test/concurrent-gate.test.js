@@ -5,12 +5,14 @@ const {createConcurrentGate}=require('../src/shared/concurrentGate');
 const {createRateLimitedHttp}=require('../src/shared/rateLimit');
 const {buildRows,durationSummary}=require('../scripts/api-cost-report');
 const hash=s=>createHash('sha256').update(s).digest('hex');
+const REMOVE=Symbol('remove');
 // Small expression model for the operators used by the atomic Mongo reservation.
 // This exercises the actual generated filter/pipeline, not a replacement gate algorithm.
 function mongoModel(onDbCall=()=>{}){
  const calls={initialize:0,reserve:0,read:0,complete:0};let doc;const get=(o,path)=>path.split('.').reduce((v,k)=>v?.[k],o);
  const put=(o,path,value)=>{const keys=path.split('.'),last=keys.pop();for(const key of keys)o=o[key]||=( {} );o[last]=value;};
  function evalExpr(v,vars={}){
+  if(v==='$$REMOVE')return REMOVE;
   if(typeof v==='string'&&v.startsWith('$$'))return get(vars,v.slice(2));
   if(typeof v==='string'&&v.startsWith('$'))return get(doc,v.slice(1));
   if(Array.isArray(v))return v.map(x=>evalExpr(x,vars));
@@ -20,16 +22,19 @@ function mongoModel(onDbCall=()=>{}){
   const a=evalExpr(arg,vars);
   switch(op){
    case '$ifNull':return a[0]??a[1];case '$max':return Math.max(...a);case '$add':return a.reduce((x,y)=>x+y,0);case '$multiply':return a.reduce((x,y)=>x*y,1);
-   case '$eq':return a[0]===a[1];case '$cond':return a[0]?a[1]:a[2];case '$lte':return a[0]<=a[1];case '$lt':return a[0]<a[1];case '$gt':return a[0]>a[1];case '$and':return a.every(Boolean);case '$size':return a.length;case '$concatArrays':return a.flat();
+   case '$eq':return a[0]===a[1];case '$ne':return a[0]!==a[1];case '$cond':return a[0]?a[1]:a[2];case '$lte':return a[0]<=a[1];case '$lt':return a[0]<a[1];case '$gte':return a[0]>=a[1];case '$gt':return a[0]>a[1];case '$and':return a.every(Boolean);case '$or':return a.some(Boolean);case '$size':return a.length;case '$concatArrays':return a.flat();
    default:return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,evalExpr(x,vars)]));
   }
  }
  const collection={
   async updateOne(filter,update){
-   const kind=update.$setOnInsert?'initialize':'complete';calls[kind]++;await onDbCall(kind);
-   if(!doc&&update.$setOnInsert)doc={_id:filter._id,...structuredClone(update.$setOnInsert)};
+   const kind=!Array.isArray(update)&&update.$setOnInsert?'initialize':'complete';calls[kind]++;await onDbCall(kind);
+   if(!doc&&!Array.isArray(update)&&update.$setOnInsert)doc={_id:filter._id,...structuredClone(update.$setOnInsert)};
    if(!doc||filter['permits.token']&&!doc.permits.some(p=>p.token===filter['permits.token']))return {matchedCount:0};
-   for(const [k,v] of Object.entries(update.$set||{}))put(doc,k,v);
+   if(Array.isArray(update)){
+    for(const stage of update){const changes=evalExpr(stage.$set);for(const [k,v] of Object.entries(changes)){if(v===REMOVE){const keys=k.split('.'),last=keys.pop(),parent=keys.reduce((o,key)=>o?.[key],doc);if(parent)delete parent[last];}else put(doc,k,v);}}
+   }else for(const [k,v] of Object.entries(update.$set||{}))put(doc,k,v);
+   if(Array.isArray(update))return {matchedCount:1};
    for(const [k,v] of Object.entries(update.$inc||{}))put(doc,k,(get(doc,k)||0)+v);
    for(const [k,v] of Object.entries(update.$max||{}))put(doc,k,Math.max(get(doc,k)??-Infinity,v));
    for(const [k,v] of Object.entries(update.$min||{}))put(doc,k,Math.min(get(doc,k)??Infinity,v));
@@ -98,8 +103,27 @@ test('429 pause is durable and cannot be shortened by an older successful respon
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const a=await gate.reserve(route);now=250;const b=await gate.reserve(route);
  await gate.complete(a,{...sample,status:429,pauseMs:75000});await gate.complete(b,sample);now=75000;assert.ok((await gate.reserve(route)).wait);now=76250;assert.ok((await gate.reserve(route)).token);
 });
-test('missing headers use conservative reservation without falsifying measured maximum cost',async()=>{
- let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});let p=await gate.reserve(route);assert.equal(p.reservedCost,125);await gate.complete(p,sample);now=250;p=await gate.reserve(route);assert.equal(p.reservedCost,10);await gate.complete(p,{...sample,cost:null});now=500;p=await gate.reserve(route);assert.equal(p.reservedCost,125);assert.equal(m.doc.costs[hash(route)].maxCost,10);
+test('missing headers activate fallback and later measured costs supersede it',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});let p=await gate.reserve(route);assert.equal(p.reservedCost,125);await gate.complete(p,sample);assert.equal(m.doc.budgetUsed,10);assert.equal(m.doc.costs[hash(route)].fallbackCost,undefined);
+ now=250;p=await gate.reserve(route);assert.equal(p.reservedCost,10);await gate.complete(p,{...sample,cost:null});assert.equal(m.doc.costs[hash(route)].fallbackCost,125);
+ now=500;p=await gate.reserve(route);assert.equal(p.reservedCost,125);await gate.complete(p,sample);assert.equal(m.doc.budgetUsed,30);assert.equal(m.doc.costs[hash(route)].fallbackCost,undefined);
+ now=750;p=await gate.reserve(route);assert.equal(p.reservedCost,10);assert.equal(m.doc.costs[hash(route)].maxCost,10);
+});
+test('measured costs above the reservation raise budget use and future estimates',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'under-reserved',now:()=>now,mongoClient:m.client});const initial=await gate.reserve(route);await gate.complete(initial,sample);now=250;const p=await gate.reserve(route);assert.equal(p.reservedCost,10);await gate.complete(p,{...sample,cost:150});assert.equal(m.doc.budgetUsed,160);assert.equal(m.doc.costs[hash(route)].maxCost,150);
+});
+test('late completion cannot adjust an expired or newer credit window or make its budget negative',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'window-rollover',now:()=>now,mongoClient:m.client}),old=await gate.reserve(route);assert.equal(old.budgetStart,0);m.doc.permits[0].until=120000;now=60000;
+ const current=await gate.reserve(route);assert.equal(current.budgetStart,60000);assert.equal(m.doc.budgetUsed,125);await gate.complete(old,{...sample,cost:10});assert.equal(m.doc.budgetUsed,125);await gate.complete(current,{...sample,cost:0});assert.equal(m.doc.budgetUsed,0);assert.ok(m.doc.budgetUsed>=0);
+});
+test('legacy permits without budget-window metadata retain their conservative reservation',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'legacy-permit',now:()=>now,mongoClient:m.client}),permit=await gate.reserve(route);delete permit.budgetStart;delete permit.reservationSequence;await gate.complete(permit,sample);assert.equal(m.doc.budgetUsed,125);
+});
+test('reservation order keeps concurrent measured and missing-header completions safe',async()=>{
+ let now=0;const m=mongoModel(),a=createConcurrentGate({key:'completion-order',now:()=>now,mongoClient:m.client}),b=createConcurrentGate({key:'completion-order',now:()=>now,mongoClient:m.client}),older=await a.reserve(route);now=250;const newer=await b.reserve(route);
+ await b.complete(newer,sample);await a.complete(older,{...sample,cost:null});assert.equal(m.doc.costs[hash(route)].fallbackCost,undefined);
+ now=500;const third=await a.reserve(route);now=750;const fourth=await b.reserve(route);await b.complete(fourth,{...sample,cost:null});await a.complete(third,sample);assert.equal(m.doc.costs[hash(route)].fallbackCost,125);
+ now=1000;const next=await b.reserve(route);assert.equal(next.reservedCost,125);
 });
 test('a newly observed cost above the local budget fails closed rather than waiting forever',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const p=await gate.reserve(route);await gate.complete(p,{...sample,cost:40000});now=100000;await assert.rejects(()=>gate.reserve(route),/exceeds/);
