@@ -22,7 +22,7 @@ test('deployment utilization time-weights HTTP and source-group concurrency',()=
 
 test('checkpoint queue records coalesced batch sizes and overlapping wait coverage',async()=>{
  let physical=0;const tracker=createDeploymentStep3Utilization();
- const checkpoint=createCheckpointQueue(async()=>{physical++;},{delayMs:5});
+ const checkpoint=createCheckpointQueue(async()=>{physical++;await new Promise(resolve=>setTimeout(resolve,15));},{delayMs:5});
  const job={};
  await withStep3Utilization(tracker,()=>Promise.all([checkpoint(job,{}),checkpoint(job,{}),checkpoint(job,{}),checkpoint(job,{})]));
  const result=tracker.snapshot('running',1);
@@ -32,6 +32,24 @@ test('checkpoint queue records coalesced batch sizes and overlapping wait covera
  assert.ok(result.checkpointQueueWaitMs>0);
  assert.ok(result.checkpointQueueWaitUnionMs>0);
  assert.ok(result.checkpointQueueWaitUnionMs<=result.checkpointQueueWaitMs);
+ assert.ok(result.checkpointCallerWaitMs>result.checkpointCallerWaitUnionMs);
+ assert.ok(result.checkpointCallerWaitUnionMs>0);
+ assert.ok(result.checkpointPreFlushWaitMs>result.checkpointPreFlushWaitUnionMs);
+ assert.ok(result.checkpointPostFlushWaitMs>result.checkpointPostFlushWaitUnionMs);
+ assert.ok(result.checkpointCallerWaitMs>=result.checkpointPreFlushWaitMs);
+ assert.ok(result.checkpointCallerWaitMs>=result.checkpointPostFlushWaitMs);
+ assert.ok(Math.abs(result.checkpointCallerWaitMs-result.checkpointPreFlushWaitMs-result.checkpointPostFlushWaitMs)<10);
+});
+
+test('rejected checkpoints include caller wait through rejection',async()=>{
+ const tracker=createDeploymentStep3Utilization(),checkpoint=createCheckpointQueue(async()=>{await new Promise(resolve=>setTimeout(resolve,10));throw Error('save failed');},{delayMs:0}),job={};
+ const results=await withStep3Utilization(tracker,()=>Promise.allSettled([checkpoint(job,{}),checkpoint(job,{})]));
+ assert.ok(results.every(result=>result.status==='rejected'));
+ const measurement=tracker.snapshot('interrupted',10);
+ assert.ok(measurement.checkpointCallerWaitMs>0);
+ assert.ok(measurement.checkpointPreFlushWaitMs>0);
+ assert.ok(measurement.checkpointPostFlushWaitMs>0);
+ assert.equal(measurement.coverage,'interrupted');
 });
 
 test('operation timings include awaited work and interrupted coverage is explicit',async()=>{
@@ -55,6 +73,7 @@ test('report supports historical jobs and unverified build SHA as unknown',()=>{
  assert.match(formatDeploymentStep3Report({_id:'old-job'}),/Build SHA: unknown/);
  assert.match(formatDeploymentStep3Report({_id:'old-job'}),/measurements: unknown/);
  assert.match(formatDeploymentStep3Report({_id:'partial',performance:{deploymentStep3Utilization:{version:1,coverage:'running'}}}),/Coverage: incomplete/);
+ assert.match(formatDeploymentStep3Report({_id:'partial',performance:{deploymentStep3Utilization:{version:1,coverage:'running'}}}),/Caller wait .* unknown summed across requests; unknown union wall time/);
  assert.equal(getBuildSha('not-a-commit'),'unknown');
  assert.equal(getBuildSha('0123456789abcdef0123456789abcdef01234567'),'0123456789abcdef0123456789abcdef01234567');
 });

@@ -26,6 +26,9 @@ function formatDeploymentStep3Report(job){
  lines.push('Checkpoint timings:');
  lines.push(`  Logical requests: ${count(measurement.logicalCheckpointRequests)}`);
  lines.push(`  Physical persisted batches: ${count(measurement.physicalCheckpoints)}`);
+ lines.push(`  Caller wait (save request through returned promise settling): ${seconds(measurement.checkpointCallerWaitMs)} summed across requests; ${seconds(measurement.checkpointCallerWaitUnionMs)} union wall time`);
+ lines.push(`  Pre-flush wait (request until batch persistence starts): ${seconds(measurement.checkpointPreFlushWaitMs)} summed across requests; ${seconds(measurement.checkpointPreFlushWaitUnionMs)} union wall time`);
+ lines.push(`  Post-flush wait (persistence start until caller promise settles): ${seconds(measurement.checkpointPostFlushWaitMs)} summed across requests; ${seconds(measurement.checkpointPostFlushWaitUnionMs)} union wall time`);
  lines.push(`  Queue wait: ${seconds(measurement.checkpointQueueWaitMs)} summed across requests (overlapping); ${seconds(measurement.checkpointQueueWaitUnionMs)} union wall time`);
  lines.push(`  Persistence: ${seconds(measurement.checkpointPersistenceMs)} summed across saves (${count(measurement.checkpointPersistenceSamples)} measured saves)`);
  const buckets=measurement.checkpointBatchSizes;

@@ -46,12 +46,13 @@ test('Source Deployer preparation duration is saved with ready plan and retained
  assert.equal(telemetry.coverage,'complete');assert.equal(telemetry.operations.deactivation.calls,1);assert.equal(telemetry.operations.deploymentSubmission.calls,1);assert.equal(telemetry.operations.reactivation.calls,1);
  assert.ok(telemetry.logicalCheckpointRequests>0);assert.ok(telemetry.physicalCheckpoints>0);assert.equal(executed.buildSha,'0123456789abcdef0123456789abcdef01234567');
 });
-test('Source Deployer records interrupted Step 3 coverage after execution errors',async()=>{
- const deployment={parse:()=>[],plan:async job=>{job.tasks=[{sourceId:'10',targets:[{orgUnitId:'20'}]}];job.status='ready';},execute:async()=>{throw Error('simulated execution interruption');}};
+test('Source Deployer records interrupted Step 3 coverage and completed checkpoint waits',async()=>{
+ const deployment={parse:()=>[],plan:async job=>{job.tasks=[{sourceId:'10',targets:[{orgUnitId:'20'}]}];job.status='ready';},execute:async(job,save)=>{await save(job);throw Error('simulated execution interruption');}};
  const s=setup({deployment});const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});
  await s.jobs.tick();assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
  const interrupted=await s.jobs.get(created._id,'a');
  assert.equal(interrupted.status,'interrupted');assert.equal(interrupted.performance.deploymentStep3Utilization.coverage,'interrupted');
+ assert.ok(interrupted.performance.deploymentStep3Utilization.checkpointCallerWaitMs>0);
 });
 test('Source Deployer cancellation finishes the active batch and leaves later batches not attempted',async()=>{
  let s,cancelId,requested=false,deactivations=0,reactivations=0,submissions=0;
