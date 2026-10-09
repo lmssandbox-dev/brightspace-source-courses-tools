@@ -103,7 +103,7 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
  };
  function acquireReservationSlot(){
   if(reservationActive<RESERVATION_LIMIT){reservationActive++;return Promise.resolve();}
-  return new Promise(resolve=>reservationWaiters.push(()=>{reservationActive++;resolve();}));
+  return new Promise(resolve=>reservationWaiters.push(resolve));
  }
  function releaseReservationSlot(){
   const next=reservationWaiters.shift();if(next)next();else reservationActive--;

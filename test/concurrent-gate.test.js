@@ -53,12 +53,14 @@ test('atomic reservations share four permits across gate instances and release r
  const metrics=m.doc.costs[hash(route)];assert.equal(metrics.requests,1);assert.equal(metrics.timedRequests,1);assert.equal(metrics.totalLatencyMs,100);assert.equal(metrics.totalGateWaitMs,20);
  now=50000;assert.ok((await a.reserve(route)).token);await assert.rejects(()=>a.complete(permits[1],sample),/permit lost/);
 });
-test('one gate overlaps at most two local reservation attempts',async()=>{
+test('local reservation slots transfer to waiters without leaking capacity',async()=>{
  let active=0,peak=0;const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  const m=mongoModel(async kind=>{if(kind!=='reserve')return;active++;peak=Math.max(peak,active);await pause(5);active--;});
  const gate=createConcurrentGate({key:'bounded-local-reservations',now:()=>Date.now(),mongoClient:m.client});
  await Promise.all(Array.from({length:8},()=>gate.reserve(route)));
  assert.equal(peak,2);
+ const result=await Promise.race([gate.reserve(route),pause(50).then(()=>null)]);
+ assert.ok(result,'a new reservation must not wait on a leaked local slot');
 });
 test('concurrent reservations from multiple gate instances retain global and ordinary ceilings',async()=>{
  let clock=100000;const m=mongoModel(),a=createConcurrentGate({key:'concurrent-shared',now:()=>clock+=300,mongoClient:m.client}),b=createConcurrentGate({key:'concurrent-shared',now:()=>clock+=300,mongoClient:m.client});
