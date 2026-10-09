@@ -118,6 +118,12 @@ test('chunked planning recovery counts only the last durable Step 2 progress poi
  await s.store.acquire('w');const change=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
  assert.equal(change.update.$set.step2ElapsedMs,70);assert.equal(change.update.$set.step2StartedAt,null);assert.equal(change.update.$set.step2ProgressAt,null);assert.equal(change.update.$set.step2CourseProgressAt,null);assert.deepEqual(change.update.$set.progress,durable);assert.equal(change.update.$set.step2RatePerMs,0);
 });
+test('Course Copy recovery keeps active elapsed time only through each durable progress point',async()=>{
+ const job={_id:'copy',kind:'courseCopy',status:'running',tasks:[],copyStep2ElapsedMs:5,copyStep2StartedAt:10,copyStep2ProgressAt:60,copyStep3ElapsedMs:7,copyStep3StartedAt:20,copyStep3ProgressAt:80};
+ const s=setup({recover:[job]});await s.store.acquire('w');
+ const write=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
+ assert.equal(write.update.$set.copyStep2ElapsedMs,55);assert.equal(write.update.$set.copyStep2StartedAt,null);assert.equal(write.update.$set.copyStep3ElapsedMs,67);assert.equal(write.update.$set.copyStep3StartedAt,null);assert.equal(write.update.$set.status,'interrupted');
+});
 test('legacy Date Manager recovery accumulates only the active segment and clears its start marker',async()=>{
  const s=setup({recover:[{_id:'r',kind:'dates',status:'running',tasks:[],step3StartedAt:20,step3ElapsedMs:10,step3ProgressAt:80}]});
  await s.store.acquire('w');const change=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');

@@ -42,6 +42,8 @@ function createCopyJobs({client,now=Date.now}){
  }
  return {parse:parseCopyCsv,selection,
   async plan(job,save,checkCancelled=async()=>{}){
+   const startedAt=now();job.copyStep2ElapsedMs=Number(job.copyStep2ElapsedMs)||0;job.copyStep2StartedAt=startedAt;job.copyStep2ProgressAt=startedAt;
+   job.copyStep2SampleAt=startedAt;job.copyStep2SampleProcessed=job.rows.filter(r=>r.status!=='pending').length;job.copyStep2SampleCount=0;job.copyStep2RatePerMs=0;
    const destinations=new Map();
    const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async()=>{},{direct:true}):null;
    const resolveRow=async(row,side)=>{
@@ -49,7 +51,7 @@ function createCopyJobs({client,now=Date.now}){
     const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;
    };
    let processed=job.rows.filter(r=>r.status!=='pending').length;
-   job.progress={phase:'mappings',processed,total:job.rows.length};await save(job);
+   job.progress={phase:'mappings',processed,total:job.rows.length};job.copyStep2SampleAt=now();job.copyStep2SampleProcessed=processed;job.copyStep2ProgressAt=job.copyStep2SampleAt;await save(job);
    await pool(job.rows,8,async row=>{
     await checkCancelled();
     if(row.status!=='pending')return;
@@ -63,7 +65,12 @@ function createCopyJobs({client,now=Date.now}){
      job.tasks.push({row:row.row,originId:origin,destinationId:destination});}
     }catch(error){if(error.code==='JOB_CANCELLED'||error.persistenceFailure)throw error;row.status='invalid';row.message=error.message;}
     job.progress={phase:'mappings',processed:++processed,total:job.rows.length};
-    if(job.progress.processed%25===0)await save(job);
+    if(job.progress.processed%25===0){
+     const sampledAt=now(),sampleProcessed=job.progress.processed,priorAt=Number(job.copyStep2SampleAt),priorProcessed=Number(job.copyStep2SampleProcessed)||0;
+     if(Number.isFinite(priorAt)&&sampledAt>priorAt&&sampleProcessed>priorProcessed){const observed=(sampleProcessed-priorProcessed)/(sampledAt-priorAt);job.copyStep2RatePerMs=job.copyStep2RatePerMs>0?job.copyStep2RatePerMs*.7+observed*.3:observed;job.copyStep2SampleCount=(Number(job.copyStep2SampleCount)||0)+1;}
+     job.copyStep2SampleAt=sampledAt;job.copyStep2SampleProcessed=sampleProcessed;job.copyStep2ProgressAt=sampledAt;
+     await save(job);
+    }
    });
    // Avoid order-dependent chains where a destination is also another mapping's origin.
    const origins=new Set(job.tasks.map(t=>t.originId)),destinationIds=new Set(job.tasks.map(t=>t.destinationId));
@@ -71,6 +78,7 @@ function createCopyJobs({client,now=Date.now}){
    const eligibleRows=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.row));
    job.tasks=job.tasks.filter(t=>eligibleRows.has(t.row));
    job.status=!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
+   job.copyStep2ElapsedMs=(Number(job.copyStep2ElapsedMs)||0)+Math.max(0,now()-startedAt);job.copyStep2StartedAt=null;
   },
   async execute(job,save,renew){
    if(job.operation==='check'){
@@ -84,16 +92,19 @@ function createCopyJobs({client,now=Date.now}){
     finish(job);return;
    }
    let stop=false;
+   const startedAt=now();job.copyStep3ElapsedMs=Number(job.copyStep3ElapsedMs)||0;job.copyStep3StartedAt=startedAt;job.copyStep3ProgressAt=startedAt;
    await pool(job.tasks,8,async(task,index)=>{
     if(task.result)return;
     if(stop){task.result={status:'notAttempted',message:'Stopped after an authentication, transport, or server failure.'};await save(job,{tasks:[index]});return;}
     // A durable checkpoint precedes each POST. A restart never repeats an in-flight copy.
-    await renew();task.result={status:'uncertain',message:'Submission outcome unconfirmed. Inspect Brightspace before creating another copy.'};await save(job,{tasks:[index]});
+    await renew();task.result={status:'uncertain',submissionIntent:true,message:'Submission outcome unconfirmed. Inspect Brightspace before creating another copy.'};await save(job,{tasks:[index]});
     const result=await client.copy(task.originId,task.destinationId,job.components,renew);
     task.result=result;stop ||= result.status==='uncertain'||Boolean(result.systemic);
+    if(result.status!=='notAttempted')job.copyStep3ProgressAt=now();
     await save(job,{tasks:[index]});
    });
    finish(job);
+   job.copyStep3ElapsedMs=(Number(job.copyStep3ElapsedMs)||0)+Math.max(0,now()-startedAt);job.copyStep3StartedAt=null;
   }
  };
 }

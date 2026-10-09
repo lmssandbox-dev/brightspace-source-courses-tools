@@ -38,9 +38,13 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
  return {
   parse:parseDeploymentCsv,
   async plan(job,save){
-   const session=orgResolver?await orgResolver.prepare(job.rows.filter(r=>r.status==='pending').flatMap(r=>[r.sourceCode,r.targetCode])):null;
+   const startedAt=now();job.deploymentStep2ElapsedMs=Number(job.deploymentStep2ElapsedMs)||0;job.deploymentStep2StartedAt=startedAt;job.deploymentStep2ProgressAt=startedAt;
+   job.deploymentStep2SampleAt=startedAt;job.deploymentStep2SampleProcessed=job.rows.filter(row=>row.status!=='pending').length;job.deploymentStep2SampleCount=0;job.deploymentStep2RatePerMs=0;
    const codes=new Map(),resolved=new Map();
    let processed=job.rows.filter(row=>row.status!=='pending').length;
+   job.progress={phase:'Validating source-to-replica mappings',processed,total:job.rows.length};
+   await save(job);
+   const session=orgResolver?await orgResolver.prepare(job.rows.filter(r=>r.status==='pending').flatMap(r=>[r.sourceCode,r.targetCode])):null;
    const cached=(map,key,load)=>{if(!map.has(key))map.set(key,Promise.resolve().then(load));return map.get(key);};
    await pool(job.rows,8,async row=>{
     if(row.status!=='pending')return;
@@ -56,8 +60,12 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
      row.sourceName=source.name;row.targetName=target.name;row.status='valid';if(source.warning)row.message=source.warning;
      resolved.set(row,{source,target});
     }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.';}
-    job.progress={phase:'mappings',processed:++processed,total:job.rows.length};
-    if(processed%25===0)await save(job);
+    job.progress={phase:'Validating source-to-replica mappings',processed:++processed,total:job.rows.length};
+    if(processed%25===0){
+     const sampledAt=now(),priorAt=Number(job.deploymentStep2SampleAt),priorProcessed=Number(job.deploymentStep2SampleProcessed)||0;
+     if(Number.isFinite(priorAt)&&sampledAt>priorAt&&processed>priorProcessed){const observed=(processed-priorProcessed)/(sampledAt-priorAt);job.deploymentStep2RatePerMs=job.deploymentStep2RatePerMs>0?job.deploymentStep2RatePerMs*.7+observed*.3:observed;job.deploymentStep2SampleCount=(Number(job.deploymentStep2SampleCount)||0)+1;}
+     job.deploymentStep2SampleAt=sampledAt;job.deploymentStep2SampleProcessed=processed;job.deploymentStep2ProgressAt=sampledAt;await save(job);
+    }
    });
    const targets=new Map(),batches=new Map();
    for(const row of job.rows){
@@ -80,6 +88,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    for(const task of job.tasks)task.targets=task.targets.filter(t=>eligible.has(`${task.sourceId}:${t.orgUnitId}`));
    job.tasks=job.tasks.filter(t=>t.targets.length);
    job.status=!job.tasks.length?'failed':'ready';job.expiresAt=now()+30*60*1000;
+   job.deploymentStep2ProgressAt=now();job.deploymentStep2ElapsedMs=(Number(job.deploymentStep2ElapsedMs)||0)+Math.max(0,now()-startedAt);job.deploymentStep2StartedAt=null;await save(job);
   },
   async activate(job,save,renew){
    if(!enabled()){job.status='activationWithErrors';job.message='Required deployment/course update scopes are unavailable.';return;}
@@ -97,6 +106,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
   async execute(job,save,renew){
    if(!enabled()){job.status='failed';job.message='Configure manageCourses:deploy:manage and orgunits:course:update before deploying.';return;}
    job.automaticReactivation=true;
+   const startedAt=now();job.deploymentStep3ElapsedMs=Number(job.deploymentStep3ElapsedMs)||0;job.deploymentStep3StartedAt=startedAt;job.deploymentStep3ProgressAt=startedAt;
    let halted=false,serviceFailures=0;
    const recordFailure=error=>{
     const status=error?.httpStatus??error?.status??error?.response?.status;
@@ -110,26 +120,28 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    async function submit(task,index){
     const checkpoint=()=>save(job,{tasks:[index]});
     if(task.result)return;
-    if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};await checkpoint();return;}
+    if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};job.deploymentStep3ProgressAt=now();await checkpoint();return;}
     let preparationFailed=false;
     for(const target of task.targets){
      target.deactivation={status:'running',writeAttempted:false};await checkpoint();
      target.deactivation=await client.setActive(target.orgUnitId,false,async()=>{await renew();target.deactivation.writeAttempted=true;await checkpoint();});
+     job.deploymentStep3ProgressAt=now();
      await checkpoint();
      if(!['updated','unchanged'].includes(target.deactivation.status)||target.deactivation.verifiedActive!==false){
       recordFailure(target.deactivation.error);preparationFailed=true;break;
      }
     }
-    if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');await checkpoint();return;}
+     if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');job.deploymentStep3ProgressAt=now();await checkpoint();return;}
     task.submittedAt=now();
     task.result={status:'running',writeAttempted:false};await checkpoint();
     task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await checkpoint();});
-    await checkpoint();
+    job.deploymentStep3ProgressAt=now();await checkpoint();
     // Reactivation follows acceptance, not completion of the asynchronous copy.
     for(const target of task.targets){
      if(targetStatus(task,target)!=='submitted')continue;
      target.activation={status:'running',writeAttempted:false};await checkpoint();
      target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await checkpoint();});
+     job.deploymentStep3ProgressAt=now();
      await checkpoint();
     }
     if(task.result.status==='submitted')serviceFailures=0;
@@ -143,7 +155,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    job.reactivationFinishedAt=now();
    if(outcomes.every(r=>r.status==='submitted'))job.status=job.tasks.every(t=>t.targets.every(r=>['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
    job.message=(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Accepted replicas were automatically reactivated where possible. Copy completion is separate and is not confirmed by activation. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
-
+   job.deploymentStep3ProgressAt=now();job.deploymentStep3ElapsedMs=(Number(job.deploymentStep3ElapsedMs)||0)+Math.max(0,job.deploymentStep3ProgressAt-startedAt);job.deploymentStep3StartedAt=null;
   }
  };
 }
