@@ -75,7 +75,7 @@ test('successful date jobs show confirmation instead of review details; partial 
 test('date progress uses persisted totals, separates uncertain work, and does not read task chunks',()=>{
  const job={_id:'j',status:'running',dates:{},courseTotal:8,totals:{total:10,updated:5,unchanged:1,failed:1,skipped:1,uncertain:1,pending:1},progress:{phase:'Applying dates',processed:9,total:10}};
  const html=createDateView({writeEnabled:()=>true}).render({},job,helpers);
- assert.match(html,/Apply progress/);assert.match(html,/80%/);assert.match(html,/<strong>5<\/strong><span>Updated<\/span>/);assert.match(html,/<strong>1<\/strong><span>Uncertain<\/span>/);assert.match(html,/<strong>1<\/strong><span>Pending<\/span>/);assert.match(html,/Running/);assert.match(html,/Approximate remaining time:/);assert.doesNotMatch(html,/>100%<|success-confirmation/);
+ assert.match(html,/Date Update Progress/);assert.match(html,/80%/);assert.match(html,/<strong>5<\/strong><span>Updated<\/span>/);assert.match(html,/<strong>1<\/strong><span>Uncertain<\/span>/);assert.match(html,/<strong>1<\/strong><span>Pending<\/span>/);assert.match(html,/Running/);assert.match(html,/Approximate remaining time:/);assert.doesNotMatch(html,/>100%<|success-confirmation/);
  job.status='completedWithErrors';const terminal=page(createDateView({writeEnabled:()=>true}).render({},job,helpers),{ltik:'session'});assert.match(terminal,/Completed with Issues/);assert.doesNotMatch(terminal,/Activity Dates Updated|success-confirmation/);
 });
 
@@ -127,7 +127,7 @@ test('Step 2 separates phases, uses activity metadata, and places Requested Date
 test('Step 3 state-specific progress retains counters and Requested Dates placement',()=>{
  const view=createDateView({writeEnabled:()=>true}),base={_id:'apply',dates:{},courseTotal:1,totals:{total:25,updated:20,unchanged:1,failed:1,skipped:1,uncertain:1,pending:1},step3StartedAt:1000,step3ElapsedMs:0,step3ProgressAt:10000};
  let html=view.render({}, {...base,status:'running'}, {...helpers,now:()=>16000});
- assert.ok(html.indexOf('Requested Dates')<html.indexOf('Apply progress'));assert.match(html,/92%/);assert.match(html,/<strong>23<\/strong> \/ 25/);assert.match(html,/Throughput: 96\.0 activities\/min/);assert.match(html,/Approximate remaining time:/);for(const label of ['Updated','Unchanged','Failed','Pending','Uncertain','Skipped'])assert.match(html,new RegExp(`<span>${label}<\\/span>`));
+ assert.ok(html.indexOf('Requested Dates')<html.indexOf('Date Update Progress'));assert.match(html,/92%/);assert.match(html,/<strong>23<\/strong> \/ 25/);assert.match(html,/Throughput: 96\.0 activities\/min/);assert.match(html,/Approximate remaining time:/);for(const label of ['Updated','Unchanged','Failed','Pending','Uncertain','Skipped'])assert.match(html,new RegExp(`<span>${label}<\\/span>`));
  html=view.render({}, {...base,status:'queued'},helpers);assert.match(html,/Waiting to start\. No ETA is available\./);assert.doesNotMatch(html,/Approximate remaining time|Calculating ETA/);
  html=view.render({}, {...base,status:'interrupted',step3StartedAt:null,step3ElapsedMs:12000},helpers);assert.match(html,/Progress paused — ETA unavailable/);assert.doesNotMatch(html,/Approximate remaining time:/);
  html=view.render({}, {...base,status:'completed',step3StartedAt:null,step3ElapsedMs:12000},helpers);assert.match(html,/Final elapsed: 12s/);assert.doesNotMatch(html,/Approximate remaining time|ETA: \d/);

@@ -398,7 +398,7 @@
   "Please wait a minute before requesting another sync.": "Espera un minuto antes de solicitar otra sincronización.",
   "Relaunch through Brightspace to sync org units.": "Vuelve a abrir la aplicación desde Brightspace para sincronizar.",
   "Could not request the sync. Please try again.": "No se pudo solicitar la sincronización. Inténtalo de nuevo.",
-  "Apply progress": "Progreso de la aplicación",
+  "Date Update Progress": "Progreso de actualización de fechas",
   "Current state:": "Estado actual:",
   "Applying dates": "Aplicando fechas",
   "Completed": "Completado",
