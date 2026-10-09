@@ -125,6 +125,16 @@ test('reservation order keeps concurrent measured and missing-header completions
  now=500;const third=await a.reserve(route);now=750;const fourth=await b.reserve(route);await b.complete(fourth,{...sample,cost:null});await a.complete(third,sample);assert.equal(m.doc.costs[hash(route)].fallbackCost,125);
  now=1000;const next=await b.reserve(route);assert.equal(next.reservedCost,125);
 });
+test('gate completion logs one sanitized Mongo error and propagates the original error',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ let now=0;const failure=Object.assign(new Error(`Updating the path 'costs.${hash(route)}.fallbackCost' would create a conflict at 'costs.${hash(route)}'`),{name:'MongoServerError',code:40,codeName:'ConflictingUpdateOperators'}),m=mongoModel(kind=>{if(kind==='complete')throw failure;}),gate=createConcurrentGate({key:'diagnostic',now:()=>now,mongoClient:m.client}),permit=await gate.reserve(route);
+ await assert.rejects(()=>gate.complete(permit,sample),error=>error===failure);assert.equal(m.calls.complete,1);assert.equal(lines.length,1);
+ const event=JSON.parse(lines[0]);assert.equal(event.operation,'api_gate_completion');assert.equal(event.code,40);assert.equal(event.codeName,'ConflictingUpdateOperators');assert.ok(!lines[0].includes(hash(route)));
+});
+test('successful API gate completion emits no Mongo diagnostic',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'diagnostic-success',now:()=>now,mongoClient:m.client}),permit=await gate.reserve(route);await gate.complete(permit,sample);assert.equal(lines.length,0);
+});
 test('a newly observed cost above the local budget fails closed rather than waiting forever',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const p=await gate.reserve(route);await gate.complete(p,{...sample,cost:40000});now=100000;await assert.rejects(()=>gate.reserve(route),/exceeds/);
 });

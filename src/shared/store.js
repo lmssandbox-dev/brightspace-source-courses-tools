@@ -6,6 +6,7 @@ const {reservesCourses}=require('../replication/outcomes');
 const {encodeDateJob,decodeDateJob,DIRTY,CHUNK_SIZE}=require('./dateChunks');
 const { interruptJob } = require('./jobs');
 const { databaseConfig } = require('./database');
+const {logMongoOperationFailure}=require('./diagnostics');
 // Dedicated application collections; ltijs collections are never accessed.
 function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}) {
   databaseConfig(uri);
@@ -24,7 +25,9 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
     async savePlanningProgress(job,worker,fields) {
       await this.renew(worker);
       const {jobs}=await collections();
-      const result=await jobs.updateOne({_id:job._id,namespace,worker,status:'planning'},{$set:{...fields,updatedAt:now()}});
+      let result;
+      try{result=await jobs.updateOne({_id:job._id,namespace,worker,status:'planning'},{$set:{...fields,updatedAt:now()}});}
+      catch(error){logMongoOperationFailure('planning_metadata_save',error);throw error;}
       return result.matchedCount===1;
     },
     async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(['sourceDeployment','courseCopy'].includes(kind)?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1,copyCheck:1,...(kind==='sourceDeployment'?{copySummary:{$let:{vars:{targets:{$reduce:{input:{$ifNull:['$tasks',[]]},initialValue:[],in:{$concatArrays:['$$value','$$this.targets']}}},monitors:{$objectToArray:{$ifNull:['$copyMonitor',{}]}}},in:{total:{$size:'$$targets'},copied:{$size:{$filter:{input:'$$targets',as:'target',cond:{$anyElementTrue:{$map:{input:'$$monitors',as:'monitor',in:{$and:[{$eq:['$$monitor.k','$$target.orgUnitId']},{$eq:['$$monitor.v.status','Copied successfully']}]}}}}}}}}}}}:{})}}).sort({createdAt:-1}).limit(100).toArray();},
@@ -150,7 +153,9 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       await this.renew(worker);
       if(job.kind!=='dates'&&Buffer.byteLength(JSON.stringify(snapshot))>8*1024*1024)throw new Error('Job exceeds storage limit.');
       const {jobs,chunks}=await collections();
-      const encoded=job.kind==='dates'?await encodeDateJob(job,chunks,namespace,job.dateChunks):snapshot;
+      let encoded;
+      try{encoded=job.kind==='dates'?await encodeDateJob(job,chunks,namespace,job.dateChunks):snapshot;}
+      catch(error){logMongoOperationFailure('job_checkpoint_save',error);throw error;}
       await this.renew(worker);
       const {_id,...data}=encoded;
       if(encoded.storageVersion===2&&job[DIRTY]&&job.dateChunks){
@@ -159,7 +164,9 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       }
       if(Buffer.byteLength(JSON.stringify(data))>8*1024*1024)throw new Error('Job metadata exceeds storage limit.');
       const statuses=job.kind==='dates'&&job.status==='cancelled'?{$in:['planning','cancelled']}:{$in:['planning','running']};
-      const r=await jobs.updateOne({_id,namespace,worker,status:statuses},{$set:data});
+      let r;
+      try{r=await jobs.updateOne({_id,namespace,worker,status:statuses},{$set:data});}
+      catch(error){logMongoOperationFailure('job_checkpoint_save',error);throw error;}
       if(!r.matchedCount)throw new Error('Job is no longer owned by this worker.');
       if(encoded.storageVersion===2){job.storageVersion=2;job.dateChunks=encoded.dateChunks;}
     },

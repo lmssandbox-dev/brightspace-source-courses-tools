@@ -4,6 +4,7 @@ const {MongoClient}=require('mongodb');
 const {performance}=require('node:perf_hooks');
 const {currentStep3Utilization}=require('./step3Utilization');
 const {currentStep2Utilization}=require('./step2Utilization');
+const {logMongoOperationFailure}=require('./diagnostics');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000,BUDGET_WINDOW_MS=60000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
@@ -107,7 +108,7 @@ function createConcurrentGate({uri,key,now=Date.now,monotonicNow=()=>performance
    const completionStarted=monotonicNow();
    let r;
    try{r=await c.updateOne({_id:key,'permits.token':permit.token},[update]);}
-   catch(error){restorePending(flush);throw error;}
+   catch(error){restorePending(flush);logMongoOperationFailure('api_gate_completion',error);throw error;}
    const completionPersistenceMs=Math.max(0,monotonicNow()-completionStarted);
    if(r.matchedCount!==1){restorePending(flush);throw Error('API permit lost');}
    const routeHash=hash(sample.route),buffered=pendingCompletion.get(routeHash)||{totalMs:0,samples:0};

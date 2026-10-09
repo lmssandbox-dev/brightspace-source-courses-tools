@@ -1,11 +1,11 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBulkStore}=require('../src/shared/store');
-function setup({lost=false,duplicate=false,recover=[],failChunkWrite=false}={}){
+function setup({lost=false,duplicate=false,recover=[],failChunkWrite=false,updateFailure=null,chunkFailure=null}={}){
  const calls=[];
  const collection=name=>({
-  updateOne:async(filter,update)=>{calls.push({name,op:'updateOne',filter,update});return {matchedCount:lost?0:1,modifiedCount:1};},
-  bulkWrite:async operations=>{calls.push({name,op:'bulkWrite',operations});if(failChunkWrite)throw Error('chunk write failed');},
+  updateOne:async(filter,update)=>{calls.push({name,op:'updateOne',filter,update});if(name==='bulk_date_jobs'&&updateFailure)throw updateFailure;return {matchedCount:lost?0:1,modifiedCount:1};},
+  bulkWrite:async operations=>{calls.push({name,op:'bulkWrite',operations});if(chunkFailure)throw chunkFailure;if(failChunkWrite)throw Error('chunk write failed');},
   updateMany:async(filter,update)=>{calls.push({name,op:'updateMany',filter,update});},
   findOneAndUpdate:async(filter,update,options)=>{calls.push({name,op:'claim',filter,update,options});if(duplicate)throw {code:11000};return {value:name==='bulk_date_locks'?{worker:'w'}:{_id:'j',...update.$set}};},
   find:filter=>({toArray:async()=>recover}),findOne:async(filter,options)=>{calls.push({name,op:'get',filter,projection:options?.projection});return null;},insertOne:async doc=>calls.push({name,op:'insert',doc})
@@ -40,6 +40,29 @@ test('planning progress is metadata-only, worker-fenced, and does not publish ch
  assert.deepEqual(write.filter,{_id:'j',namespace:'n',worker:'w',status:'planning'});assert.deepEqual(write.update.$set,{...fields,updatedAt:100});
  assert.ok(!Object.hasOwn(write.update.$set,'rows'));assert.ok(!Object.hasOwn(write.update.$set,'courses'));assert.ok(!Object.hasOwn(write.update.$set,'tasks'));
  assert.equal(s.calls.some(call=>call.name==='bulk_date_chunks'),false);
+});
+test('successful planning metadata and checkpoint writes emit no Mongo diagnostics',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ const s=setup();await s.store.savePlanningProgress({_id:'j'},'w',{progress:{phase:'Discovering activities'}});await s.store.save({_id:'j',kind:'dates',status:'planning',rows:[],courses:[],tasks:[]},'w');assert.equal(lines.length,0);
+});
+test('planning metadata errors emit one diagnostic and propagate unchanged',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ const failure=Object.assign(new Error("Updating the path 'progress.phase' would create a conflict at 'progress'"),{name:'MongoServerError',code:40,codeName:'ConflictingUpdateOperators'}),s=setup({updateFailure:failure});
+ await assert.rejects(()=>s.store.savePlanningProgress({_id:'j'},'w',{progress:{phase:'Discovering'}}),error=>error===failure);
+ assert.equal(s.calls.filter(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne').length,1);assert.equal(lines.length,1);
+ const event=JSON.parse(lines[0]);assert.equal(event.operation,'planning_metadata_save');assert.equal(event.code,40);assert.equal(event.codeName,'ConflictingUpdateOperators');assert.equal(event.message,"Updating the path 'progress.phase' would create a conflict at 'progress'");
+});
+test('checkpoint chunk-write errors emit the checkpoint label and propagate unchanged',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ const failure=Object.assign(new Error(`Updating the path 'dateChunks.tasks.0' would create a conflict at 'dateChunks.tasks'`),{name:'MongoServerError',code:40,codeName:'ConflictingUpdateOperators'}),s=setup({chunkFailure:failure}),job={_id:'j',kind:'dates',status:'planning',rows:[{row:1}],courses:[],tasks:[]};
+ await assert.rejects(()=>s.store.save(job,'w'),error=>error===failure);assert.equal(lines.length,1);
+ const event=JSON.parse(lines[0]);assert.equal(event.operation,'job_checkpoint_save');assert.equal(event.code,40);assert.equal(event.message,"Updating the path 'dateChunks.tasks.<index>' would create a conflict at 'dateChunks.tasks'");
+});
+test('checkpoint document-write errors use the checkpoint label and preserve the error',async t=>{
+ const lines=[],original=console.error;console.error=line=>lines.push(line);t.after(()=>{console.error=original;});
+ const failure=Object.assign(new Error('unsafe error text'),{name:'MongoServerError',code:40}),s=setup({updateFailure:failure}),job={_id:'j',kind:'dates',status:'planning',rows:[],courses:[],tasks:[]};
+ await assert.rejects(()=>s.store.save(job,'w'),error=>error===failure);assert.equal(lines.length,1);
+ const event=JSON.parse(lines[0]);assert.equal(event.operation,'job_checkpoint_save');assert.equal(event.message,undefined);
 });
 test('Mongo lease contention and lease loss prevent worker persistence',async()=>{
  assert.equal(await setup({duplicate:true}).store.acquire('w'),false);
