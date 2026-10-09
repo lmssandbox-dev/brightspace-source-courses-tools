@@ -16,6 +16,12 @@ Course Copy has up to eight submission workers. Each saves an uncertain-intent c
 
 Source Deployer runs up to eight independent source groups concurrently. Batches for the **same source** remain sequential and contain at most 100 replicas. Every batch preserves this sequence: deactivate and verify replicas, submit deployment, reactivate accepted replicas and verify active state. Rejected and uncertain replicas are never automatically activated. Deployment copy-log monitoring checks up to 10 replicas per dispatch with eight concurrent reads and keeps previously confirmed successes.
 
+### Source Deployer Step 3 utilization
+
+New Source Deployer jobs record `RENDER_GIT_COMMIT` as the build SHA when it is a valid commit SHA; otherwise the report shows `unknown`. Step 3 telemetry is bounded and saved through existing durable checkpoints. It includes complete/interrupted/incomplete measurement coverage, elapsed wall time, time-weighted Brightspace HTTP and active source-group concurrency, operation elapsed sums for deactivation/submission/reactivation, API admission and gate waits from the shared transport, logical checkpoint requests, durable queue wait, persisted batch sizes, and persistence durations. It adds no API calls or checkpoint writes and is not shown in user-facing pages or CSV reports.
+
+Run `node scripts/deployment-step3-utilization-report.js [job-id]` in Render Shell. With no ID it selects the newest Source Deployer job with measurements; if none exist, it displays the latest job with historical measurements as `unknown`. Elapsed time ends at the latest telemetry checkpoint's physical save start. Operation durations include API/gate and associated checkpoint waits, so they overlap the separately reported sums and can overlap across workers. API permit acquisition includes its component waits. Checkpoint queue wait is shown both as the sum across requests and as its union wall time. Persistence duration is the sum of completed saves through the latest durable measurement; the last save cannot persist its own completion duration.
+
 One primary job still holds the application worker lease. Date Manager resolves up to eight course identifiers and discovers up to eight courses concurrently, then updates up to six independent courses after the saved activity preview is confirmed. Assignment, Quiz and Forum reads run concurrently; independent forum topic reads are also scheduled concurrently. The API ceiling below covers all these workflows and concurrent monitor traffic together.
 
 ## Shared API budget

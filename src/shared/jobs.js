@@ -1,5 +1,6 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
+const {performance}=require('node:perf_hooks');
 const { parseCourseCsv } = require('../dates/courseCsv');
 const { validateDates } = require('../dates/activityWriters');
 const {validateZone,DEFAULT_ZONE}=require('../dates/timeZone');
@@ -12,6 +13,7 @@ const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const {createStep3Utilization,withStep3Utilization}=require('./step3Utilization');
 const {createStep2Utilization,withStep2Utilization}=require('./step2Utilization');
+const {createDeploymentStep3Utilization,getBuildSha}=require('../replication/step3Utilization');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
 const counts = tasks => tasks.reduce((out,t)=>{const s=t.result?.status || 'pending';out[s]=(out[s]||0)+1;return out;},{total:tasks.length});
 function interruptJob(job) {
@@ -31,12 +33,13 @@ function interruptJob(job) {
   if(job.kind==='sourceDeployment'){job.message='Deployment processing was interrupted. Check Brightspace before any new submission; saved acceptance IDs remain available.';for(const task of job.tasks)if(task.result?.error?.category==='UNCERTAIN_OUTCOME'){task.result.status='uncertain';task.result.error.message='Deployment outcome is unknown. Check Brightspace before retrying.';}}
   job.totals=counts(job.tasks);return job;
 }
-function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
+function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now,buildSha=process.env.RENDER_GIT_COMMIT}) {
   let busy=false;
   const worker=randomUUID();
   const cancelledJobs=new Set(),step3CancelJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
   let activeStep3Tracker=null,activeStep3Job=null,activeStep2Tracker=null,activeStep2Job=null;
+  let activeDeploymentStep3Tracker=null,activeDeploymentStep3Job=null,activeDeploymentStep3StartedAt=null,activeDeploymentStep3ElapsedBaseMs=0,activeDeploymentStep3Coverage='running';
   let planningWriteQueue=Promise.resolve();
   const withPlanningWrite=operation=>{const result=planningWriteQueue.then(operation);planningWriteQueue=result.catch(()=>{});return result;};
   const countCache=new WeakMap();
@@ -46,12 +49,16 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const step3Checkpoint=createCheckpointQueue(saveCheckpoint,{delayMs:STEP3_CHECKPOINT_DELAY_MS});
   function save(job,dirty,queue=checkpoint) {
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
+    if(activeDeploymentStep3Job===job._id)activeDeploymentStep3Tracker?.checkpointRequested?.();
     if(job.kind==='sourceDeployment'&&['ready','failed'].includes(job.status)&&Number.isFinite(job.performance.preparationStartedAt)&&job.performance.preparationMs==null){
       job.performance.preparationFinishedAt=now();job.performance.preparationMs=Math.max(0,job.performance.preparationFinishedAt-job.performance.preparationStartedAt);
       pendingPreparationTiming.add(job);
     }
     const tracker=activeStep2Job===job._id?activeStep2Tracker:null;tracker?.checkpointWait(1);
-    let result;try{result=queue(job,dirty);}catch(error){tracker?.checkpointWait(-1);throw error;}
+    let result;try{
+      const enqueue=()=>queue(job,dirty);
+      result=activeDeploymentStep3Job===job._id&&activeDeploymentStep3Tracker?withStep3Utilization(activeDeploymentStep3Tracker,enqueue):enqueue();
+    }catch(error){tracker?.checkpointWait(-1);throw error;}
     return Promise.resolve(result).then(()=>{pendingPreparationTiming.delete(job);}).finally(()=>tracker?.checkpointWait(-1));
   }
   const saveStep3=async(job,dirty)=>{
@@ -71,8 +78,11 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     }
     if(activeStep3Tracker&&activeStep3Job===job._id){job.performance ||= {};job.performance.dateStep3Utilization=activeStep3Tracker.snapshot();}
     if(activeStep2Tracker&&activeStep2Job===job._id){job.performance ||= {};job.performance.dateStep2Utilization=activeStep2Tracker.snapshot();}
-    job[DIRTY]=dirty;const started=now();
+    const deploymentTracker=activeDeploymentStep3Tracker&&activeDeploymentStep3Job===job._id?activeDeploymentStep3Tracker:null;
+    if(deploymentTracker){job.performance ||= {};job.performance.deploymentStep3Utilization=deploymentTracker.snapshot(activeDeploymentStep3Coverage,activeDeploymentStep3ElapsedBaseMs+Math.max(0,performance.now()-activeDeploymentStep3StartedAt));}
+    job[DIRTY]=dirty;const started=now(),monotonicStarted=performance.now();
     try {await withPlanningWrite(()=>store.save(job,worker));} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
+    deploymentTracker?.checkpointPersisted(Math.max(0,performance.now()-monotonicStarted));
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
     let checkedAt=-Infinity,cancelCheck;
@@ -277,7 +287,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
       if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
-      if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),buildSha:getBuildSha(buildSha),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
       dates=validateDates(dates);
@@ -313,13 +323,20 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.
           if(blocked){job.status='failed';job.message='A source or target has a deployment awaiting review in Brightspace. Review that job before modifying these courses.';}
-          else if(job.kind==='sourceDeployment')await deployment[job.operation==='activate'?'activate':'execute'](job,save,()=>store.renew(worker));
+          else if(job.kind==='sourceDeployment'&&job.operation!=='activate'){
+            const priorDeploymentMeasurement=job.performance?.deploymentStep3Utilization;
+            activeDeploymentStep3Tracker=createDeploymentStep3Utilization({prior:priorDeploymentMeasurement});activeDeploymentStep3Job=job._id;activeDeploymentStep3StartedAt=performance.now();activeDeploymentStep3ElapsedBaseMs=Number(priorDeploymentMeasurement?.elapsedMs)||0;activeDeploymentStep3Coverage='running';
+            try{await withStep3Utilization(activeDeploymentStep3Tracker,()=>deployment.execute(job,save,()=>store.renew(worker),activeDeploymentStep3Tracker));activeDeploymentStep3Coverage='complete';}
+            catch(error){activeDeploymentStep3Coverage='interrupted';throw error;}
+          }
+          else if(job.kind==='sourceDeployment')await deployment.activate(job,save,()=>store.renew(worker));
           else if(job.kind==='courseCopy')await courseCopy.execute(job,save,()=>store.renew(worker));
           else await execute(job);
         }
         const preparationSaved=job.kind==='sourceDeployment'&&phase==='preparation'&&job.performance.preparationMs!=null;
         if(!preparationSaved){job.performance[phase+'FinishedAt']=now();job.performance[phase+'Ms']=now()-job.performance[phase+'StartedAt'];await save(job);}
       } catch(error) {
+        if(activeDeploymentStep3Job===job?._id)activeDeploymentStep3Coverage='interrupted';
         if(activeStep3Job===job?._id)activeStep3Tracker?.finish();
         if(error.code==='JOB_CANCELLED'){
           if(job?.kind==='dates'&&activeStep3Job===job._id){job.status='cancelled';job.cancelledDuringStep3=true;job.message='Job cancelled. Confirmed updates are saved; activities not started remain pending.';job.step3StartedAt=null;try{await save(job);}catch{/* Keep the durable cancellation request for recovery. */}}
@@ -330,7 +347,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
           if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);step3CancelJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
+      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);step3CancelJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}if(activeDeploymentStep3Job===job._id){activeDeploymentStep3Tracker=null;activeDeploymentStep3Job=null;activeDeploymentStep3StartedAt=null;activeDeploymentStep3ElapsedBaseMs=0;activeDeploymentStep3Coverage='running';}}if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }

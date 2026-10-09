@@ -103,11 +103,12 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    job.status=job.tasks.every(t=>t.targets.every(r=>canActivateTarget(t,r)&&['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
    job.message=job.status==='activated'?'All replicas verified active. Copy completion was confirmed manually by the user.':'Some replicas were excluded from activation or could not be verified active. Inspect the per-replica results; eligible activation can be retried without deploying again.';
   },
-  async execute(job,save,renew){
+  async execute(job,save,renew,metrics){
    if(!enabled()){job.status='failed';job.message='Configure manageCourses:deploy:manage and orgunits:course:update before deploying.';return;}
    job.automaticReactivation=true;
    const startedAt=now();job.deploymentStep3ElapsedMs=Number(job.deploymentStep3ElapsedMs)||0;job.deploymentStep3StartedAt=startedAt;job.deploymentStep3ProgressAt=startedAt;
    let halted=false,serviceFailures=0;
+   const operation=(name,fn)=>metrics?.operation?metrics.operation(name,fn):fn();
    const recordFailure=error=>{
     const status=error?.httpStatus??error?.status??error?.response?.status;
     const service=status==null||status===403||status>=500;
@@ -123,33 +124,43 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};job.deploymentStep3ProgressAt=now();await checkpoint();return;}
     let preparationFailed=false;
     for(const target of task.targets){
+     await operation('deactivation',async()=>{
      target.deactivation={status:'running',writeAttempted:false};await checkpoint();
      target.deactivation=await client.setActive(target.orgUnitId,false,async()=>{await renew();target.deactivation.writeAttempted=true;await checkpoint();});
      job.deploymentStep3ProgressAt=now();
      await checkpoint();
+     });
      if(!['updated','unchanged'].includes(target.deactivation.status)||target.deactivation.verifiedActive!==false){
       recordFailure(target.deactivation.error);preparationFailed=true;break;
      }
     }
      if(preparationFailed){task.result=notSent(task,'Batch preparation failed. No deployment was sent. Some replicas may be inactive; inspect preparation results.');job.deploymentStep3ProgressAt=now();await checkpoint();return;}
+    await operation('deploymentSubmission',async()=>{
     task.submittedAt=now();
     task.result={status:'running',writeAttempted:false};await checkpoint();
     task.result=await client.deploy(task.sourceId,task.targets.map(t=>t.orgUnitId),async()=>{await renew();task.result.writeAttempted=true;await checkpoint();});
     job.deploymentStep3ProgressAt=now();await checkpoint();
+    });
     // Reactivation follows acceptance, not completion of the asynchronous copy.
     for(const target of task.targets){
      if(targetStatus(task,target)!=='submitted')continue;
+     await operation('reactivation',async()=>{
      target.activation={status:'running',writeAttempted:false};await checkpoint();
      target.activation=await client.setActive(target.orgUnitId,true,async()=>{await renew();target.activation.writeAttempted=true;await checkpoint();});
      job.deploymentStep3ProgressAt=now();
      await checkpoint();
+     });
     }
     if(task.result.status==='submitted')serviceFailures=0;
     else if(task.result.status==='submittedWithErrors')serviceFailures=0;
     else recordFailure(task.result.error);
     // Submission and each activation result were already checkpointed above.
    }
-   await pool([...groups.values()],8,async(group,_index,stopped)=>{for(const {task,index} of group){if(stopped())return;await submit(task,index);}});
+   await pool([...groups.values()],8,async(group,_index,stopped)=>{
+    metrics?.changeSourceGroupWorkers?.(1);
+    try{for(const {task,index} of group){if(stopped())return;await submit(task,index);}}
+    finally{metrics?.changeSourceGroupWorkers?.(-1);}
+   });
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
    job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
    job.reactivationFinishedAt=now();

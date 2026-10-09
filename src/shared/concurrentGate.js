@@ -183,7 +183,7 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
  }
  return async config=>{
   const elevated=isCodeResolution(config)||isCopyRequest(config)||isDeploymentRequest(config)||isDateDiscovery(config);
-  const tracker=isDateDiscovery(config)?currentStep2Utilization():elevated?null:currentStep3Utilization(),queuedAt=monotonicNow();
+  const tracker=isDateDiscovery(config)?currentStep2Utilization():isDeploymentRequest(config)||!elevated?currentStep3Utilization():null,queuedAt=monotonicNow();
   tracker?.changeWait?.('httpAdmission',1);try{await new Promise(resolve=>{waiting.push({elevated,resolve});drain();});}finally{tracker?.changeWait?.('httpAdmission',-1);}
   if(tracker)tracker.add('httpAdmissionWaitMs',Math.max(0,monotonicNow()-queuedAt));
   try{return await run(config,tracker);}finally{active--;if(!elevated)ordinaryActive--;drain();}

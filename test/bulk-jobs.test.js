@@ -16,7 +16,7 @@ function setup(options={}) {
  const courses={resolve:async r=>{calls.push('resolve');if(r.orgUnitId==='999')throw Error('bad');return {orgUnitId:r.orgUnitId||'1',code:'001',name:'Course'};},get:async id=>({orgUnitId:id}),...options.courses};
  const discovery={discover:async org=>{const activities=['assignment','quiz','discussionTopic'].map((type,i)=>({type,id:String(i+1),parentId:'7',key:`${type}:${org}:${i+1}`,name:type}));return {complete:!options.partial,activities,nativeActivities:activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:a.parentId}}))};},...options.discovery};
  const writer={updateActivityDates:async r=>{calls.push(r.dryRun?'preview':'write');if(!r.dryRun&&options.fail)return {status:'failed',error:{category:'API_FAILURE',httpStatus:options.fail}};return {status:r.dryRun?'ready':'updated',verifiedDates:{start:null,due:null,end:null},writeAttempted:!r.dryRun};},...options.writer};
- const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,deployment:options.deployment,now:options.now||(()=>1000)});
+ const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,deployment:options.deployment,buildSha:options.buildSha,now:options.now||(()=>1000)});
  return {jobs,data,calls,store,courses,discovery};
 }
 test('bulk job interface forwards metadata-only status reads from its store',async()=>{
@@ -32,8 +32,9 @@ test('Source Deployer preparation duration is saved with ready plan and retained
   setActive:async(_id,active,before)=>{await before();return {status:'updated',verifiedActive:active,writeAttempted:true};},
   deploy:async(_source,targets,before)=>{await before();return {status:'submitted',writeAttempted:true,targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}
  }});
- const s=setup({deployment,enforceWorkerStatus:true,now:clock});
+ const s=setup({deployment,enforceWorkerStatus:true,buildSha:'0123456789abcdef0123456789abcdef01234567',now:clock});
  const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});
+ assert.equal((await s.jobs.get(created._id,'a')).buildSha,'0123456789abcdef0123456789abcdef01234567');
  await s.jobs.tick();
  const ready=await s.jobs.get(created._id,'a');
  assert.equal(ready.status,'ready');assert.ok(Number.isFinite(ready.performance.preparationMs));assert.ok(ready.performance.preparationMs>0);
@@ -41,6 +42,16 @@ test('Source Deployer preparation duration is saved with ready plan and retained
  assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
  const executed=await s.jobs.get(created._id,'a');
  assert.equal(executed.status,'activated');assert.equal(executed.performance.preparationMs,duration);
+ const telemetry=executed.performance.deploymentStep3Utilization;
+ assert.equal(telemetry.coverage,'complete');assert.equal(telemetry.operations.deactivation.calls,1);assert.equal(telemetry.operations.deploymentSubmission.calls,1);assert.equal(telemetry.operations.reactivation.calls,1);
+ assert.ok(telemetry.logicalCheckpointRequests>0);assert.ok(telemetry.physicalCheckpoints>0);assert.equal(executed.buildSha,'0123456789abcdef0123456789abcdef01234567');
+});
+test('Source Deployer records interrupted Step 3 coverage after execution errors',async()=>{
+ const deployment={parse:()=>[],plan:async job=>{job.tasks=[{sourceId:'10',targets:[{orgUnitId:'20'}]}];job.status='ready';},execute:async()=>{throw Error('simulated execution interruption');}};
+ const s=setup({deployment});const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});
+ await s.jobs.tick();assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
+ const interrupted=await s.jobs.get(created._id,'a');
+ assert.equal(interrupted.status,'interrupted');assert.equal(interrupted.performance.deploymentStep3Utilization.coverage,'interrupted');
 });
 test('all course validation and discovery are read-only; confirmation executes only stored deduplicated plan',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n,001\n2,',dates});

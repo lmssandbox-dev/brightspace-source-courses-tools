@@ -39,6 +39,8 @@ Step 2 discovery utilization lives in `src/shared/step2Utilization.js`; it uses 
 
 Use `node scripts/api-gate-state-report.js` for a one-shot read-only snapshot of current shared API-gate state and stored discovery-route costs. It reads the tenant gate document only; snapshots do not establish historical gate conditions or available Brightspace capacity.
 
+Source Deployer Step 3 utilization is saved on existing durable checkpoints in bounded `performance.deploymentStep3Utilization` metadata and is excluded from user-facing pages and CSV reports. It records build SHA from `RENDER_GIT_COMMIT` only when that value is a valid commit SHA; otherwise it stores `unknown`. Use `node scripts/deployment-step3-utilization-report.js [job-id]` for the administrator-only report. Elapsed time ends when the latest telemetry checkpoint begins its physical save. Treat operation and API wait durations as overlapping sums; API permit acquisition includes its component waits. Queue-wait union and time-weighted concurrency are wall-time measurements. Persistence duration covers completed saves before the most recent telemetry checkpoint because a save cannot durably include its own completion time.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.
