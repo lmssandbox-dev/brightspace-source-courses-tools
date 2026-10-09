@@ -103,6 +103,17 @@ test('stalled, interrupted, resumed, and completed date jobs show safe timing st
  assert.match(html,/Final elapsed: 1m 0s/);assert.match(html,/Throughput: 25\.0 activities\/min/);assert.doesNotMatch(html,/ETA|Calculating/);
 });
 
+test('Step 2 shows one adaptive planning ETA and final elapsed time',()=>{
+ const view=createDateView({writeEnabled:()=>true});let time=60000;
+ const job={_id:'plan',status:'planning',dates:{},totals:{total:0},progress:{phase:'Resolving courses',processed:12,total:30},step2StartedAt:10000,step2ElapsedMs:5000,step2ProgressAt:55000,step2CourseProgressAt:55000};
+ let html=view.render({},job,{...helpers,now:()=>time});
+ assert.match(html,/Review progress/);assert.match(html,/Resolving courses/);assert.match(html,/<strong>12<\/strong> \/ 30/);assert.match(html,/Elapsed: 55s/);assert.match(html,/Calculating ETA…/);assert.doesNotMatch(html,/ETA: \d/);
+ job.progress={phase:'Discovering activities',processed:12,total:30};job.step2ProgressAt=55000;job.step2SampleCount=3;job.step2RatePerMs=0.001;
+ html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Discovering activities/);assert.match(html,/ETA: 18s/);
+ job.step2CourseProgressAt=0;time=200000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Progress paused — ETA unavailable/);
+ job.status='ready';job.step2StartedAt=null;job.step2ElapsedMs=55000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Final elapsed: 55s/);assert.doesNotMatch(html,/ETA: \d|Calculating ETA/);
+});
+
 test('CSV checking screens stay compact while retaining refresh, report and cancellation',()=>{
  for(const status of ['validating','planning']){
  const job={_id:'j',status,dates:{},rows:[],courses:[],tasks:[]};

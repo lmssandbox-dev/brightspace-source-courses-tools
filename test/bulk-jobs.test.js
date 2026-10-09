@@ -9,7 +9,8 @@ function setup(options={}) {
  claim:async()=>{const j=[...data.values()].find(j=>['queued','validating'].includes(j.status));if(!j)return null;j.status=j.status==='queued'?'running':'planning';return structuredClone(j);},
  confirm:async(id,owner,time)=>{const j=data.get(id);if(!j||j.owner!==owner||j.status!=='ready'||j.expiresAt<=time)return false;j.status='queued';return true;},
  cancel:async(id,owner)=>{const j=data.get(id);if(!j||j.owner!==owner||!['validating','planning','ready','queued'].includes(j.status))return false;j.status='cancelled';return true;},
- isCancelled:async(id,owner)=>data.get(id)?.owner===owner&&data.get(id)?.status==='cancelled'};
+ isCancelled:async(id,owner)=>data.get(id)?.owner===owner&&data.get(id)?.status==='cancelled',
+ savePlanningProgress:async(job,worker,fields)=>{Object.assign(data.get(job._id),structuredClone(fields));return true;}};
  const courses={resolve:async r=>{calls.push('resolve');if(r.orgUnitId==='999')throw Error('bad');return {orgUnitId:r.orgUnitId||'1',code:'001',name:'Course'};},get:async id=>({orgUnitId:id}),...options.courses};
  const discovery={discover:async org=>{const activities=['assignment','quiz','discussionTopic'].map((type,i)=>({type,id:String(i+1),parentId:'7',key:`${type}:${org}:${i+1}`,name:type}));return {complete:!options.partial,activities,nativeActivities:activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:a.parentId}}))};},...options.discovery};
  const writer={updateActivityDates:async r=>{calls.push(r.dryRun?'preview':'write');if(!r.dryRun&&options.fail)return {status:'failed',error:{category:'API_FAILURE',httpStatus:options.fail}};return {status:r.dryRun?'ready':'updated',verifiedDates:{start:null,due:null,end:null},writeAttempted:!r.dryRun};},...options.writer};
@@ -39,6 +40,13 @@ test('Date Manager course resolution retains eight concurrent row workers',async
  const s=setup({courses:{resolve:async row=>{peak=Math.max(peak,++active);await new Promise(resolve=>setImmediate(resolve));active--;return {orgUnitId:row.orgUnitId};}}});
  const j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n'+Array.from({length:20},(_,i)=>`${i+1},`).join('\n'),dates});
  await s.jobs.tick();assert.equal(peak,8);assert.equal((await s.jobs.get(j._id,'a')).courses.length,20);
+});
+test('Step 2 metadata persistence is throttled and runs independently of durable checkpoints',async()=>{
+ let time=1000,metadataWrites=0;
+ const s=setup({now:()=>time,courses:{resolve:async row=>{time+=6000;await new Promise(resolve=>setTimeout(resolve,1200));return {orgUnitId:row.orgUnitId};}}});
+ const saveProgress=s.store.savePlanningProgress;s.store.savePlanningProgress=async(...args)=>{metadataWrites++;return saveProgress(...args);};
+ const j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
+ assert.equal(metadataWrites,2);assert.equal((await s.jobs.get(j._id,'a')).status,'ready');
 });
 test('Date Manager discovery feeds eight concurrent course reads',async()=>{
  let active=0,peak=0;

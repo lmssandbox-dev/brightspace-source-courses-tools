@@ -31,6 +31,8 @@ Completed Date Manager status views render from one lightweight metadata read; `
 
 Date Manager discovery uses up to eight independent courses. Assignment, Quiz, Forum, and independent Forum Topic collection reads use the eight-request API allowance under the shared global ceiling of eight; unrelated ordinary requests remain limited to four. The shared API gate permits at most two concurrent MongoDB reservation attempts per process while atomic database filters enforce cross-process limits. Discovery checkpoints batch 500 progress increments while retaining worker fencing, cancellation safety, and a final durable save before readiness. Step 3 uses a separate 25 ms checkpoint coalescing window; each write intent and verified outcome remains durable before the worker proceeds. Planning previews reuse collection-returned native activity data; apply retains the pre-write GET and post-write read-back.
 
+Date Manager Step 2 status uses a worker-fenced metadata-only progress update about every five seconds. It must not write rows, courses, tasks or activity chunks and must not replace the resolution-boundary save or 500-increment discovery checkpoints. Step 2 timing is separate from Step 3; recovery excludes downtime and work after the last durable progress point. Keep the ten-second status refresh and calculate one overall planning ETA from metadata only; resolution shows “Calculating ETA…” unless a reliable discovery baseline already exists.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.

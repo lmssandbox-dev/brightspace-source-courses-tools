@@ -405,5 +405,14 @@
   "Throughput:": "Throughput:",
   "activities/min": "activities/min",
   "Calculating ETA…": "Calculating ETA…",
-  "Progress paused — ETA unavailable": "Progress paused — ETA unavailable"
+  "Progress paused — ETA unavailable": "Progress paused — ETA unavailable",
+  "Review progress": "Review progress",
+  "Current phase:": "Current phase:",
+  "Resolving courses": "Resolving courses",
+  "Discovering activities": "Discovering activities",
+  "courses resolved": "courses resolved",
+  "courses discovered": "courses discovered",
+  "ETA: {0}": "ETA: {0}",
+  "Elapsed: {0}": "Elapsed: {0}",
+  "Final elapsed: {0}": "Final elapsed: {0}"
 }

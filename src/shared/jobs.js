@@ -7,6 +7,7 @@ const TYPES=['assignment','quiz','discussionTopic'];
 const MAX_ACTIVITIES=250000;
 const DISCOVERY_CHECKPOINT_SIZE=500;
 const STEP3_CHECKPOINT_DELAY_MS=25;
+const STEP2_PROGRESS_PERSIST_MS=5000;
 const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
@@ -33,6 +34,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const worker=randomUUID();
   const cancelledJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
+  let planningWriteQueue=Promise.resolve();
+  const withPlanningWrite=operation=>{const result=planningWriteQueue.then(operation);planningWriteQueue=result.catch(()=>{});return result;};
   const countCache=new WeakMap();
   const createCheckpointQueue=require('./checkpointQueue').createCheckpointQueue;
   const checkpoint=createCheckpointQueue(saveCheckpoint);
@@ -45,12 +48,48 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
+    if(job.kind==='dates'&&job.status==='planning'&&Number.isFinite(job.step2StartedAt)){
+      const time=now(),previous=job.step2DurableProgress;
+      job.step2ProgressAt=time;
+      if(!previous||previous.phase!==job.progress?.phase||previous.processed!==job.progress?.processed)job.step2CourseProgressAt=time;
+      job.step2DurableProgress=job.progress?{...job.progress}:null;
+    }
     job[DIRTY]=dirty;const started=now();
-    try {await store.save(job,worker);} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
+    try {await withPlanningWrite(()=>store.save(job,worker));} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
   async function plan(job) {
     let checkedAt=-Infinity,cancelCheck;
+    const segmentStartedAt=now();
+    job.step2ElapsedMs=Number(job.step2ElapsedMs)||0;job.step2StartedAt=segmentStartedAt;job.step2ProgressAt=segmentStartedAt;job.step2CourseProgressAt=segmentStartedAt;
+    const resolving=job.rows.some(row=>row.status==='pending');
+    job.progress={phase:resolving?'Resolving courses':'Discovering activities',processed:resolving?job.rows.filter(row=>row.status!=='pending').length:job.courses.filter(course=>course.status!=='pending').length,total:resolving?job.rows.length:job.courses.length};
+    job.step2SampleAt=segmentStartedAt;job.step2SampleProcessed=job.progress.processed;job.step2SamplePhase=job.progress.phase;job.step2SampleCount=0;
+    let lastPersistAt=segmentStartedAt,metadataFailure=null,metadataBusy=false,lastPersistedProgress=`${job.progress.phase}:${job.progress.processed}`;
+    const persistPlanningProgress=force=>{
+      if(metadataBusy||(!force&&now()-lastPersistAt<STEP2_PROGRESS_PERSIST_MS))return Promise.resolve();
+      metadataBusy=true;
+      return withPlanningWrite(async()=>{
+        const time=now(),phase=job.progress?.phase,processed=Number(job.progress?.processed)||0;
+        let rate=Number(job.step2RatePerMs)||0;
+        if(phase===job.step2SamplePhase&&Number.isFinite(job.step2SampleAt)&&time>job.step2SampleAt&&processed>Number(job.step2SampleProcessed||0)){
+          const observed=(processed-Number(job.step2SampleProcessed||0))/(time-job.step2SampleAt);
+          rate=rate>0?rate*0.7+observed*0.3:observed;
+        } else if(phase!==job.step2SamplePhase)rate=0;
+        const progressKey=`${phase}:${processed}`,courseProgressAt=progressKey!==lastPersistedProgress?time:job.step2CourseProgressAt;
+        const sampleCount=phase===job.step2SamplePhase?(Number(job.step2SampleCount)||0)+(processed>Number(job.step2SampleProcessed||0)?1:0):0;
+        const fields={progress:job.progress,step2StartedAt:job.step2StartedAt,step2ProgressAt:time,step2CourseProgressAt:courseProgressAt,step2RatePerMs:rate,step2SampleAt:time,step2SampleProcessed:processed,step2SamplePhase:phase,step2SampleCount:sampleCount};
+        if(typeof store.savePlanningProgress==='function'){
+          const saved=await store.savePlanningProgress(job,worker,fields);
+          if(!saved&&job.status==='planning'){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Planning worker no longer owns this job.'),{workerLease:true});}
+        }
+        Object.assign(job,fields);lastPersistAt=time;lastPersistedProgress=progressKey;
+      }).catch(error=>{metadataFailure=error;unsafeWorkerJobs.add(job._id);if(!error.persistenceFailure&&!error.workerLease)error.persistenceFailure=true;throw error;}).finally(()=>{metadataBusy=false;});
+    };
+    const progressTimer=setInterval(()=>{if(!metadataBusy&&now()-lastPersistAt>=STEP2_PROGRESS_PERSIST_MS)persistPlanningProgress(false).catch(()=>{});},1000);
+    progressTimer.unref?.();
     const checkCancelled=async(force=false)=>{
+      if(metadataFailure)throw metadataFailure;
+      if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Planning worker persistence is unavailable.'),{persistenceFailure:true});
       if(cancelledJobs.has(job._id)){job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
       if(force||now()-checkedAt>=1000){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{
         if(await store.isCancelled?.(job._id,job.owner)){cancelledJobs.add(job._id);job.status='cancelled';throw Object.assign(Error('Planning cancelled'),{code:'JOB_CANCELLED'});}
@@ -78,7 +117,9 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     job.courses.sort((a,b)=>a.row-b.row);
     job.courseTotal=job.courses.length;
     await save(job);
+    job.step2SampleAt=now();job.step2SampleProcessed=job.courses.filter(c=>c.status!=='pending').length;job.step2SamplePhase='Discovering activities';job.step2SampleCount=0;job.step2RatePerMs=0;
     let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
+    job.progress={phase:'Discovering activities',processed:discovered,total:job.courses.length,activities:job.tasks.length};
     let discoveryCheckpoint=0;
     await pool(job.courses.filter(c=>c.status==='pending'),8,async (course,index,stopped)=>{
       let checkpointFailure;
@@ -112,12 +153,19 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)await save(job);
     },async()=>{await checkCancelled();return true;});
     await checkCancelled(true);
+    await persistPlanningProgress(true);
     job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
     job.expiresAt=now()+30*60*1000;
     if(!job.tasks.length)job.message='No eligible activities were found.';
     } catch(error) {
       if(error.code!=='JOB_CANCELLED')throw error;
       job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';
+    } finally {
+      clearInterval(progressTimer);
+      await planningWriteQueue;
+      if(['ready','failed','cancelled'].includes(job.status)){
+        job.step2ElapsedMs=(Number(job.step2ElapsedMs)||0)+Math.max(0,now()-segmentStartedAt);job.step2StartedAt=null;
+      }
     }
   }
   async function execute(job) {

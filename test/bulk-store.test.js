@@ -30,7 +30,16 @@ test('Date Manager status reads select aggregate metadata without decoding chunk
  const s=setup();await s.store.getStatus('j','owner');const call=s.calls.at(-1);
  assert.equal(call.name,'bulk_date_jobs');assert.equal(call.op,'get');assert.deepEqual(call.filter,{_id:'j',owner:'owner',namespace:'n'});
  assert.equal(call.projection.dateChunks,undefined);assert.equal(call.projection.totals,1);assert.equal(call.projection.progress,1);
+ assert.equal(call.projection.step2ElapsedMs,1);assert.equal(call.projection.step2StartedAt,1);assert.equal(call.projection.step2ProgressAt,1);assert.equal(call.projection.step2CourseProgressAt,1);assert.equal(call.projection.step2SampleCount,1);
  assert.equal(call.projection.step3StartedAt,1);assert.equal(call.projection.step3ElapsedMs,1);assert.equal(call.projection.step3ProgressAt,1);
+});
+test('planning progress is metadata-only, worker-fenced, and does not publish chunks',async()=>{
+ const s=setup();const fields={progress:{phase:'Discovering activities',processed:7,total:12},step2StartedAt:10,step2ProgressAt:80,step2RatePerMs:0.1,step2SampleAt:80,step2SampleProcessed:7,step2SamplePhase:'Discovering activities',step2SampleCount:3};
+ assert.equal(await s.store.savePlanningProgress({_id:'j'},'w',fields),true);
+ const write=s.calls.find(call=>call.name==='bulk_date_jobs'&&call.op==='updateOne');
+ assert.deepEqual(write.filter,{_id:'j',namespace:'n',worker:'w',status:'planning'});assert.deepEqual(write.update.$set,{...fields,updatedAt:100});
+ assert.ok(!Object.hasOwn(write.update.$set,'rows'));assert.ok(!Object.hasOwn(write.update.$set,'courses'));assert.ok(!Object.hasOwn(write.update.$set,'tasks'));
+ assert.equal(s.calls.some(call=>call.name==='bulk_date_chunks'),false);
 });
 test('Mongo lease contention and lease loss prevent worker persistence',async()=>{
  assert.equal(await setup({duplicate:true}).store.acquire('w'),false);
@@ -67,6 +76,12 @@ test('chunked date recovery requeues checkpoints without rewriting tasks',async(
  await s.store.acquire('w');const changes=s.calls.filter(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
  assert.deepEqual(changes.map(c=>c.update.$set.status),['validating','queued']);assert.ok(changes.every(c=>!Object.hasOwn(c.update.$set,'tasks')));
  assert.equal(changes[1].update.$set.step3ElapsedMs,55);assert.equal(changes[1].update.$set.step3StartedAt,null);
+});
+test('chunked planning recovery counts only the last durable Step 2 progress point',async()=>{
+ const durable={phase:'Discovering activities',processed:4,total:10,activities:20};
+ const s=setup({recover:[{_id:'p',kind:'dates',storageVersion:2,status:'planning',progress:{phase:'Discovering activities',processed:8,total:10},step2DurableProgress:durable,step2StartedAt:20,step2ProgressAt:80,step2ElapsedMs:10}]});
+ await s.store.acquire('w');const change=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
+ assert.equal(change.update.$set.step2ElapsedMs,70);assert.equal(change.update.$set.step2StartedAt,null);assert.equal(change.update.$set.step2ProgressAt,null);assert.equal(change.update.$set.step2CourseProgressAt,null);assert.deepEqual(change.update.$set.progress,durable);assert.equal(change.update.$set.step2RatePerMs,0);
 });
 test('legacy Date Manager recovery accumulates only the active segment and clears its start marker',async()=>{
  const s=setup({recover:[{_id:'r',kind:'dates',status:'running',tasks:[],step3StartedAt:20,step3ElapsedMs:10,step3ProgressAt:80}]});

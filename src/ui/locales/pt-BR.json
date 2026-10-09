@@ -405,5 +405,14 @@
   "Throughput:": "Ritmo:",
   "activities/min": "atividades/min",
   "Calculating ETA…": "Calculando tempo restante…",
-  "Progress paused — ETA unavailable": "Progresso pausado — tempo restante indisponível"
+  "Progress paused — ETA unavailable": "Progresso pausado — tempo restante indisponível",
+  "Review progress": "Progresso da revisão",
+  "Current phase:": "Etapa atual:",
+  "Resolving courses": "Resolvendo cursos",
+  "Discovering activities": "Descobrindo atividades",
+  "courses resolved": "cursos resolvidos",
+  "courses discovered": "cursos descobertos",
+  "ETA: {0}": "Tempo restante: {0}",
+  "Elapsed: {0}": "Tempo decorrido: {0}",
+  "Final elapsed: {0}": "Tempo total: {0}"
 }
