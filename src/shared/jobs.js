@@ -40,14 +40,19 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   let planningWriteQueue=Promise.resolve();
   const withPlanningWrite=operation=>{const result=planningWriteQueue.then(operation);planningWriteQueue=result.catch(()=>{});return result;};
   const countCache=new WeakMap();
+  const pendingPreparationTiming=new WeakSet();
   const createCheckpointQueue=require('./checkpointQueue').createCheckpointQueue;
   const checkpoint=createCheckpointQueue(saveCheckpoint);
   const step3Checkpoint=createCheckpointQueue(saveCheckpoint,{delayMs:STEP3_CHECKPOINT_DELAY_MS});
   function save(job,dirty,queue=checkpoint) {
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
+    if(job.kind==='sourceDeployment'&&['ready','failed'].includes(job.status)&&Number.isFinite(job.performance.preparationStartedAt)&&job.performance.preparationMs==null){
+      job.performance.preparationFinishedAt=now();job.performance.preparationMs=Math.max(0,job.performance.preparationFinishedAt-job.performance.preparationStartedAt);
+      pendingPreparationTiming.add(job);
+    }
     const tracker=activeStep2Job===job._id?activeStep2Tracker:null;tracker?.checkpointWait(1);
     let result;try{result=queue(job,dirty);}catch(error){tracker?.checkpointWait(-1);throw error;}
-    return Promise.resolve(result).finally(()=>tracker?.checkpointWait(-1));
+    return Promise.resolve(result).then(()=>{pendingPreparationTiming.delete(job);}).finally(()=>tracker?.checkpointWait(-1));
   }
   const saveStep3=async(job,dirty)=>{
     const tracker=activeStep3Job===job._id?activeStep3Tracker:null;
@@ -312,14 +317,15 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           else if(job.kind==='courseCopy')await courseCopy.execute(job,save,()=>store.renew(worker));
           else await execute(job);
         }
-        job.performance[phase+'FinishedAt']=now();job.performance[phase+'Ms']=now()-job.performance[phase+'StartedAt'];
-        await save(job);
+        const preparationSaved=job.kind==='sourceDeployment'&&phase==='preparation'&&job.performance.preparationMs!=null;
+        if(!preparationSaved){job.performance[phase+'FinishedAt']=now();job.performance[phase+'Ms']=now()-job.performance[phase+'StartedAt'];await save(job);}
       } catch(error) {
         if(activeStep3Job===job?._id)activeStep3Tracker?.finish();
         if(error.code==='JOB_CANCELLED'){
           if(job?.kind==='dates'&&activeStep3Job===job._id){job.status='cancelled';job.cancelledDuringStep3=true;job.message='Job cancelled. Confirmed updates are saved; activities not started remain pending.';job.step3StartedAt=null;try{await save(job);}catch{/* Keep the durable cancellation request for recovery. */}}
           return;
         }
+        if(job&&pendingPreparationTiming.has(job)){delete job.performance.preparationFinishedAt;delete job.performance.preparationMs;pendingPreparationTiming.delete(job);}
         require('./diagnostics').logFailure('job_worker_failed',error,{kind:job?.kind,jobId:job?._id});
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);

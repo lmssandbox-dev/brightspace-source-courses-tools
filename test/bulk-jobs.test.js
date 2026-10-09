@@ -2,12 +2,13 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBulkJobs,interruptJob}=require('../src/shared/jobs');
 const {encodeDateJob}=require('../src/shared/dateChunks');
+const {createDeploymentJobs}=require('../src/replication/jobs');
 const dates={start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'};
 function setup(options={}) {
  const data=new Map(),calls=[];let held=false;
  const store={insert:async j=>data.set(j._id,structuredClone(j)),get:async(id,owner)=>{const j=data.get(id);return j?.owner===owner?structuredClone(j):null;},getStatus:options.getStatus||(async()=>null),list:async owner=>[...data.values()].filter(j=>j.owner===owner),
- acquire:async()=>{if(held)return false;held=true;return true;},renew:async()=>{},release:async()=>{held=false;},save:async j=>{const prior=data.get(j._id)||{};data.set(j._id,{...structuredClone(j),...(prior.cancelRequestedAt?{cancelRequestedAt:prior.cancelRequestedAt}:{})});},
- claim:async()=>{const j=[...data.values()].find(j=>['queued','validating'].includes(j.status));if(!j)return null;j.status=j.status==='queued'?'running':'planning';return structuredClone(j);},
+ acquire:async()=>{if(held)return false;held=true;return true;},renew:async()=>{},release:async()=>{held=false;},save:async j=>{const prior=data.get(j._id)||{};if(options.enforceWorkerStatus&&!['planning','running'].includes(prior.status))throw Error('Job is no longer owned by this worker.');data.set(j._id,{...structuredClone(j),...(prior.cancelRequestedAt?{cancelRequestedAt:prior.cancelRequestedAt}:{})});},
+ claim:async()=>{const j=[...data.values()].find(j=>['queued','validating'].includes(j.status));if(!j)return null;j.status=j.status==='queued'?'running':'planning';data.set(j._id,structuredClone(j));return structuredClone(j);},
  confirm:async(id,owner,time)=>{const j=data.get(id);if(!j||j.owner!==owner||j.status!=='ready'||j.expiresAt<=time)return false;j.status='queued';return true;},
  cancel:async(id,owner)=>{const j=data.get(id);if(!j||j.owner!==owner)return false;if(j.status==='running'){j.cancelRequestedAt??=1000;return true;}if(!['validating','planning','ready','queued'].includes(j.status))return false;j.status='cancelled';return true;},
  isCancelled:async(id,owner)=>data.get(id)?.owner===owner&&(data.get(id)?.status==='cancelled'||Boolean(data.get(id)?.cancelRequestedAt)),
@@ -15,7 +16,7 @@ function setup(options={}) {
  const courses={resolve:async r=>{calls.push('resolve');if(r.orgUnitId==='999')throw Error('bad');return {orgUnitId:r.orgUnitId||'1',code:'001',name:'Course'};},get:async id=>({orgUnitId:id}),...options.courses};
  const discovery={discover:async org=>{const activities=['assignment','quiz','discussionTopic'].map((type,i)=>({type,id:String(i+1),parentId:'7',key:`${type}:${org}:${i+1}`,name:type}));return {complete:!options.partial,activities,nativeActivities:activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:a.parentId}}))};},...options.discovery};
  const writer={updateActivityDates:async r=>{calls.push(r.dryRun?'preview':'write');if(!r.dryRun&&options.fail)return {status:'failed',error:{category:'API_FAILURE',httpStatus:options.fail}};return {status:r.dryRun?'ready':'updated',verifiedDates:{start:null,due:null,end:null},writeAttempted:!r.dryRun};},...options.writer};
- const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,now:options.now||(()=>1000)});
+ const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,deployment:options.deployment,now:options.now||(()=>1000)});
  return {jobs,data,calls,store,courses,discovery};
 }
 test('bulk job interface forwards metadata-only status reads from its store',async()=>{
@@ -23,6 +24,23 @@ test('bulk job interface forwards metadata-only status reads from its store',asy
  const s=setup({getStatus:async(id,owner)=>{calls++;assert.equal(id,'completed');assert.equal(owner,'owner');return expected;}});
  let fullReads=0;s.store.get=async()=>{fullReads++;throw Error('full job load was not expected');};
  assert.equal(await s.jobs.getStatus('completed','owner'),expected);assert.equal(calls,1);assert.equal(fullReads,0);
+});
+test('Source Deployer preparation duration is saved with ready plan and retained after execution',async()=>{
+ let time=1000;
+ const clock=()=>time++;
+ const deployment=createDeploymentJobs({enabled:()=>true,now:clock,client:{
+  setActive:async(_id,active,before)=>{await before();return {status:'updated',verifiedActive:active,writeAttempted:true};},
+  deploy:async(_source,targets,before)=>{await before();return {status:'submitted',writeAttempted:true,targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}
+ }});
+ const s=setup({deployment,enforceWorkerStatus:true,now:clock});
+ const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});
+ await s.jobs.tick();
+ const ready=await s.jobs.get(created._id,'a');
+ assert.equal(ready.status,'ready');assert.ok(Number.isFinite(ready.performance.preparationMs));assert.ok(ready.performance.preparationMs>0);
+ const duration=ready.performance.preparationMs;
+ assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
+ const executed=await s.jobs.get(created._id,'a');
+ assert.equal(executed.status,'activated');assert.equal(executed.performance.preparationMs,duration);
 });
 test('all course validation and discovery are read-only; confirmation executes only stored deduplicated plan',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n,001\n2,',dates});
