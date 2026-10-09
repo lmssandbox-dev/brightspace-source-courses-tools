@@ -33,6 +33,8 @@ Date Manager discovery uses up to eight independent courses. Assignment, Quiz, F
 
 Date Manager Step 2 status uses a worker-fenced metadata-only progress update about every five seconds. It must not write rows, courses, tasks or activity chunks and must not replace the resolution-boundary save or 500-increment discovery checkpoints. Step 2 timing is separate from Step 3; recovery excludes downtime and work after the last durable progress point. Keep the ten-second status refresh and calculate one overall planning ETA from metadata only; resolution shows “Calculating ETA…” unless a reliable discovery baseline already exists.
 
+Step 2 discovery utilization lives in `src/shared/step2Utilization.js`; it uses a separate async context from Step 3 and persists bounded snapshots through existing metadata updates/checkpoints. Use `node scripts/date-step2-utilization-report.js [job-id]` for the admin-only metadata report. Interpret API waits as overlapping request sums; discovery permits are job-attributed, not global occupancy, and pending work without HTTP does not prove global capacity is available.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.

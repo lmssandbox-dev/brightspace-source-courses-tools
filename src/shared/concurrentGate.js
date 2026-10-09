@@ -3,6 +3,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {MongoClient}=require('mongodb');
 const {performance}=require('node:perf_hooks');
 const {currentStep3Utilization}=require('./step3Utilization');
+const {currentStep2Utilization}=require('./step2Utilization');
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const LIMIT=4,RESOLUTION_LIMIT=8,RESERVATION_LIMIT=2,BUDGET=30000;
 const isCodeResolution=config=>{const url=new URL(config.url);return String(config.method||'GET').toUpperCase()==='GET'&&/^\/d2l\/api\/lp\/[^/]+\/orgstructure\/$/.test(url.pathname)&&Boolean(url.searchParams.get('exactOrgUnitCode'));};
@@ -134,7 +135,8 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
     gateTimings.localReservationQueue+=permit.localReservationQueueMs||0;
     gateTimings.mongoReservation+=permit.mongoReservationMs||0;
     gateTimings.deniedReservationRead+=permit.deniedReservationReadMs||0;
-    const waitedAt=monotonicNow();await delay(permit.wait);const waited=Math.max(0,monotonicNow()-waitedAt);
+    const waitName=permit.waitReason==='permitContention'?'permitContention':permit.waitReason==='pacingBudget'?'pacingBudget':'mixed';tracker?.changeWait?.(waitName,1);
+    const waitedAt=monotonicNow();try{await delay(permit.wait);}finally{tracker?.changeWait?.(waitName,-1);}const waited=Math.max(0,monotonicNow()-waitedAt);
     if(permit.waitReason==='permitContention'){gateTimings.permitContentionWait+=waited;tracker?.add('permitContentionWaitMs',waited);}
     else if(permit.waitReason==='pacingBudget'){gateTimings.pacingBudgetWait+=waited;tracker?.add('pacingBudgetWaitMs',waited);}
     else {gateTimings.mixedWait+=waited;tracker?.add('mixedWaitMs',waited);}
@@ -167,8 +169,8 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
  }
  return async config=>{
   const elevated=isCodeResolution(config)||isCopyRequest(config)||isDeploymentRequest(config)||isDateDiscovery(config);
-  const tracker=elevated?null:currentStep3Utilization(),queuedAt=monotonicNow();
-  await new Promise(resolve=>{waiting.push({elevated,resolve});drain();});
+  const tracker=isDateDiscovery(config)?currentStep2Utilization():elevated?null:currentStep3Utilization(),queuedAt=monotonicNow();
+  tracker?.changeWait?.('httpAdmission',1);try{await new Promise(resolve=>{waiting.push({elevated,resolve});drain();});}finally{tracker?.changeWait?.('httpAdmission',-1);}
   if(tracker)tracker.add('httpAdmissionWaitMs',Math.max(0,monotonicNow()-queuedAt));
   try{return await run(config,tracker);}finally{active--;if(!elevated)ordinaryActive--;drain();}
  };

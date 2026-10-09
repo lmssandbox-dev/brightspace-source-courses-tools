@@ -37,6 +37,12 @@ test('Date Manager Step 3 persists compact utilization snapshots with the job ch
  assert.ok(metrics.coveredMs>0);assert.equal(metrics.coveredMs,metrics.httpMs.reduce((sum,value)=>sum+value,0));
  assert.equal(plan.performance?.dateStep3Utilization,undefined);
 });
+test('Date Manager Step 2 persists bounded discovery utilization with existing plan saves',async()=>{
+ const s=setup(),created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
+ const job=await s.jobs.get(created._id,'a'),metrics=job.performance.dateStep2Utilization;
+ assert.equal(job.status,'ready');assert.equal(metrics.version,1);assert.equal(metrics.httpMs.length,9);assert.equal(metrics.permitMs.length,9);assert.equal(metrics.workerMs.length,9);
+ assert.ok(metrics.coveredMs>=0);assert.ok(metrics.discoveryDurationMs>=metrics.coveredMs-1);assert.ok(Number.isFinite(metrics.checkpointWaitMs));assert.equal(job.courses.length,1);assert.equal(job.tasks.length,3);
+});
 test('invalid course, incomplete discovery and missing scopes cannot write',async()=>{
  for(const options of [{csv:'OrgUnitId,OrgUnitCode\n1,\n999,'},{partial:true},{noScope:true}]){
   const s=setup(options),j=await s.jobs.create({owner:'a',csv:options.csv||'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(j._id,'a');await s.jobs.tick();

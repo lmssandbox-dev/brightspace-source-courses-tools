@@ -11,6 +11,7 @@ const STEP2_PROGRESS_PERSIST_MS=5000;
 const {pool}=require('./pool');
 const {DIRTY}=require('./dateChunks');
 const {createStep3Utilization,withStep3Utilization}=require('./step3Utilization');
+const {createStep2Utilization,withStep2Utilization}=require('./step2Utilization');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
 const counts = tasks => tasks.reduce((out,t)=>{const s=t.result?.status || 'pending';out[s]=(out[s]||0)+1;return out;},{total:tasks.length});
 function interruptJob(job) {
@@ -35,7 +36,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const worker=randomUUID();
   const cancelledJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
-  let activeStep3Tracker=null,activeStep3Job=null;
+  let activeStep3Tracker=null,activeStep3Job=null,activeStep2Tracker=null,activeStep2Job=null;
   let planningWriteQueue=Promise.resolve();
   const withPlanningWrite=operation=>{const result=planningWriteQueue.then(operation);planningWriteQueue=result.catch(()=>{});return result;};
   const countCache=new WeakMap();
@@ -44,7 +45,9 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   const step3Checkpoint=createCheckpointQueue(saveCheckpoint,{delayMs:STEP3_CHECKPOINT_DELAY_MS});
   function save(job,dirty,queue=checkpoint) {
     job.performance ||= {};job.performance.checkpointRequests=(job.performance.checkpointRequests||0)+1;
-    return queue(job,dirty);
+    const tracker=activeStep2Job===job._id?activeStep2Tracker:null;tracker?.checkpointWait(1);
+    let result;try{result=queue(job,dirty);}catch(error){tracker?.checkpointWait(-1);throw error;}
+    return Promise.resolve(result).finally(()=>tracker?.checkpointWait(-1));
   }
   const saveStep3=async(job,dirty)=>{
     const tracker=activeStep3Job===job._id?activeStep3Tracker:null;
@@ -62,6 +65,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       job.step2DurableProgress=job.progress?{...job.progress}:null;
     }
     if(activeStep3Tracker&&activeStep3Job===job._id){job.performance ||= {};job.performance.dateStep3Utilization=activeStep3Tracker.snapshot();}
+    if(activeStep2Tracker&&activeStep2Job===job._id){job.performance ||= {};job.performance.dateStep2Utilization=activeStep2Tracker.snapshot();}
     job[DIRTY]=dirty;const started=now();
     try {await withPlanningWrite(()=>store.save(job,worker));} catch(error) {unsafeWorkerJobs.add(job._id);error.persistenceFailure=true;throw error;} finally {delete job[DIRTY];}
     job.performance ||= {};job.performance.checkpoints=(job.performance.checkpoints||0)+1;job.performance.checkpointMs=(job.performance.checkpointMs||0)+now()-started; }
@@ -86,6 +90,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         const progressKey=`${phase}:${processed}`,courseProgressAt=progressKey!==lastPersistedProgress?time:job.step2CourseProgressAt;
         const sampleCount=phase===job.step2SamplePhase?(Number(job.step2SampleCount)||0)+(processed>Number(job.step2SampleProcessed||0)?1:0):0;
         const fields={progress:job.progress,step2StartedAt:job.step2StartedAt,step2ProgressAt:time,step2CourseProgressAt:courseProgressAt,step2RatePerMs:rate,step2SampleAt:time,step2SampleProcessed:processed,step2SamplePhase:phase,step2SampleCount:sampleCount};
+        if(activeStep2Job===job._id&&activeStep2Tracker){fields['performance.dateStep2Utilization']=activeStep2Tracker.snapshot();job.performance ||= {};job.performance.dateStep2Utilization=fields['performance.dateStep2Utilization'];}
         if(typeof store.savePlanningProgress==='function'){
           const saved=await store.savePlanningProgress(job,worker,fields);
           if(!saved&&job.status==='planning'){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Planning worker no longer owns this job.'),{workerLease:true});}
@@ -129,7 +134,11 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
     job.progress={phase:'Discovering activities',processed:discovered,total:job.courses.length,activities:job.tasks.length};
     let discoveryCheckpoint=0;
-    await pool(job.courses.filter(c=>c.status==='pending'),8,async (course,index,stopped)=>{
+    activeStep2Tracker=createStep2Utilization({prior:job.performance?.dateStep2Utilization});activeStep2Job=job._id;
+    const discoveryCourses=job.courses.filter(c=>c.status==='pending');activeStep2Tracker.setPending(discoveryCourses.length);
+    await withStep2Utilization(activeStep2Tracker,()=>pool(discoveryCourses,8,async (course,index,stopped)=>{
+      activeStep2Tracker.courseStarted();
+      try {
       let checkpointFailure;
       try {
         const found=await discovery.discover(course.orgUnitId,{includeUndated:true,includeNative:true,check:checkCancelled});
@@ -159,7 +168,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       } catch(error) {if(checkpointFailure)throw checkpointFailure;if(error.code==='JOB_CANCELLED')throw error;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
       job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:job.tasks.length};
       if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)await save(job);
-    },async()=>{await checkCancelled();return true;});
+      } finally {activeStep2Tracker.courseFinished();}
+    },async()=>{await checkCancelled();return true;}));
     await checkCancelled(true);
     await persistPlanningProgress(true);
     job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
@@ -171,6 +181,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     } finally {
       clearInterval(progressTimer);
       await planningWriteQueue;
+      if(activeStep2Job===job._id){activeStep2Tracker.finish();job.performance ||= {};job.performance.dateStep2Utilization=activeStep2Tracker.snapshot();}
       if(['ready','failed','cancelled'].includes(job.status)){
         job.step2ElapsedMs=(Number(job.step2ElapsedMs)||0)+Math.max(0,now()-segmentStartedAt);job.step2StartedAt=null;
       }
@@ -287,7 +298,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
           if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
+      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }
