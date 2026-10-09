@@ -189,6 +189,14 @@ test('on-demand copy checks expose progress and snapshot timestamps without old 
  assert.match(csv,/Pending current check/);assert.match(csv,/1970-01-01T00:00:01.000Z/);assert.match(csv,/Previous log/);
 });
 
+test('running Source Deployer cancellation shows draining state, hides repeat action and suppresses ETA',()=>{
+ const view=createDeploymentView({enabled:()=>true}),base={_id:'cancel',confirmedAt:1,deploymentStep3StartedAt:1000,deploymentStep3ElapsedMs:0,deploymentStep3ProgressAt:10000,rows:[],tasks:[{sourceId:'10',targets:[{orgUnitId:'20'}]}]};
+ const running=view.render({}, {...base,status:'running',cancelRequestedAt:12000},{...helpers,now:()=>20000});
+ assert.match(running,/Cancellation requested — finishing active deployment batches and verifying replica activation\./);assert.match(running,/Refresh submission status/);assert.match(running,/Download submission report/);assert.doesNotMatch(running,/Cancel job|Estimated deployment time remaining|Calculating ETA/);
+ const cancelled=view.render({}, {...base,status:'cancelled',cancelRequestedAt:12000,deploymentStep3StartedAt:null,deploymentStep3ElapsedMs:14000,message:'Cancellation completed. Saved deployment and activation outcomes are retained; unstarted replicas were not attempted. Accepted Brightspace copies may continue asynchronously.'},helpers);
+ assert.match(cancelled,/Deployment Cancelled/);assert.match(cancelled,/Accepted Brightspace copies may continue asynchronously/);assert.match(cancelled,/Download submission report/);assert.doesNotMatch(cancelled,/Estimated deployment time remaining|Calculating ETA/);
+});
+
 test('large deployment pages stay compact and keep details in reports',()=>{
  const view=createDeploymentView({enabled:()=>true});
  const tasks=[{sourceId:'1',targets:Array.from({length:5000},(_,i)=>({orgUnitId:String(i+10),name:'Replica '+i,activation:{status:'updated'}})),result:{status:'submitted'}}];

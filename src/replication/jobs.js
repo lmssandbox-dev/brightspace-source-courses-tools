@@ -103,10 +103,15 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    job.status=job.tasks.every(t=>t.targets.every(r=>canActivateTarget(t,r)&&['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
    job.message=job.status==='activated'?'All replicas verified active. Copy completion was confirmed manually by the user.':'Some replicas were excluded from activation or could not be verified active. Inspect the per-replica results; eligible activation can be retried without deploying again.';
   },
-  async execute(job,save,renew,metrics){
+  async execute(job,save,renew,metrics,isCancelled=async()=>false){
    if(!enabled()){job.status='failed';job.message='Configure manageCourses:deploy:manage and orgunits:course:update before deploying.';return;}
    job.automaticReactivation=true;
    const startedAt=now();job.deploymentStep3ElapsedMs=Number(job.deploymentStep3ElapsedMs)||0;job.deploymentStep3StartedAt=startedAt;job.deploymentStep3ProgressAt=startedAt;
+   let cancellationCheckedAt=-Infinity,cancellationCheck;
+   const cancellationRequested=async(force=false)=>{
+    if(force||now()-cancellationCheckedAt>=1000){cancellationCheckedAt=now();cancellationCheck=Promise.resolve().then(()=>isCancelled(job._id,job.owner)).then(Boolean);}
+    return Boolean(await cancellationCheck);
+   };
    let halted=false,serviceFailures=0;
    const operation=(name,fn)=>metrics?.operation?metrics.operation(name,fn):fn();
    const recordFailure=error=>{
@@ -121,6 +126,9 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
    async function submit(task,index){
     const checkpoint=()=>save(job,{tasks:[index]});
     if(task.result)return;
+    // A batch is considered started once this check passes. Once started, finish
+    // deactivation, deployment submission, and eligible reactivation as usual.
+    if(await cancellationRequested())return;
     if(halted){task.result={...notSent(task,'Not attempted because processing stopped after a system-wide problem.'),status:'skipped'};job.deploymentStep3ProgressAt=now();await checkpoint();return;}
     let preparationFailed=false;
     for(const target of task.targets){
@@ -160,12 +168,13 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     metrics?.changeSourceGroupWorkers?.(1);
     try{for(const {task,index} of group){if(stopped())return;await submit(task,index);}}
     finally{metrics?.changeSourceGroupWorkers?.(-1);}
-   });
+   },async()=>!await cancellationRequested());
    const outcomes=job.tasks.flatMap(t=>t.result?.targets||t.targets.map(r=>({orgUnitId:r.orgUnitId,status:t.result?.status==='submitted'?'submitted':t.result?.status==='uncertain'?'uncertain':'notAttempted'})));
-   job.status=outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
+   const cancelled=await cancellationRequested(true);
+   job.status=cancelled?'cancelled':outcomes.some(r=>r.status==='uncertain')?'outcomeUnknown':outcomes.every(r=>r.status==='submitted')?'submitted':outcomes.some(r=>r.status==='submitted')?'submittedWithErrors':'failed';
    job.reactivationFinishedAt=now();
-   if(outcomes.every(r=>r.status==='submitted'))job.status=job.tasks.every(t=>t.targets.every(r=>['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
-   job.message=(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Accepted replicas were automatically reactivated where possible. Copy completion is separate and is not confirmed by activation. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
+   if(!cancelled&&outcomes.every(r=>r.status==='submitted'))job.status=job.tasks.every(t=>t.targets.every(r=>['updated','unchanged'].includes(r.activation?.status)))?'activated':'activationWithErrors';
+   job.message=cancelled?'Cancellation completed. Saved deployment and activation outcomes are retained; unstarted replicas were not attempted. Accepted Brightspace copies may continue asynchronously.':(halted?'Processing stopped after an authentication failure, exhausted rate-limit retries, or three consecutive service failures. ':'')+'Submission results are recorded. Accepted replicas were automatically reactivated where possible. Copy completion is separate and is not confirmed by activation. Failed or uncertain deployments are never automatically resubmitted. Download the report for failed and not-attempted replicas, including any left inactive during preparation.';
    job.deploymentStep3ProgressAt=now();job.deploymentStep3ElapsedMs=(Number(job.deploymentStep3ElapsedMs)||0)+Math.max(0,job.deploymentStep3ProgressAt-startedAt);job.deploymentStep3StartedAt=null;
   }
  };

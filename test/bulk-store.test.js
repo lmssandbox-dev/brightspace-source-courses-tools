@@ -94,11 +94,15 @@ test('Date Manager planning cancellation is owner-scoped and fenced checkpoints 
  const save=s.calls.find(call=>call.name==='bulk_date_jobs');assert.deepEqual(save.filter.status,{$in:['planning','running','cancelled']});
 });
 test('running cancellation persists an owner-scoped marker and accepts repeated requests',async()=>{
- const s=setup({runningCancel:true});assert.equal(await s.store.cancel('j','owner'),true);const write=s.calls.find(call=>call.op==='updateOne'&&call.filter.status==='running');assert.equal(write.filter.owner,'owner');assert.equal(write.filter.kind,'dates');assert.deepEqual(write.filter.cancelRequestedAt,{$exists:false});assert.ok(Number.isFinite(write.update.$set.cancelRequestedAt));
+ const s=setup({runningCancel:true});assert.equal(await s.store.cancel('j','owner'),true);const write=s.calls.find(call=>call.op==='updateOne'&&call.filter.status==='running');assert.equal(write.filter.owner,'owner');assert.deepEqual(write.filter.kind,{$in:['dates','sourceDeployment']});assert.deepEqual(write.filter.cancelRequestedAt,{$exists:false});assert.ok(Number.isFinite(write.update.$set.cancelRequestedAt));
  const repeated=setup({alreadyCancelled:true});assert.equal(await repeated.store.cancel('j','owner'),true);
 });
 test('completion cannot overwrite a cancellation marker that wins the race',async()=>{
  const s=setup({completionRace:true});await assert.rejects(()=>s.store.save({_id:'j',kind:'dates',status:'completed',rows:[],courses:[],tasks:[]},'w'),{code:'JOB_CANCELLED'});
+ const completion=s.calls.find(call=>call.op==='updateOne'&&call.filter.cancelRequestedAt?.$exists===false);assert.deepEqual(completion.filter.cancelRequestedAt,{$exists:false});
+});
+test('Source Deployer completion cannot overwrite a cancellation marker that wins the race',async()=>{
+ const s=setup({completionRace:true});await assert.rejects(()=>s.store.save({_id:'j',kind:'sourceDeployment',status:'submitted',rows:[],courses:[],tasks:[]},'w'),{code:'JOB_CANCELLED'});
  const completion=s.calls.find(call=>call.op==='updateOne'&&call.filter.cancelRequestedAt?.$exists===false);assert.deepEqual(completion.filter.cancelRequestedAt,{$exists:false});
 });
 
@@ -111,6 +115,11 @@ test('chunked date recovery requeues checkpoints without rewriting tasks',async(
 test('worker recovery preserves a pending Step 3 cancellation marker',async()=>{
  const s=setup({recover:[{_id:'r',kind:'dates',storageVersion:2,status:'running',cancelRequestedAt:100,tasks:[],step3StartedAt:50,step3ElapsedMs:25,step3ProgressAt:80}]});
  await s.store.acquire('w');const recovery=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');assert.equal(recovery.update.$set.status,'queued');assert.equal(recovery.update.$set.worker,null);assert.equal(Object.hasOwn(recovery.update,'$unset'),false);assert.equal(recovery.filter.status,'running');
+});
+test('Source Deployer recovery requeues pending cancellation and leaves unstarted batches untouched',async()=>{
+ const task={sourceId:'10',targets:[{orgUnitId:'20'}]};
+ const s=setup({recover:[{_id:'r',kind:'sourceDeployment',status:'running',cancelRequestedAt:100,tasks:[task],deploymentStep3StartedAt:50,deploymentStep3ElapsedMs:25,deploymentStep3ProgressAt:80}]});
+ await s.store.acquire('w');const recovery=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');assert.equal(recovery.update.$set.status,'queued');assert.equal(recovery.update.$set.tasks[0].result,undefined);assert.match(recovery.update.$set.message,/Cancellation is pending/);assert.equal(recovery.update.$set.deploymentStep3ElapsedMs,55);assert.equal(recovery.update.$set.deploymentStep3StartedAt,null);
 });
 test('chunked planning recovery counts only the last durable Step 2 progress point',async()=>{
  const durable={phase:'Discovering activities',processed:4,total:10,activities:20};

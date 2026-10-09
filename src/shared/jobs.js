@@ -27,7 +27,7 @@ function interruptJob(job) {
     if(task.result?.status==='running')task.result=job.kind==='dates'
       ?{status:'uncertain',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Reconcile its current dates before any further action.'}}
       :{status:'failed',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Read its current dates before retrying.'}};
-    else if(!task.result&&job.kind!=='dates')task.result={status:'skipped',writeAttempted:false,error:{message:'Not executed before interruption.'}};
+    else if(!task.result&&job.kind!=='dates'&&!(job.kind==='sourceDeployment'&&job.cancelRequestedAt))task.result={status:'skipped',writeAttempted:false,error:{message:'Not executed before interruption.'}};
     // For Date Manager, interruption alone does not prove untouched tasks were skipped.
   }
   if(job.kind==='sourceDeployment'){job.message='Deployment processing was interrupted. Check Brightspace before any new submission; saved acceptance IDs remain available.';for(const task of job.tasks)if(task.result?.error?.category==='UNCERTAIN_OUTCOME'){task.result.status='uncertain';task.result.error.message='Deployment outcome is unknown. Check Brightspace before retrying.';}}
@@ -36,7 +36,7 @@ function interruptJob(job) {
 function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now,buildSha=process.env.RENDER_GIT_COMMIT}) {
   let busy=false;
   const worker=randomUUID();
-  const cancelledJobs=new Set(),step3CancelJobs=new Set(),activePlans=new Map();
+  const cancelledJobs=new Set(),step3CancelJobs=new Set(),deploymentCancelJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
   let activeStep3Tracker=null,activeStep3Job=null,activeStep2Tracker=null,activeStep2Job=null;
   let activeDeploymentStep3Tracker=null,activeDeploymentStep3Job=null,activeDeploymentStep3StartedAt=null,activeDeploymentStep3ElapsedBaseMs=0,activeDeploymentStep3Coverage='running';
@@ -305,7 +305,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     async confirm(id,owner) {return store.confirm(id,owner,now());},
     async cancel(id,owner) {
       const cancelled=await store.cancel(id,owner);
-      if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}if(activeStep3Job===id)step3CancelJobs.add(id);}
+      if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}if(activeStep3Job===id)step3CancelJobs.add(id);if(activeDeploymentStep3Job===id)deploymentCancelJobs.add(id);}
       return cancelled;
     },
     async tick() {
@@ -326,7 +326,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           else if(job.kind==='sourceDeployment'&&job.operation!=='activate'){
             const priorDeploymentMeasurement=job.performance?.deploymentStep3Utilization;
             activeDeploymentStep3Tracker=createDeploymentStep3Utilization({prior:priorDeploymentMeasurement});activeDeploymentStep3Job=job._id;activeDeploymentStep3StartedAt=performance.now();activeDeploymentStep3ElapsedBaseMs=Number(priorDeploymentMeasurement?.elapsedMs)||0;activeDeploymentStep3Coverage='running';
-            try{await withStep3Utilization(activeDeploymentStep3Tracker,()=>deployment.execute(job,save,()=>store.renew(worker),activeDeploymentStep3Tracker));activeDeploymentStep3Coverage='complete';}
+            try{await withStep3Utilization(activeDeploymentStep3Tracker,()=>deployment.execute(job,save,()=>store.renew(worker),activeDeploymentStep3Tracker,(id,owner)=>deploymentCancelJobs.has(id)||store.isCancelled?.(id,owner)));activeDeploymentStep3Coverage='complete';}
             catch(error){activeDeploymentStep3Coverage='interrupted';throw error;}
           }
           else if(job.kind==='sourceDeployment')await deployment.activate(job,save,()=>store.renew(worker));
@@ -340,6 +340,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         if(activeStep3Job===job?._id)activeStep3Tracker?.finish();
         if(error.code==='JOB_CANCELLED'){
           if(job?.kind==='dates'&&activeStep3Job===job._id){job.status='cancelled';job.cancelledDuringStep3=true;job.message='Job cancelled. Confirmed updates are saved; activities not started remain pending.';job.step3StartedAt=null;try{await save(job);}catch{/* Keep the durable cancellation request for recovery. */}}
+          if(job?.kind==='sourceDeployment'){job.status='cancelled';job.deploymentStep3StartedAt=null;job.message='Cancellation completed. Saved deployment and activation outcomes are retained; unstarted replicas were not attempted. Accepted Brightspace copies may continue asynchronously.';try{await save(job);}catch{/* Keep the durable cancellation request for recovery. */}}
           return;
         }
         if(job&&pendingPreparationTiming.has(job)){delete job.performance.preparationFinishedAt;delete job.performance.preparationMs;pendingPreparationTiming.delete(job);}
@@ -347,7 +348,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
           if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);step3CancelJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}if(activeDeploymentStep3Job===job._id){activeDeploymentStep3Tracker=null;activeDeploymentStep3Job=null;activeDeploymentStep3StartedAt=null;activeDeploymentStep3ElapsedBaseMs=0;activeDeploymentStep3Coverage='running';}}if(held)await store.release(worker).catch(()=>{});busy=false;}
+      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);step3CancelJobs.delete(job._id);deploymentCancelJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}if(activeDeploymentStep3Job===job._id){activeDeploymentStep3Tracker=null;activeDeploymentStep3Job=null;activeDeploymentStep3StartedAt=null;activeDeploymentStep3ElapsedBaseMs=0;activeDeploymentStep3Coverage='running';}}if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }

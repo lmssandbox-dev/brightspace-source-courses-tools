@@ -90,11 +90,11 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const time=now();
       const result=await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'},$or:[{status:{$in:['validating','ready','queued']}},{kind:'dates',status:'planning'},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:time}});
       if(result.modifiedCount===1)return true;
-      const running=await jobs.updateOne({_id,owner,namespace,kind:'dates',status:'running',cancelRequestedAt:{$exists:false}},{$set:{cancelRequestedAt:time,updatedAt:time}});
+      const running=await jobs.updateOne({_id,owner,namespace,kind:{$in:['dates','sourceDeployment']},status:'running',operation:{$ne:'activate'},cancelRequestedAt:{$exists:false}},{$set:{cancelRequestedAt:time,updatedAt:time}});
       if(running.modifiedCount===1)return true;
-      return Boolean(await jobs.findOne({_id,owner,namespace,kind:'dates',cancelRequestedAt:{$exists:true},$or:[{status:'running'},{status:'cancelled'}]},{projection:{_id:1}}));
+      return Boolean(await jobs.findOne({_id,owner,namespace,kind:{$in:['dates','sourceDeployment']},cancelRequestedAt:{$exists:true},operation:{$ne:'activate'},$or:[{status:'running'},{status:'cancelled'}]},{projection:{_id:1}}));
     },
-    async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,$or:[{status:'cancelled'},{kind:'dates',cancelRequestedAt:{$exists:true}}]},{projection:{_id:1}}));},
+    async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,$or:[{status:'cancelled'},{kind:{$in:['dates','sourceDeployment']},cancelRequestedAt:{$exists:true}}]},{projection:{_id:1}}));},
     async acquire(worker) {
       const {locks,jobs}=await collections();let lock;
       try {lock=await locks.findOneAndUpdate({_id:namespace,until:{$lte:now()}},{$set:{worker,until:now()+leaseMs}},{upsert:true,returnDocument:'after'});}
@@ -125,7 +125,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
           continue;
         }
         interruptJob(job);
-        const recoveryFields={status:job.status,tasks:job.tasks,totals:job.totals,worker:null,updatedAt:now(),message:job.message};
+        const recoveryFields={status:job.kind==='sourceDeployment'&&job.cancelRequestedAt?'queued':job.status,tasks:job.tasks,totals:job.totals,worker:null,updatedAt:now(),message:job.kind==='sourceDeployment'&&job.cancelRequestedAt?'Cancellation is pending. Saved deployment outcomes are retained; no new batches will be started.':job.message};
         if(job.kind==='courseCopy')Object.assign(recoveryFields,{copyStep2ElapsedMs,copyStep2StartedAt:null,copyStep3ElapsedMs,copyStep3StartedAt:null,copyCheckElapsedMs,copyCheckStartedAt:null});
         if(job.kind==='sourceDeployment')Object.assign(recoveryFields,{deploymentStep2ElapsedMs,deploymentStep2StartedAt:null,deploymentStep3ElapsedMs,deploymentStep3StartedAt:null});
         await jobs.updateOne({_id:job._id,namespace,status:{$in:['planning','running']}},{$set:recoveryFields});
@@ -180,12 +180,12 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       if(Buffer.byteLength(JSON.stringify(data))>8*1024*1024)throw new Error('Job metadata exceeds storage limit.');
       const statuses=job.kind==='dates'&&job.status==='cancelled'?{$in:['planning','running','cancelled']}:{$in:['planning','running']};
       const filter={_id,namespace,worker,status:statuses};
-      if(job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status))filter.cancelRequestedAt={$exists:false};
+      if((job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status))||(job.kind==='sourceDeployment'&&job.status!=='running'&&job.status!=='cancelled'))filter.cancelRequestedAt={$exists:false};
       let r;
       try{r=await jobs.updateOne(filter,{$set:data});}
       catch(error){logMongoOperationFailure('job_checkpoint_save',error);throw error;}
       if(!r.matchedCount){
-        if(job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status)&&await jobs.findOne({_id,namespace,worker,status:'running',cancelRequestedAt:{$exists:true}},{projection:{_id:1}}))throw Object.assign(Error('Cancellation was requested before completion.'),{code:'JOB_CANCELLED'});
+        if(((job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status))||(job.kind==='sourceDeployment'&&job.status!=='running'&&job.status!=='cancelled'))&&await jobs.findOne({_id,namespace,worker,status:'running',cancelRequestedAt:{$exists:true}},{projection:{_id:1}}))throw Object.assign(Error('Cancellation was requested before completion.'),{code:'JOB_CANCELLED'});
         throw new Error('Job is no longer owned by this worker.');
       }
       if(encoded.storageVersion===2){job.storageVersion=2;job.dateChunks=encoded.dateChunks;}

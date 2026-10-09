@@ -36,7 +36,7 @@ function step3(job,time){
  const tasks=job.tasks||[],targets=tasks.flatMap(task=>task.targets.map(target=>({task,target,outcome:targetOutcome(task,target)}))),total=targets.length;
  const count=key=>targets.filter(item=>item.outcome===key).length;
  const submitted=count('submitted'),failed=count('failed'),uncertain=count('uncertain'),skipped=count('skipped'),notAttempted=count('notAttempted'),processed=submitted+failed+uncertain+skipped+notAttempted;
- const terminal=['activated','activationWithErrors','submitted','submittedWithErrors','outcomeUnknown','failed','interrupted'].includes(job.status),complete=terminal&&job.status!=='interrupted';
+ const terminal=['activated','activationWithErrors','submitted','submittedWithErrors','outcomeUnknown','failed','interrupted','cancelled'].includes(job.status),complete=terminal&&job.status!=='interrupted';
  const active=job.status==='running',elapsedMs=elapsed(job,'deploymentStep3',time,active),throughput=elapsedMs>0?processed*60000/elapsedMs:0;
  const stalled=active&&Number.isFinite(job.deploymentStep3ProgressAt)&&time-job.deploymentStep3ProgressAt>=180000;
  let phase='Preparing replicas — deactivation and verification';
@@ -45,7 +45,7 @@ function step3(job,time){
  else if(targets.some(item=>item.outcome==='pending'))phase='Reactivating replicas — activation and verification';
  else phase='Deployment execution complete';
  let estimate='Calculating ETA…';
- if(complete)estimate='';
+ if(complete||job.cancelRequestedAt)estimate='';
  else if(stalled||job.status==='interrupted')estimate='Progress paused — ETA unavailable';
  else if(active&&processed>=20&&elapsedMs>=15000&&throughput>0&&processed<total){const remaining=(total-processed)/throughput*60000;if(Number.isFinite(remaining)&&remaining>=0)estimate=`ETA: ~${duration(remaining)}`;}
  return {phase,processed,total,percent:percent(processed,total),submitted,failed,uncertain,skipped,notAttempted,elapsed:duration(elapsedMs),throughput:throughput.toFixed(1),showThroughput:elapsedMs>0,terminal,complete,estimate};

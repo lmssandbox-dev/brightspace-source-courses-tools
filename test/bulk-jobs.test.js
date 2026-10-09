@@ -53,6 +53,43 @@ test('Source Deployer records interrupted Step 3 coverage after execution errors
  const interrupted=await s.jobs.get(created._id,'a');
  assert.equal(interrupted.status,'interrupted');assert.equal(interrupted.performance.deploymentStep3Utilization.coverage,'interrupted');
 });
+test('Source Deployer cancellation finishes the active batch and leaves later batches not attempted',async()=>{
+ let s,cancelId,requested=false,deactivations=0,reactivations=0,submissions=0;
+ const deployment=createDeploymentJobs({enabled:()=>true,client:{
+  setActive:async(_id,active,before)=>{await before();if(!active){deactivations++;if(!requested){requested=true;assert.equal(await s.jobs.cancel(cancelId,'a'),true);}}else reactivations++;return {status:'updated',verifiedActive:active,writeAttempted:true};},
+  deploy:async(_source,targets,before)=>{submissions++;await before();return {status:'submitted',writeAttempted:true,deploymentId:'dep-1',targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}
+ }});
+ s=setup({deployment,enforceWorkerStatus:true});
+ const csv='SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:101},(_,i)=>`10,,${20+i},`).join('\n');
+ const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv});cancelId=created._id;await s.jobs.tick();assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
+ const saved=await s.jobs.get(created._id,'a');assert.equal(saved.status,'cancelled');assert.equal(deactivations,100);assert.equal(submissions,1);assert.equal(reactivations,100);
+ assert.equal(saved.tasks[0].result.status,'submitted');assert.equal(saved.tasks[0].result.deploymentId,'dep-1');assert.equal(saved.tasks[1].result,undefined);assert.equal(saved.tasks[1].targets.length,1);
+ assert.match(saved.message,/may continue asynchronously/);assert.equal(require('../src/replication/outcomes').targetStatus(saved.tasks[1],saved.tasks[1].targets[0]),'notAttempted');
+ assert.equal(require('../src/replication/view').createDeploymentView({enabled:()=>true}).report(saved).split('\r\n').at(-1).includes('notAttempted'),true);
+});
+test('Source Deployer cancellation before dispatch prevents the first batch',async()=>{
+ let deactivations=0,submissions=0;const deployment=createDeploymentJobs({enabled:()=>true,client:{setActive:async(_id,_active,before)=>{deactivations++;await before();return {status:'updated'};},deploy:async()=>{submissions++;}}});
+ const s=setup({deployment}),created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});await s.jobs.tick();await s.jobs.confirm(created._id,'a');s.store.isCancelled=async()=>true;await s.jobs.tick();
+ const saved=await s.jobs.get(created._id,'a');assert.equal(saved.status,'cancelled');assert.equal(deactivations,0);assert.equal(submissions,0);assert.equal(require('../src/replication/outcomes').targetStatus(saved.tasks[0],saved.tasks[0].targets[0]),'notAttempted');
+});
+test('Source Deployer cancellation during submission or reactivation drains the accepted batch',async()=>{
+ for(const phase of ['submission','reactivation']){
+  let s,cancelId,requested=false,submissions=0,reactivations=0;
+  const requestCancel=async()=>{if(requested)return;requested=true;assert.equal(await s.jobs.cancel(cancelId,'a'),true);assert.equal(await s.jobs.cancel(cancelId,'a'),true);};
+  const deployment=createDeploymentJobs({enabled:()=>true,client:{
+   setActive:async(_id,active,before)=>{await before();if(active){reactivations++;if(phase==='reactivation')await requestCancel();}return {status:'updated',verifiedActive:active};},
+   deploy:async(_source,targets,before)=>{submissions++;await before();if(phase==='submission')await requestCancel();return {status:'submitted',deploymentId:'dep-accepted',targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}
+  }});
+  s=setup({deployment});const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv:'SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n10,,20,'});cancelId=created._id;await s.jobs.tick();await s.jobs.confirm(created._id,'a');await s.jobs.tick();
+  const saved=await s.jobs.get(created._id,'a');assert.equal(saved.status,'cancelled',phase);assert.equal(submissions,1,phase);assert.equal(reactivations,1,phase);assert.equal(saved.tasks[0].result.deploymentId,'dep-accepted');assert.equal(saved.tasks[0].targets[0].activation.status,'updated');
+ }
+});
+test('Source Deployer recovers a pending cancellation without replaying uncertain submissions',async()=>{
+ const calls=[];const deployment=createDeploymentJobs({enabled:()=>true,client:{setActive:async(_id,active,before)=>{calls.push(active?'activate':'deactivate');await before();return {status:'updated',verifiedActive:active};},deploy:async(_source,targets,before)=>{calls.push('deploy');await before();return {status:'submitted',targets:targets.map(orgUnitId=>({orgUnitId,status:'submitted'}))};}}});
+ const s=setup({deployment});const csv='SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:101},(_,i)=>`10,,${20+i},`).join('\n');const created=await s.jobs.create({owner:'a',kind:'sourceDeployment',csv});await s.jobs.tick();
+ const recovered=await s.jobs.get(created._id,'a');recovered.status='queued';recovered.cancelRequestedAt=900;recovered.tasks[0].result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME'}};s.data.set(created._id,recovered);calls.length=0;
+ await s.jobs.tick();const final=await s.jobs.get(created._id,'a');assert.equal(final.status,'cancelled');assert.deepEqual(calls,[]);assert.equal(final.tasks[0].result.status,'uncertain');assert.equal(final.tasks[1].result,undefined);
+});
 test('all course validation and discovery are read-only; confirmation executes only stored deduplicated plan',async()=>{
  const s=setup(),j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,\n,001\n2,',dates});
  await s.jobs.tick();const p=await s.jobs.get(j._id,'a');assert.equal(p.status,'ready');assert.equal(p.courses.length,2);assert.equal(p.tasks.length,6);assert.equal(p.rows[1].status,'duplicate');assert.ok(!s.calls.includes('write'));
