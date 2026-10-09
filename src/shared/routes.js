@@ -98,7 +98,7 @@ function report(job) {
   const rows=[['Record','CSV row','Course ID','Course code','Activity type','Activity ID','Name','Status','Requested Start UTC','Requested Due UTC','Requested End UTC','Current Start UTC','Current Due UTC','Current End UTC','Message','Selected time zone']];
   for(const r of job.rows)rows.push(['CSV',r.row,r.resolvedId||r.orgUnitId,r.orgUnitCode,'','','',r.status,'','','','','','',r.message,job.timeZone||DEFAULT_ZONE]);
   const coursesById=new Map(job.courses.map(c=>[c.orgUnitId,c]));
-  for(const t of job.tasks){const r=t.result||t.preview,c=coursesById.get(t.orgUnitId);rows.push(['Activity',c?.row,t.orgUnitId,c?.code,t.activity.type,t.activity.id,t.name,r.status,job.dates.start,job.dates.due,job.dates.end,r.verifiedDates?.start,r.verifiedDates?.due,r.verifiedDates?.end,r.error?.message,job.timeZone||DEFAULT_ZONE]);}
+  for(const t of job.tasks){const r=t.result||((job.cancelledDuringStep3||job.cancelRequestedAt)?{...t.preview,status:'pending'}:t.preview),c=coursesById.get(t.orgUnitId);const message=r.error?.message||(r.status==='pending'&&(job.cancelledDuringStep3||job.cancelRequestedAt)?'Not attempted because the job was cancelled.':undefined);rows.push(['Activity',c?.row,t.orgUnitId,c?.code,t.activity.type,t.activity.id,t.name,r.status,job.dates.start,job.dates.due,job.dates.end,r.verifiedDates?.start,r.verifiedDates?.due,r.verifiedDates?.end,message,job.timeZone||DEFAULT_ZONE]);}
   // Quote all cells and neutralize spreadsheet formula injection in native names/codes.
   return '\uFEFF'+rows.map(row=>row.map(v=>{let s=String(v??'');if(/^[\s]*[=+\-@]/.test(s)||/^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');
 }

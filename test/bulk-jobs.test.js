@@ -6,11 +6,11 @@ const dates={start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-0
 function setup(options={}) {
  const data=new Map(),calls=[];let held=false;
  const store={insert:async j=>data.set(j._id,structuredClone(j)),get:async(id,owner)=>{const j=data.get(id);return j?.owner===owner?structuredClone(j):null;},getStatus:options.getStatus||(async()=>null),list:async owner=>[...data.values()].filter(j=>j.owner===owner),
- acquire:async()=>{if(held)return false;held=true;return true;},renew:async()=>{},release:async()=>{held=false;},save:async j=>data.set(j._id,structuredClone(j)),
+ acquire:async()=>{if(held)return false;held=true;return true;},renew:async()=>{},release:async()=>{held=false;},save:async j=>{const prior=data.get(j._id)||{};data.set(j._id,{...structuredClone(j),...(prior.cancelRequestedAt?{cancelRequestedAt:prior.cancelRequestedAt}:{})});},
  claim:async()=>{const j=[...data.values()].find(j=>['queued','validating'].includes(j.status));if(!j)return null;j.status=j.status==='queued'?'running':'planning';return structuredClone(j);},
  confirm:async(id,owner,time)=>{const j=data.get(id);if(!j||j.owner!==owner||j.status!=='ready'||j.expiresAt<=time)return false;j.status='queued';return true;},
- cancel:async(id,owner)=>{const j=data.get(id);if(!j||j.owner!==owner||!['validating','planning','ready','queued'].includes(j.status))return false;j.status='cancelled';return true;},
- isCancelled:async(id,owner)=>data.get(id)?.owner===owner&&data.get(id)?.status==='cancelled',
+ cancel:async(id,owner)=>{const j=data.get(id);if(!j||j.owner!==owner)return false;if(j.status==='running'){j.cancelRequestedAt??=1000;return true;}if(!['validating','planning','ready','queued'].includes(j.status))return false;j.status='cancelled';return true;},
+ isCancelled:async(id,owner)=>data.get(id)?.owner===owner&&(data.get(id)?.status==='cancelled'||Boolean(data.get(id)?.cancelRequestedAt)),
  savePlanningProgress:async(job,worker,fields)=>{Object.assign(data.get(job._id),structuredClone(fields));return true;}};
  const courses={resolve:async r=>{calls.push('resolve');if(r.orgUnitId==='999')throw Error('bad');return {orgUnitId:r.orgUnitId||'1',code:'001',name:'Course'};},get:async id=>({orgUnitId:id}),...options.courses};
  const discovery={discover:async org=>{const activities=['assignment','quiz','discussionTopic'].map((type,i)=>({type,id:String(i+1),parentId:'7',key:`${type}:${org}:${i+1}`,name:type}));return {complete:!options.partial,activities,nativeActivities:activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:a.parentId}}))};},...options.discovery};
@@ -135,6 +135,20 @@ test('isolated errors continue; systemic errors stop remaining writes and retain
 test('interruption retains confirmed successes, marks in-flight work uncertain, and keeps untouched tasks pending',()=>{
  const j=interruptJob({kind:'dates',tasks:[{result:{status:'updated'}},{result:{status:'running'}},{}]});
  assert.deepEqual(j.tasks.map(t=>t.result?.status),['updated','uncertain',undefined]);assert.equal(j.tasks[1].result.error.category,'UNCERTAIN_OUTCOME');
+});
+test('Step 3 cancellation drains an in-flight write, retains its result, and leaves later tasks pending',async()=>{
+ let started,finish;const entered=new Promise(resolve=>started=resolve),drain=new Promise(resolve=>finish=resolve);let writes=0;
+ const s=setup({writer:{updateActivityDates:async r=>{if(r.dryRun)return {status:'ready',verifiedDates:dates};writes++;started();await drain;return {status:'updated',writeAttempted:true,verifiedDates:dates};}}});
+ const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();await s.jobs.confirm(created._id,'a');
+ const running=s.jobs.tick();await entered;assert.equal(await s.jobs.cancel(created._id,'a'),true);assert.equal(await s.jobs.cancel(created._id,'a'),true);finish();await running;
+ const saved=await s.jobs.get(created._id,'a');assert.equal(saved.status,'cancelled');assert.equal(saved.cancelledDuringStep3,true);assert.equal(saved.tasks[0].result.status,'updated');assert.ok(saved.tasks.slice(1).every(task=>!task.result));assert.equal(writes,1);
+ assert.equal(saved.totals.updated,1);assert.equal(saved.totals.pending,2);assert.match(saved.message,/Confirmed updates are saved/);
+});
+test('recovered Step 3 cancellation reconciles the in-flight task read-only and does not resume pending writes',async()=>{
+ const calls=[];const s=setup({writer:{updateActivityDates:async request=>{calls.push(request.reconcileOnly?'reconcile':request.dryRun?'preview':'write');return request.reconcileOnly?{status:'unchanged',verifiedDates:dates,reconciled:true,writeAttempted:false}:{status:'ready',verifiedDates:dates};}}});
+ const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
+ const recovered=await s.jobs.get(created._id,'a');recovered.storageVersion=2;recovered.status='queued';recovered.cancelRequestedAt=900;recovered.tasks[0].result={status:'running',writeAttempted:false};s.data.set(created._id,recovered);calls.length=0;
+ await s.jobs.tick();const final=await s.jobs.get(created._id,'a');assert.deepEqual(calls,['reconcile']);assert.equal(final.status,'cancelled');assert.equal(final.tasks[0].result.status,'updated');assert.ok(final.tasks.slice(1).every(task=>!task.result));
 });
 test('restarted Date Manager reconciles in-flight activity read-only and resumes pending work',async()=>{
  const calls=[];const s=setup({writer:{updateActivityDates:async request=>{calls.push(request.reconcileOnly?'reconcile':request.dryRun?'preview':'write');return request.reconcileOnly?{status:'unchanged',verifiedDates:dates,reconciled:true,writeAttempted:false}:{status:'updated',verifiedDates:dates,writeAttempted:true};}}});

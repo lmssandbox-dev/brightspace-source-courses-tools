@@ -34,6 +34,10 @@ test('report escapes CSV and neutralizes spreadsheet formulas',()=>{
  const csv=report({dates:{},rows:[{row:2,orgUnitCode:'=HYPERLINK("bad")',status:'invalid'}],courses:[],tasks:[{activity:{type:'quiz',id:'1'},name:'@formula',preview:{status:'failed'}}]});
  assert.match(csv,/'=HYPERLINK\(""bad""\)/);assert.match(csv,/'@formula/);
 });
+test('partial cancellation report marks untouched activities pending and not attempted',()=>{
+ const csv=report({cancelRequestedAt:10,cancelledDuringStep3:true,dates:{start:'s',due:'d',end:'e'},rows:[],courses:[{orgUnitId:'1',row:2}],tasks:[{orgUnitId:'1',activity:{type:'quiz',id:'1'},name:'Saved',result:{status:'updated',verifiedDates:{start:'s',due:'d',end:'e'}}},{orgUnitId:'1',activity:{type:'quiz',id:'2'},name:'Pending',preview:{status:'ready'}}]});
+ assert.match(csv,/"Activity","2","1","","quiz","1","Saved","updated"/);assert.match(csv,/"Activity","2","1","","quiz","2","Pending","pending"/);assert.match(csv,/Not attempted because the job was cancelled/);
+});
 
 test('completed Date Manager status renders small and large summaries from one metadata read',async()=>{
  const secret='secret',time=1000;

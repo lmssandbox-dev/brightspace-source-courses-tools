@@ -1,14 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBulkStore}=require('../src/shared/store');
-function setup({lost=false,duplicate=false,recover=[],failChunkWrite=false,updateFailure=null,chunkFailure=null}={}){
+function setup({lost=false,duplicate=false,recover=[],failChunkWrite=false,updateFailure=null,chunkFailure=null,runningCancel=false,alreadyCancelled=false,completionRace=false}={}){
  const calls=[];
  const collection=name=>({
-  updateOne:async(filter,update)=>{calls.push({name,op:'updateOne',filter,update});if(name==='bulk_date_jobs'&&updateFailure)throw updateFailure;return {matchedCount:lost?0:1,modifiedCount:1};},
+  updateOne:async(filter,update)=>{calls.push({name,op:'updateOne',filter,update});if(name==='bulk_date_jobs'&&updateFailure)throw updateFailure;if(filter.cancelRequestedAt?.$exists===false&&completionRace)return {matchedCount:0,modifiedCount:0};if(filter.status==='running'&&filter.cancelRequestedAt?.$exists===false)return {matchedCount:runningCancel?1:0,modifiedCount:runningCancel?1:0};if(filter.$or&&filter.$or.some(condition=>condition.status?.$in?.includes('queued')))return {matchedCount:0,modifiedCount:0};return {matchedCount:lost?0:1,modifiedCount:1};},
   bulkWrite:async operations=>{calls.push({name,op:'bulkWrite',operations});if(chunkFailure)throw chunkFailure;if(failChunkWrite)throw Error('chunk write failed');},
   updateMany:async(filter,update)=>{calls.push({name,op:'updateMany',filter,update});},
   findOneAndUpdate:async(filter,update,options)=>{calls.push({name,op:'claim',filter,update,options});if(duplicate)throw {code:11000};return {value:name==='bulk_date_locks'?{worker:'w'}:{_id:'j',...update.$set}};},
-  find:filter=>({toArray:async()=>recover}),findOne:async(filter,options)=>{calls.push({name,op:'get',filter,projection:options?.projection});return null;},insertOne:async doc=>calls.push({name,op:'insert',doc})
+  find:filter=>({toArray:async()=>recover}),findOne:async(filter,options)=>{calls.push({name,op:'get',filter,projection:options?.projection});return (alreadyCancelled&&filter.cancelRequestedAt)||(completionRace&&filter.status==='running'&&filter.cancelRequestedAt?.$exists===true)?{_id:'j'}:null;},insertOne:async doc=>calls.push({name,op:'insert',doc})
  });
  const mongoClient={connect:async()=>{},db:()=>({collection}),close:async()=>{}};
  const store=createBulkStore({uri:'mongodb://localhost/brightspace_source_courses_tools',namespace:'n',mongoClient,now:()=>100});
@@ -91,7 +91,15 @@ test('activation jobs cannot be cancelled and leave inactive replicas untracked'
 test('Date Manager planning cancellation is owner-scoped and fenced checkpoints retain cancelled state',async()=>{
  const s=setup();await s.store.cancel('j','owner');const cancel=s.calls[0];assert.equal(cancel.filter.owner,'owner');assert.ok(cancel.filter.$or.some(condition=>condition.kind==='dates'&&condition.status==='planning'));
  s.calls.length=0;await s.store.save({_id:'j',kind:'dates',status:'cancelled',worker:'w',rows:[],courses:[],tasks:[]},'w');
- const save=s.calls.find(call=>call.name==='bulk_date_jobs');assert.deepEqual(save.filter.status,{$in:['planning','cancelled']});
+ const save=s.calls.find(call=>call.name==='bulk_date_jobs');assert.deepEqual(save.filter.status,{$in:['planning','running','cancelled']});
+});
+test('running cancellation persists an owner-scoped marker and accepts repeated requests',async()=>{
+ const s=setup({runningCancel:true});assert.equal(await s.store.cancel('j','owner'),true);const write=s.calls.find(call=>call.op==='updateOne'&&call.filter.status==='running');assert.equal(write.filter.owner,'owner');assert.equal(write.filter.kind,'dates');assert.deepEqual(write.filter.cancelRequestedAt,{$exists:false});assert.ok(Number.isFinite(write.update.$set.cancelRequestedAt));
+ const repeated=setup({alreadyCancelled:true});assert.equal(await repeated.store.cancel('j','owner'),true);
+});
+test('completion cannot overwrite a cancellation marker that wins the race',async()=>{
+ const s=setup({completionRace:true});await assert.rejects(()=>s.store.save({_id:'j',kind:'dates',status:'completed',rows:[],courses:[],tasks:[]},'w'),{code:'JOB_CANCELLED'});
+ const completion=s.calls.find(call=>call.op==='updateOne'&&call.filter.cancelRequestedAt?.$exists===false);assert.deepEqual(completion.filter.cancelRequestedAt,{$exists:false});
 });
 
 test('chunked date recovery requeues checkpoints without rewriting tasks',async()=>{
@@ -99,6 +107,10 @@ test('chunked date recovery requeues checkpoints without rewriting tasks',async(
  await s.store.acquire('w');const changes=s.calls.filter(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
  assert.deepEqual(changes.map(c=>c.update.$set.status),['validating','queued']);assert.ok(changes.every(c=>!Object.hasOwn(c.update.$set,'tasks')));
  assert.equal(changes[1].update.$set.step3ElapsedMs,55);assert.equal(changes[1].update.$set.step3StartedAt,null);
+});
+test('worker recovery preserves a pending Step 3 cancellation marker',async()=>{
+ const s=setup({recover:[{_id:'r',kind:'dates',storageVersion:2,status:'running',cancelRequestedAt:100,tasks:[],step3StartedAt:50,step3ElapsedMs:25,step3ProgressAt:80}]});
+ await s.store.acquire('w');const recovery=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');assert.equal(recovery.update.$set.status,'queued');assert.equal(recovery.update.$set.worker,null);assert.equal(Object.hasOwn(recovery.update,'$unset'),false);assert.equal(recovery.filter.status,'running');
 });
 test('chunked planning recovery counts only the last durable Step 2 progress point',async()=>{
  const durable={phase:'Discovering activities',processed:4,total:10,activities:20};

@@ -34,7 +34,7 @@ function interruptJob(job) {
 function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now}) {
   let busy=false;
   const worker=randomUUID();
-  const cancelledJobs=new Set(),activePlans=new Map();
+  const cancelledJobs=new Set(),step3CancelJobs=new Set(),activePlans=new Map();
   const unsafeWorkerJobs=new Set();
   let activeStep3Tracker=null,activeStep3Job=null,activeStep2Tracker=null,activeStep2Job=null;
   let planningWriteQueue=Promise.resolve();
@@ -189,8 +189,19 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     }
   }
   async function execute(job) {
+    let cancellationCheckedAt=-Infinity,cancellationCheck;
+    const cancellationRequested=async(force=false)=>{
+      if(step3CancelJobs.has(job._id))return true;
+      if(force||now()-cancellationCheckedAt>=1000){
+        cancellationCheckedAt=now();
+        cancellationCheck=Promise.resolve().then(()=>store.isCancelled?.(job._id,job.owner)).then(Boolean);
+      }
+      if(await cancellationCheck){step3CancelJobs.add(job._id);return true;}
+      return false;
+    };
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
-    if(job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
+    const cancelledAtStart=await cancellationRequested(true);
+    if(!cancelledAtStart&&job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
     const step3Now=now();
     job.step3StartedAt=step3Now;
     job.step3ProgressAt=step3Now;
@@ -202,6 +213,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     await withStep3Utilization(activeStep3Tracker,()=>pool([...groups.values()],6,async (group,index,stopped)=>{
      for(const {task,taskIndex} of group){
       if(stopped()||unsafeWorkerJobs.has(job._id))return;
+      const cancelling=await cancellationRequested();
+      if(cancelling&&!['running','uncertain'].includes(task.result?.status))return;
       if(task.result?.status==='running'||(task.result?.status==='uncertain'&&task.result.error?.category==='UNCERTAIN_OUTCOME')){
         task.result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',stage:'interruption',message:'The activity was in flight when processing stopped. Brightspace is checked read-only; no PUT is repeated.'}};
         await saveStep3(job,{tasks:[taskIndex]});
@@ -217,6 +230,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         }
         processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.step3ProgressAt=now();job.systemicFailure=stop;await saveStep3(job,{tasks:[taskIndex]});continue;
       }
+      if(cancelling)return;
       if(task.result)continue;
       if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {await store.renew(worker);} catch(error) {unsafeWorkerJobs.add(job._id);throw error;} // Lease failure stops every worker before a later write.
@@ -225,12 +239,14 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
-          dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});},dryRun:false});
+          dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});if(await cancellationRequested(true))throw Object.assign(Error('Date update cancelled before dispatch.'),{code:'JOB_CANCELLED'});},dryRun:false});
       } catch(error) {
+        if(error.code==='JOB_CANCELLED'){step3CancelJobs.add(job._id);delete task.result;return;}
         const category=error?.name?.startsWith('Mongo')||error?.persistenceFailure?'PERSISTENCE_FAILURE':/lease/i.test(String(error?.message||''))?'WORKER_LEASE_INTERRUPTION':'UNCERTAIN_OUTCOME';
         if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(category)){unsafeWorkerJobs.add(job._id);throw error;}
         task.result={status:'uncertain',verifiedDates:null,writeAttempted:true,error:{category,stage:'execution',message:'Outcome is uncertain; inspect the activity before retrying.'}};stop=true;
       }
+      if(step3CancelJobs.has(job._id)&&task.result?.writeAttempted===false&&task.result.status!=='unchanged'){delete task.result;return;}
       const error=task.result.error;
       if(['HTTP_API_FAILURE','API_FAILURE','API_TRANSPORT_FAILURE'].includes(error?.category) && (error.httpStatus==null || [401,403,429].includes(error.httpStatus) || error.httpStatus>=500))stop=true;
       if(error?.category==='UNCERTAIN_OUTCOME'&&(!task.result.verifiedDates||[401,403,429].includes(error.httpStatus)||error.httpStatus>=500))stop=true;
@@ -242,7 +258,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
      }
     },async()=>!unsafeWorkerJobs.has(job._id)));
     job.progress={phase:'Applying dates',processed,total:job.tasks.length};
+    const cancelled=await cancellationRequested(true);
+    if(cancelled){
+      for(const task of job.tasks)if(task.result?.status==='running'&&task.result.writeAttempted===false)delete task.result;
+      job.status='cancelled';job.cancelledDuringStep3=true;job.message='Job cancelled. Confirmed updates are saved; activities not started remain pending.';
+    } else {
     job.status=job.tasks.some(t=>['failed','skipped','uncertain','pending','running'].includes(t.result?.status))?'completedWithErrors':'completed';
+    }
     job.step3ElapsedMs=(job.step3ElapsedMs||0)+Math.max(0,now()-job.step3StartedAt);
     job.step3StartedAt=null;
     activeStep3Tracker.finish();
@@ -268,7 +290,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     async confirm(id,owner) {return store.confirm(id,owner,now());},
     async cancel(id,owner) {
       const cancelled=await store.cancel(id,owner);
-      if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}}
+      if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}if(activeStep3Job===id)step3CancelJobs.add(id);}
       return cancelled;
     },
     async tick() {
@@ -294,12 +316,15 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         await save(job);
       } catch(error) {
         if(activeStep3Job===job?._id)activeStep3Tracker?.finish();
-        if(error.code==='JOB_CANCELLED')return;
+        if(error.code==='JOB_CANCELLED'){
+          if(job?.kind==='dates'&&activeStep3Job===job._id){job.status='cancelled';job.cancelledDuringStep3=true;job.message='Job cancelled. Confirmed updates are saved; activities not started remain pending.';job.step3StartedAt=null;try{await save(job);}catch{/* Keep the durable cancellation request for recovery. */}}
+          return;
+        }
         require('./diagnostics').logFailure('job_worker_failed',error,{kind:job?.kind,jobId:job?._id});
         if(job) {const preserveDateCheckpoint=job.kind==='dates'&&job.storageVersion===2&&(['MongoNetworkError','MongoServerSelectionError','MongoBulkWriteError','MongoTopologyClosedError'].includes(error?.name)||error?.persistenceFailure||/lease lost/i.test(String(error?.message||'')));
           if(job.kind==='dates'&&job.storageVersion===2){job.status=job.status==='planning'?'validating':'queued';job.resuming=true;job.message='Processing paused. Saved activity outcomes are retained; in-flight activities require read-only reconciliation.';}else interruptJob(job);
           if(!preserveDateCheckpoint)try {await save(job);} catch { /* Durable running state is recovered after the lease expires. */ }}
-      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
+      } finally {clearInterval(heartbeat);if(job){unsafeWorkerJobs.delete(job._id);step3CancelJobs.delete(job._id);if(activeStep3Job===job._id){activeStep3Tracker=null;activeStep3Job=null;}if(activeStep2Job===job._id){activeStep2Tracker=null;activeStep2Job=null;}}if(held)await store.release(worker).catch(()=>{});busy=false;}
     }
   };
 }

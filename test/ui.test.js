@@ -4,7 +4,7 @@ const {installUi}=require('../src/ui/install');
 const {page,workspace}=require('../src/ui/page');
 const {createDeploymentView}=require('../src/replication/view');
 const {createDateView}=require('../src/dates/view');
-const helpers={controls:()=>'<input type="hidden" name="ticket" value="signed">',button:(r,a,id,label)=>`<form action="/${a}"><button>${label}</button></form>`,now:()=>100};
+const helpers={controls:()=>'<input type="hidden" name="ticket" value="signed">',button:(r,a,id,label,extra='')=>`<form action="/${a}" ${extra}><button>${label}</button></form>`,now:()=>100};
 test('UI middleware serves only public bundle paths and leaves CSV/JSON payloads intact',()=>{
  let middleware;const assets=[],whitelist=[];
  installUi({whitelist:x=>whitelist.push(x.route),app:{get:(route,handler)=>assets.push(route),use:f=>middleware=f}});
@@ -75,7 +75,7 @@ test('successful date jobs show confirmation instead of review details; partial 
 test('date progress uses persisted totals, separates uncertain work, and does not read task chunks',()=>{
  const job={_id:'j',status:'running',dates:{},courseTotal:8,totals:{total:10,updated:5,unchanged:1,failed:1,skipped:1,uncertain:1,pending:1},progress:{phase:'Applying dates',processed:9,total:10}};
  const html=createDateView({writeEnabled:()=>true}).render({},job,helpers);
- assert.match(html,/Apply progress/);assert.match(html,/80%/);assert.match(html,/5 <span>Updated<\/span>/);assert.match(html,/1 <span>Uncertain<\/span>/);assert.match(html,/1 <span>Pending<\/span>/);assert.match(html,/Applying dates/);assert.doesNotMatch(html,/>100%<|success-confirmation/);
+ assert.match(html,/Apply progress/);assert.match(html,/80%/);assert.match(html,/<strong>5<\/strong><span>Updated<\/span>/);assert.match(html,/<strong>1<\/strong><span>Uncertain<\/span>/);assert.match(html,/<strong>1<\/strong><span>Pending<\/span>/);assert.match(html,/Running/);assert.match(html,/Approximate remaining time:/);assert.doesNotMatch(html,/>100%<|success-confirmation/);
  job.status='completedWithErrors';const terminal=page(createDateView({writeEnabled:()=>true}).render({},job,helpers),{ltik:'session'});assert.match(terminal,/Completed with Issues/);assert.doesNotMatch(terminal,/Activity Dates Updated|success-confirmation/);
 });
 
@@ -83,12 +83,12 @@ test('Date Manager ETA waits for enough durable progress and refreshes from curr
  const view=createDateView({writeEnabled:()=>true});let time=16000;
  const job={_id:'j',status:'running',dates:{},courseTotal:1,totals:{total:30,updated:20,pending:10},step3StartedAt:1000,step3ElapsedMs:0,step3ProgressAt:15000};
  let html=view.render({},job,{...helpers,now:()=>time});
- assert.match(html,/Elapsed: 15s/);assert.match(html,/Throughput: 80\.0 activities\/min/);assert.match(html,/ETA: 7s/);
+ assert.match(html,/Elapsed: 15s/);assert.match(html,/Throughput: 80\.0 activities\/min/);assert.match(html,/Approximate remaining time: 7s/);
  time=26000;html=view.render({},job,{...helpers,now:()=>time});
- assert.match(html,/Elapsed: 25s/);assert.match(html,/Throughput: 48\.0 activities\/min/);assert.match(html,/ETA: 12s/);
+ assert.match(html,/Elapsed: 25s/);assert.match(html,/Throughput: 48\.0 activities\/min/);assert.match(html,/Approximate remaining time: 12s/);
  job.totals.updated=19;job.totals.pending=11;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Calculating ETA…/);assert.doesNotMatch(html,/ETA: \d/);
  job.totals.updated=20;job.totals.pending=10;job.step3StartedAt=11000;job.step3ElapsedMs=5000;time=26000;html=view.render({},job,{...helpers,now:()=>time});
- assert.match(html,/Elapsed: 20s/);assert.match(html,/ETA: 10s/);
+ assert.match(html,/Elapsed: 20s/);assert.match(html,/Approximate remaining time: 10s/);
 });
 
 test('stalled, interrupted, resumed, and completed date jobs show safe timing states',()=>{
@@ -96,9 +96,9 @@ test('stalled, interrupted, resumed, and completed date jobs show safe timing st
  const job={_id:'j',status:'running',dates:{},totals:{total:40,updated:25,pending:15},step3StartedAt:100000,step3ElapsedMs:30000,step3ProgressAt:319999};
  let html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Progress paused — ETA unavailable/);assert.match(html,/Elapsed: 7m 10s/);
  job.status='interrupted';job.step3StartedAt=null;job.step3ElapsedMs=40000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Elapsed: 40s/);assert.match(html,/Progress paused — ETA unavailable/);
- job.status='running';job.resuming=true;job.step3StartedAt=null;job.step3ProgressAt=100000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/ETA: 24s/);assert.doesNotMatch(html,/Progress paused/);
+ job.status='running';job.resuming=true;job.step3StartedAt=null;job.step3ProgressAt=100000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Approximate remaining time: 24s/);assert.doesNotMatch(html,/Progress paused/);
  job.status='running';job.resuming=true;job.step3ElapsedMs=40000;job.step3StartedAt=time;job.step3ProgressAt=time;html=view.render({},job,{...helpers,now:()=>time+20000});
- assert.match(html,/Elapsed: 1m 0s/);assert.match(html,/ETA: 36s/);assert.doesNotMatch(html,/6m/);
+ assert.match(html,/Elapsed: 1m 0s/);assert.match(html,/Approximate remaining time: 36s/);assert.doesNotMatch(html,/6m/);
  job.status='completed';job.step3StartedAt=null;job.step3ElapsedMs=60000;html=view.render({},job,{...helpers,now:()=>time+40000});
  assert.match(html,/Final elapsed: 1m 0s/);assert.match(html,/Throughput: 25\.0 activities\/min/);assert.doesNotMatch(html,/ETA|Calculating/);
 });
@@ -107,11 +107,39 @@ test('Step 2 shows one adaptive planning ETA and final elapsed time',()=>{
  const view=createDateView({writeEnabled:()=>true});let time=60000;
  const job={_id:'plan',status:'planning',dates:{},totals:{total:0},progress:{phase:'Resolving courses',processed:12,total:30},step2StartedAt:10000,step2ElapsedMs:5000,step2ProgressAt:55000,step2CourseProgressAt:55000};
  let html=view.render({},job,{...helpers,now:()=>time});
- assert.match(html,/Review progress/);assert.match(html,/Resolving courses/);assert.match(html,/<strong>12<\/strong> \/ 30/);assert.match(html,/Elapsed: 55s/);assert.match(html,/Calculating ETA…/);assert.doesNotMatch(html,/ETA: \d/);
+ assert.match(html,/Review progress/);assert.match(html,/Resolving source courses/);assert.match(html,/<strong>12<\/strong> \/ 30/);assert.match(html,/Elapsed: 55s/);assert.match(html,/Calculating ETA…/);assert.match(html,/Waiting/);assert.doesNotMatch(html,/ETA: \d/);
  job.progress={phase:'Discovering activities',processed:12,total:30};job.step2ProgressAt=55000;job.step2SampleCount=3;job.step2RatePerMs=0.001;
  html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Discovering activities/);assert.match(html,/ETA: 18s/);
  job.step2CourseProgressAt=0;time=200000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Progress paused — ETA unavailable/);
  job.status='ready';job.step2StartedAt=null;job.step2ElapsedMs=55000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Final elapsed: 55s/);assert.doesNotMatch(html,/ETA: \d|Calculating ETA/);
+});
+
+test('Step 2 separates phases, uses activity metadata, and places Requested Dates before progress',()=>{
+ const view=createDateView({writeEnabled:()=>true}),time=80000;
+ const job={_id:'plan',status:'planning',dates:{start:'2026-01-01T00:00:00Z',due:'2026-01-02T00:00:00Z',end:'2026-01-03T00:00:00Z'},courseTotal:8,totals:{total:0},progress:{phase:'Discovering activities',processed:3,total:8,activities:42},step2StartedAt:20000,step2ElapsedMs:10000,step2SampleCount:3,step2RatePerMs:0.001};
+ const html=view.render({},job,{...helpers,now:()=>time});
+ assert.match(html,/Resolving source courses[\s\S]*?Completed[\s\S]*?<strong>8<\/strong> \/ 8/);assert.match(html,/Discovering activities[\s\S]*?In progress[\s\S]*?<strong>3<\/strong> \/ 8/);assert.match(html,/42<\/strong> activities discovered so far/);assert.match(html,/ETA: 5s/);
+ assert.ok(html.indexOf('Requested Dates')<html.indexOf('Review progress'));
+ job.status='ready';job.step2StartedAt=null;job.step2ElapsedMs=60000;job.progress={phase:'Discovering activities',processed:8,total:8,activities:42};
+ const completed=view.render({},job,{...helpers,now:()=>time});assert.match(completed,/Resolving source courses[\s\S]*?Completed[\s\S]*?Discovering activities[\s\S]*?Completed/);assert.equal((completed.match(/Final elapsed: 1m 0s/g)||[]).length,1);assert.doesNotMatch(completed,/remaining time|Calculating ETA|ETA: \d/);
+});
+
+test('Step 3 state-specific progress retains counters and Requested Dates placement',()=>{
+ const view=createDateView({writeEnabled:()=>true}),base={_id:'apply',dates:{},courseTotal:1,totals:{total:25,updated:20,unchanged:1,failed:1,skipped:1,uncertain:1,pending:1},step3StartedAt:1000,step3ElapsedMs:0,step3ProgressAt:10000};
+ let html=view.render({}, {...base,status:'running'}, {...helpers,now:()=>16000});
+ assert.ok(html.indexOf('Requested Dates')<html.indexOf('Apply progress'));assert.match(html,/92%/);assert.match(html,/<strong>23<\/strong> \/ 25/);assert.match(html,/Throughput: 96\.0 activities\/min/);assert.match(html,/Approximate remaining time:/);for(const label of ['Updated','Unchanged','Failed','Pending','Uncertain','Skipped'])assert.match(html,new RegExp(`<span>${label}<\\/span>`));
+ html=view.render({}, {...base,status:'queued'},helpers);assert.match(html,/Waiting to start\. No ETA is available\./);assert.doesNotMatch(html,/Approximate remaining time|Calculating ETA/);
+ html=view.render({}, {...base,status:'interrupted',step3StartedAt:null,step3ElapsedMs:12000},helpers);assert.match(html,/Progress paused — ETA unavailable/);assert.doesNotMatch(html,/Approximate remaining time:/);
+ html=view.render({}, {...base,status:'completed',step3StartedAt:null,step3ElapsedMs:12000},helpers);assert.match(html,/Final elapsed: 12s/);assert.doesNotMatch(html,/Approximate remaining time|ETA: \d/);
+});
+
+test('Step 3 cancellation shows drain progress and a saved partial-result summary without ETA',()=>{
+ const view=createDateView({writeEnabled:()=>true}),base={_id:'cancel',dates:{},courseTotal:1,totals:{total:10,updated:3,unchanged:1,failed:1,uncertain:1,skipped:1,pending:3},step3StartedAt:1000,step3ElapsedMs:0,step3ProgressAt:10000};
+ const stopping=view.render({}, {...base,status:'running',cancelRequestedAt:12000},{...helpers,now:()=>15000});
+ assert.match(stopping,/Stopping updates…/);assert.match(stopping,/In-progress operations are finishing/);assert.match(stopping,/<strong>6<\/strong> \/ 10/);assert.doesNotMatch(stopping,/Approximate remaining time:|Cancel this job/);
+ const cancelled=view.render({}, {...base,status:'cancelled',cancelRequestedAt:12000,cancelledDuringStep3:true,step3StartedAt:null,step3ElapsedMs:14000},{...helpers,now:()=>15000});
+ assert.match(cancelled,/Job Cancelled — Partial Updates Saved/);assert.match(cancelled,/3 updated, 1 unchanged, 1 failed, 1 uncertain, 1 skipped, and 3 not attempted/);assert.match(cancelled,/Already-applied changes remain in Brightspace/);assert.match(cancelled,/Pending/);assert.doesNotMatch(cancelled,/Approximate remaining time:|Calculating ETA/);
+ const confirmable=view.render({}, {...base,status:'running'},{...helpers,now:()=>15000});assert.match(confirmable,/onsubmit="return confirm\(/);assert.match(confirmable,/A partial CSV report will remain available/);
 });
 
 test('CSV checking screens stay compact while retaining refresh, report and cancellation',()=>{

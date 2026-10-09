@@ -21,7 +21,7 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async getStatus(_id,owner) {const {jobs}=await collections();return jobs.findOne({_id,owner,namespace},{projection:{_id:1,owner:1,kind:1,status:1,createdAt:1,updatedAt:1,dates:1,timeZone:1,courseTotal:1,totals:1,progress:1,step2StartedAt:1,step2ElapsedMs:1,step2ProgressAt:1,step2CourseProgressAt:1,step2RatePerMs:1,step2SampleAt:1,step2SampleProcessed:1,step2SamplePhase:1,step2SampleCount:1,step3StartedAt:1,step3ElapsedMs:1,step3ProgressAt:1,message:1,systemicFailure:1,expiresAt:1,confirmedAt:1,resuming:1}});},
+    async getStatus(_id,owner) {const {jobs}=await collections();return jobs.findOne({_id,owner,namespace},{projection:{_id:1,owner:1,kind:1,status:1,createdAt:1,updatedAt:1,dates:1,timeZone:1,courseTotal:1,totals:1,progress:1,step2StartedAt:1,step2ElapsedMs:1,step2ProgressAt:1,step2CourseProgressAt:1,step2RatePerMs:1,step2SampleAt:1,step2SampleProcessed:1,step2SamplePhase:1,step2SampleCount:1,step3StartedAt:1,step3ElapsedMs:1,step3ProgressAt:1,message:1,systemicFailure:1,expiresAt:1,confirmedAt:1,resuming:1,cancelRequestedAt:1,cancelledDuringStep3:1}});},
     async savePlanningProgress(job,worker,fields) {
       await this.renew(worker);
       const {jobs}=await collections();
@@ -85,9 +85,15 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,status:'ready',expiresAt:{$gt:time}},{$set:{status:'queued',confirmedAt:time}})).modifiedCount===1;
     },
     async cancel(_id,owner) {
-      const {jobs}=await collections();return (await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'}, $or:[{status:{$in:['validating','ready','queued']}},{kind:'dates',status:'planning'},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:now()}})).modifiedCount===1;
+      const {jobs}=await collections();
+      const time=now();
+      const result=await jobs.updateOne({_id,owner,namespace,operation:{$ne:'activate'},$or:[{status:{$in:['validating','ready','queued']}},{kind:'dates',status:'planning'},{kind:'courseCopy',status:'planning'}]},{$set:{status:'cancelled',updatedAt:time}});
+      if(result.modifiedCount===1)return true;
+      const running=await jobs.updateOne({_id,owner,namespace,kind:'dates',status:'running',cancelRequestedAt:{$exists:false}},{$set:{cancelRequestedAt:time,updatedAt:time}});
+      if(running.modifiedCount===1)return true;
+      return Boolean(await jobs.findOne({_id,owner,namespace,kind:'dates',cancelRequestedAt:{$exists:true},$or:[{status:'running'},{status:'cancelled'}]},{projection:{_id:1}}));
     },
-    async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,status:'cancelled'},{projection:{_id:1}}));},
+    async isCancelled(_id,owner) {const {jobs}=await collections();return Boolean(await jobs.findOne({_id,owner,namespace,$or:[{status:'cancelled'},{kind:'dates',cancelRequestedAt:{$exists:true}}]},{projection:{_id:1}}));},
     async acquire(worker) {
       const {locks,jobs}=await collections();let lock;
       try {lock=await locks.findOneAndUpdate({_id:namespace,until:{$lte:now()}},{$set:{worker,until:now()+leaseMs}},{upsert:true,returnDocument:'after'});}
@@ -163,11 +169,16 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
         for(const [field,indices] of Object.entries(job[DIRTY]))for(const index of new Set(indices.map(i=>Math.floor(i/CHUNK_SIZE))))data[`dateChunks.${field}.${index}`]=encoded.dateChunks[field][index];
       }
       if(Buffer.byteLength(JSON.stringify(data))>8*1024*1024)throw new Error('Job metadata exceeds storage limit.');
-      const statuses=job.kind==='dates'&&job.status==='cancelled'?{$in:['planning','cancelled']}:{$in:['planning','running']};
+      const statuses=job.kind==='dates'&&job.status==='cancelled'?{$in:['planning','running','cancelled']}:{$in:['planning','running']};
+      const filter={_id,namespace,worker,status:statuses};
+      if(job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status))filter.cancelRequestedAt={$exists:false};
       let r;
-      try{r=await jobs.updateOne({_id,namespace,worker,status:statuses},{$set:data});}
+      try{r=await jobs.updateOne(filter,{$set:data});}
       catch(error){logMongoOperationFailure('job_checkpoint_save',error);throw error;}
-      if(!r.matchedCount)throw new Error('Job is no longer owned by this worker.');
+      if(!r.matchedCount){
+        if(job.kind==='dates'&&['completed','completedWithErrors'].includes(job.status)&&await jobs.findOne({_id,namespace,worker,status:'running',cancelRequestedAt:{$exists:true}},{projection:{_id:1}}))throw Object.assign(Error('Cancellation was requested before completion.'),{code:'JOB_CANCELLED'});
+        throw new Error('Job is no longer owned by this worker.');
+      }
       if(encoded.storageVersion===2){job.storageVersion=2;job.dateChunks=encoded.dateChunks;}
     },
     async release(worker) {leases.delete(worker);const {locks}=await collections();await locks.updateOne({_id:namespace,worker},{$set:{until:0}});},
