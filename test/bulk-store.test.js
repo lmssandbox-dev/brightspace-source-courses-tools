@@ -30,6 +30,7 @@ test('Date Manager status reads select aggregate metadata without decoding chunk
  const s=setup();await s.store.getStatus('j','owner');const call=s.calls.at(-1);
  assert.equal(call.name,'bulk_date_jobs');assert.equal(call.op,'get');assert.deepEqual(call.filter,{_id:'j',owner:'owner',namespace:'n'});
  assert.equal(call.projection.dateChunks,undefined);assert.equal(call.projection.totals,1);assert.equal(call.projection.progress,1);
+ assert.equal(call.projection.step3StartedAt,1);assert.equal(call.projection.step3ElapsedMs,1);assert.equal(call.projection.step3ProgressAt,1);
 });
 test('Mongo lease contention and lease loss prevent worker persistence',async()=>{
  assert.equal(await setup({duplicate:true}).store.acquire('w'),false);
@@ -62,9 +63,15 @@ test('Date Manager planning cancellation is owner-scoped and fenced checkpoints 
 });
 
 test('chunked date recovery requeues checkpoints without rewriting tasks',async()=>{
- const s=setup({recover:[{_id:'p',kind:'dates',storageVersion:2,status:'planning'},{_id:'r',kind:'dates',storageVersion:2,status:'running'}]});
+ const s=setup({recover:[{_id:'p',kind:'dates',storageVersion:2,status:'planning'},{_id:'r',kind:'dates',storageVersion:2,status:'running',step3StartedAt:50,step3ElapsedMs:25,step3ProgressAt:80}]});
  await s.store.acquire('w');const changes=s.calls.filter(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
  assert.deepEqual(changes.map(c=>c.update.$set.status),['validating','queued']);assert.ok(changes.every(c=>!Object.hasOwn(c.update.$set,'tasks')));
+ assert.equal(changes[1].update.$set.step3ElapsedMs,55);assert.equal(changes[1].update.$set.step3StartedAt,null);
+});
+test('legacy Date Manager recovery accumulates only the active segment and clears its start marker',async()=>{
+ const s=setup({recover:[{_id:'r',kind:'dates',status:'running',tasks:[],step3StartedAt:20,step3ElapsedMs:10,step3ProgressAt:80}]});
+ await s.store.acquire('w');const change=s.calls.find(c=>c.name==='bulk_date_jobs'&&c.op==='updateOne');
+ assert.equal(change.update.$set.status,'queued');assert.equal(change.update.$set.step3ElapsedMs,70);assert.equal(change.update.$set.step3StartedAt,null);
 });
 test('copy-check claims require explicit requests and saves are fenced by run and lease',async()=>{
  const s=setup();await s.store.claimCopyMonitor();

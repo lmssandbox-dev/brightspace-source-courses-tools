@@ -79,6 +79,30 @@ test('date progress uses persisted totals, separates uncertain work, and does no
  job.status='completedWithErrors';const terminal=page(createDateView({writeEnabled:()=>true}).render({},job,helpers),{ltik:'session'});assert.match(terminal,/Completed with Issues/);assert.doesNotMatch(terminal,/Activity Dates Updated|success-confirmation/);
 });
 
+test('Date Manager ETA waits for enough durable progress and refreshes from current persisted metadata',()=>{
+ const view=createDateView({writeEnabled:()=>true});let time=16000;
+ const job={_id:'j',status:'running',dates:{},courseTotal:1,totals:{total:30,updated:20,pending:10},step3StartedAt:1000,step3ElapsedMs:0,step3ProgressAt:15000};
+ let html=view.render({},job,{...helpers,now:()=>time});
+ assert.match(html,/Elapsed: 15s/);assert.match(html,/Throughput: 80\.0 activities\/min/);assert.match(html,/ETA: 7s/);
+ time=26000;html=view.render({},job,{...helpers,now:()=>time});
+ assert.match(html,/Elapsed: 25s/);assert.match(html,/Throughput: 48\.0 activities\/min/);assert.match(html,/ETA: 12s/);
+ job.totals.updated=19;job.totals.pending=11;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Calculating ETA…/);assert.doesNotMatch(html,/ETA: \d/);
+ job.totals.updated=20;job.totals.pending=10;job.step3StartedAt=11000;job.step3ElapsedMs=5000;time=26000;html=view.render({},job,{...helpers,now:()=>time});
+ assert.match(html,/Elapsed: 20s/);assert.match(html,/ETA: 10s/);
+});
+
+test('stalled, interrupted, resumed, and completed date jobs show safe timing states',()=>{
+ const view=createDateView({writeEnabled:()=>true}),time=500000;
+ const job={_id:'j',status:'running',dates:{},totals:{total:40,updated:25,pending:15},step3StartedAt:100000,step3ElapsedMs:30000,step3ProgressAt:319999};
+ let html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Progress paused — ETA unavailable/);assert.match(html,/Elapsed: 7m 10s/);
+ job.status='interrupted';job.step3StartedAt=null;job.step3ElapsedMs=40000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/Elapsed: 40s/);assert.match(html,/Progress paused — ETA unavailable/);
+ job.status='running';job.resuming=true;job.step3StartedAt=null;job.step3ProgressAt=100000;html=view.render({},job,{...helpers,now:()=>time});assert.match(html,/ETA: 24s/);assert.doesNotMatch(html,/Progress paused/);
+ job.status='running';job.resuming=true;job.step3ElapsedMs=40000;job.step3StartedAt=time;job.step3ProgressAt=time;html=view.render({},job,{...helpers,now:()=>time+20000});
+ assert.match(html,/Elapsed: 1m 0s/);assert.match(html,/ETA: 36s/);assert.doesNotMatch(html,/6m/);
+ job.status='completed';job.step3StartedAt=null;job.step3ElapsedMs=60000;html=view.render({},job,{...helpers,now:()=>time+40000});
+ assert.match(html,/Final elapsed: 1m 0s/);assert.match(html,/Throughput: 25\.0 activities\/min/);assert.doesNotMatch(html,/ETA|Calculating/);
+});
+
 test('CSV checking screens stay compact while retaining refresh, report and cancellation',()=>{
  for(const status of ['validating','planning']){
  const job={_id:'j',status,dates:{},rows:[],courses:[],tasks:[]};

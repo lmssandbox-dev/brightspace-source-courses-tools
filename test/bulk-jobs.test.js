@@ -93,9 +93,11 @@ test('restarted Date Manager reconciles in-flight activity read-only and resumes
  const calls=[];const s=setup({writer:{updateActivityDates:async request=>{calls.push(request.reconcileOnly?'reconcile':request.dryRun?'preview':'write');return request.reconcileOnly?{status:'unchanged',verifiedDates:dates,reconciled:true,writeAttempted:false}:{status:'updated',verifiedDates:dates,writeAttempted:true};}}});
  const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
  const resumed=await s.jobs.get(created._id,'a');resumed.storageVersion=2;resumed.status='queued';resumed.tasks[0].result={status:'updated',verifiedDates:dates,writeAttempted:true};resumed.tasks[1].result={status:'running',writeAttempted:false};s.data.set(created._id,resumed);
+ resumed.step3ElapsedMs=12000;resumed.step3StartedAt=null;resumed.step3ProgressAt=900;
  await s.jobs.tick();const final=await s.jobs.get(created._id,'a');
  assert.equal(final.tasks[0].result.status,'updated');assert.equal(final.tasks[1].result.status,'unchanged');assert.equal(final.tasks[1].result.reconciled,true);assert.equal(final.tasks[2].result.status,'updated');
  assert.equal(calls.filter(c=>c==='reconcile').length,1);assert.equal(calls.filter(c=>c==='write').length,1);assert.equal(final.status,'completed');
+ assert.equal(final.step3ElapsedMs,12000);assert.equal(final.step3StartedAt,null);assert.equal(final.step3ProgressAt,1000);
 });
 test('persistence checkpoint failure stops sequential writes and preserves running intent',async()=>{
  const s=setup();const j=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();const persisted=await s.jobs.get(j._id,'a');persisted.storageVersion=2;s.data.set(j._id,persisted);await s.jobs.confirm(j._id,'a');

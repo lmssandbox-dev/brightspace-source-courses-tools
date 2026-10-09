@@ -399,5 +399,11 @@
   "Interrupted": "Interrupted",
   "Total activities": "Total activities",
   "Failed": "Failed",
-  "Uncertain": "Uncertain"
+  "Uncertain": "Uncertain",
+  "Elapsed:": "Elapsed:",
+  "Final elapsed:": "Final elapsed:",
+  "Throughput:": "Throughput:",
+  "activities/min": "activities/min",
+  "Calculating ETA…": "Calculating ETA…",
+  "Progress paused — ETA unavailable": "Progress paused — ETA unavailable"
 }

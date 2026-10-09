@@ -399,5 +399,11 @@
   "Interrupted": "Interrompido",
   "Total activities": "Total de atividades",
   "Failed": "Com falha",
-  "Uncertain": "Incerto"
+  "Uncertain": "Incerto",
+  "Elapsed:": "Tempo decorrido:",
+  "Final elapsed:": "Tempo total:",
+  "Throughput:": "Ritmo:",
+  "activities/min": "atividades/min",
+  "Calculating ETA…": "Calculando tempo restante…",
+  "Progress paused — ETA unavailable": "Progresso pausado — tempo restante indisponível"
 }

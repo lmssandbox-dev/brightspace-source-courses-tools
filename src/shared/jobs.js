@@ -123,6 +123,10 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function execute(job) {
     // All scopes are checked before the first write. Only the stored confirmed plan is executed.
     if(job.tasks.some(t=>!writeEnabled(t.activity.type))) {job.status='failed';job.message='Required write scope is unavailable. No updates were started.';return;}
+    const step3Now=now();
+    job.step3StartedAt=step3Now;
+    job.step3ProgressAt=step3Now;
+    job.step3ElapsedMs=Number.isFinite(job.step3ElapsedMs)?job.step3ElapsedMs:0;
     let stop=Boolean(job.systemicFailure),processed=job.tasks.filter(t=>t.result&&t.result.status!=='running'&&t.result.status!=='pending').length;
     const groups=new Map();
     job.tasks.forEach((task,taskIndex)=>{if(!groups.has(task.orgUnitId))groups.set(task.orgUnitId,[]);groups.get(task.orgUnitId).push({task,taskIndex});});
@@ -142,14 +146,14 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           if(category!=='API_TRANSPORT_FAILURE')throw error;
           task.result.error={category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:'Read-only reconciliation could not establish the result. Manual review is required; no write was repeated.'};
         }
-        processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.systemicFailure=stop;await saveStep3(job,{tasks:[taskIndex]});continue;
+        processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.step3ProgressAt=now();job.systemicFailure=stop;await saveStep3(job,{tasks:[taskIndex]});continue;
       }
       if(task.result)continue;
-      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;await saveStep3(job,{tasks:[taskIndex]});continue;}
+      if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {await store.renew(worker);} catch(error) {unsafeWorkerJobs.add(job._id);throw error;} // Lease failure stops every worker before a later write.
       if(unsafeWorkerJobs.has(job._id))return;
       task.result={status:'running',writeAttempted:false};await saveStep3(job,{tasks:[taskIndex]});
-      if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;await saveStep3(job,{tasks:[taskIndex]});continue;}
+      if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
           dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});},dryRun:false});
@@ -164,11 +168,14 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(error?.category)){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Date Manager worker state could not be safely persisted.'),{persistenceFailure:error.category==='PERSISTENCE_FAILURE',workerLease:error.category==='WORKER_LEASE_INTERRUPTION'});}
       job.systemicFailure=stop;
       job.progress={phase:'Applying dates',processed:++processed,total:job.tasks.length};
+      job.step3ProgressAt=now();
       await saveStep3(job,{tasks:[taskIndex]});
      }
     },async()=>!unsafeWorkerJobs.has(job._id));
     job.progress={phase:'Applying dates',processed,total:job.tasks.length};
     job.status=job.tasks.some(t=>['failed','skipped','uncertain','pending','running'].includes(t.result?.status))?'completedWithErrors':'completed';
+    job.step3ElapsedMs=(job.step3ElapsedMs||0)+Math.max(0,now()-job.step3StartedAt);
+    job.step3StartedAt=null;
   }
   return {
     async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
