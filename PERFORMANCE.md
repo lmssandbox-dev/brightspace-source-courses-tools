@@ -34,6 +34,8 @@ Execution saves only changed task paths plus small job metadata instead of rewri
 
 While Date Manager Step 2 is active, a separate metadata-only update runs at most once per five seconds when progress is available. It updates the existing job document with phase, course progress, and ETA/timing samples under worker and `planning` status guards. It does not rewrite course/activity chunks or count as a durable result checkpoint. Resolution still has one durable save at its phase boundary, and discovery still checkpoints each 500 progress increments. Status refresh continues to use the lightweight metadata projection and existing ten-second browser refresh; there are no extra Brightspace calls or polling requests. On recovery, the Step 2 clock stops at its last saved progress time and the display counter returns to its last durable planning checkpoint.
 
+Step 2 utilization metadata uses a dotted MongoDB update path, while the in-memory job keeps the telemetry nested under `performance`. The dotted update field is excluded from generic in-memory field assignment so a later durable checkpoint cannot serialize overlapping `performance` and `performance.dateStep2Utilization` update paths (MongoDB error 40).
+
 Interrupted copy/deployment jobs retain checkpoints and saved tokens; they are not blindly resumed or resubmitted. An accepted request whose response could not be saved remains uncertain. Inspect Brightspace before creating a replacement job. Cancellation during Course Copy preparation stops further validation, with up to eight mappings finishing in flight; it cannot undo a submitted Brightspace copy.
 
 Deploy this version after current bulk jobs finish. No new environment variables, migration script, service or CSV columns are required.

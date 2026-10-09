@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBulkJobs,interruptJob}=require('../src/shared/jobs');
+const {encodeDateJob}=require('../src/shared/dateChunks');
 const dates={start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'};
 function setup(options={}) {
  const data=new Map(),calls=[];let held=false;
@@ -42,6 +43,30 @@ test('Date Manager Step 2 persists bounded discovery utilization with existing p
  const job=await s.jobs.get(created._id,'a'),metrics=job.performance.dateStep2Utilization;
  assert.equal(job.status,'ready');assert.equal(metrics.version,1);assert.equal(metrics.httpMs.length,9);assert.equal(metrics.permitMs.length,9);assert.equal(metrics.workerMs.length,9);
  assert.ok(metrics.coveredMs>=0);assert.ok(metrics.discoveryDurationMs>=metrics.coveredMs-1);assert.ok(Number.isFinite(metrics.checkpointWaitMs));assert.equal(job.courses.length,1);assert.equal(job.tasks.length,3);
+});
+test('Step 2 metadata telemetry stays nested through a later durable checkpoint',async()=>{
+ const s=setup(),events=[];let checkpointTelemetry;
+ const saveProgress=s.store.savePlanningProgress;s.store.savePlanningProgress=async(job,worker,fields)=>{
+  if(Object.hasOwn(fields,'performance.dateStep2Utilization'))events.push('metadata');
+  return saveProgress(job,worker,fields);
+ };
+ const save=s.store.save;s.store.save=async job=>{
+  if(job.performance?.dateStep2Utilization){
+   events.push('checkpoint');
+   assert.equal(Object.hasOwn(job,'performance.dateStep2Utilization'),false);
+   const encoded=await encodeDateJob(job,{bulkWrite:async()=>{}},'test',job.dateChunks||{});
+   const paths=Object.keys(encoded).filter(path=>path!=='_id');
+   assert.equal(paths.some(path=>paths.some(other=>other!==path&&other.startsWith(`${path}.`))),false);
+   assert.deepEqual(encoded.performance.dateStep2Utilization,job.performance.dateStep2Utilization);
+   checkpointTelemetry=encoded.performance.dateStep2Utilization;
+  }
+  return save(job);
+ };
+ const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
+ assert.ok(events.indexOf('metadata')>=0);assert.ok(events.indexOf('checkpoint')>events.indexOf('metadata'));
+ assert.ok(checkpointTelemetry);assert.equal(checkpointTelemetry.version,1);
+ assert.equal(Object.hasOwn(s.data.get(created._id),'performance.dateStep2Utilization'),false);
+ assert.deepEqual(s.data.get(created._id).performance.dateStep2Utilization,checkpointTelemetry);
 });
 test('invalid course, incomplete discovery and missing scopes cannot write',async()=>{
  for(const options of [{csv:'OrgUnitId,OrgUnitCode\n1,\n999,'},{partial:true},{noScope:true}]){

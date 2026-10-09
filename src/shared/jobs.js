@@ -95,7 +95,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           const saved=await store.savePlanningProgress(job,worker,fields);
           if(!saved&&job.status==='planning'){unsafeWorkerJobs.add(job._id);throw Object.assign(Error('Planning worker no longer owns this job.'),{workerLease:true});}
         }
-        Object.assign(job,fields);lastPersistAt=time;lastPersistedProgress=progressKey;
+        const inMemoryFields={...fields};delete inMemoryFields['performance.dateStep2Utilization'];
+        Object.assign(job,inMemoryFields);lastPersistAt=time;lastPersistedProgress=progressKey;
       }).catch(error=>{metadataFailure=error;unsafeWorkerJobs.add(job._id);if(!error.persistenceFailure&&!error.workerLease)error.persistenceFailure=true;throw error;}).finally(()=>{metadataBusy=false;});
     };
     const progressTimer=setInterval(()=>{if(!metadataBusy&&now()-lastPersistAt>=STEP2_PROGRESS_PERSIST_MS)persistPlanningProgress(false).catch(()=>{});},1000);
