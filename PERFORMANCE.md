@@ -44,14 +44,17 @@ Run in the Render shell after a small representative job:
 
 ```sh
 node scripts/api-cost-report.js
+node scripts/api-gate-state-report.js
 node scripts/job-performance-report.js
 node scripts/date-step2-utilization-report.js [job-id]
 node scripts/date-step3-utilization-report.js [job-id]
 ```
 
-Both commands read MongoDB only. They never send Brightspace requests. Costs and timings are not shown to end users or added to downloadable course reports.
+These administrator reports read MongoDB only. They never send Brightspace requests. Costs and timings are not shown to end users or added to downloadable course reports.
 
 The API report shows measured costs, average HTTP duration, average gate wait and maximum HTTP duration, plus route-level API gate timing summaries (`n`, total and average milliseconds) for local reservation queue, MongoDB atomic reservation, denied-reservation read, permit-contention wait, pacing/budget wait, mixed-cause wait, and completion persistence. The two deliberate wait categories are mutually exclusive per delay; when both permit and pacing deadlines are active, the delay is conservatively reported as mixed. The denied-reservation read is measured separately from the atomic reservation attempt. HTTP duration excludes job persistence and token acquisition. These gate categories exclude the in-process HTTP concurrency semaphore wait.
+
+`node scripts/api-gate-state-report.js` is a one-shot, read-only snapshot of the existing tenant API-gate document. It displays current `nextAt`, cooldown, adaptive spacing, local credit-window usage, remaining-credit/reset observations, active/expired permit counts, and stored costs for matching normalized Date Manager discovery routes. Capture the output before and during a benchmark to compare current gate state; the script performs one MongoDB read and sends no Brightspace requests. A snapshot does not establish historical causation, and low usage or no recorded 429 responses do not guarantee Brightspace capacity is available. `lastResetMs` is the reset duration in milliseconds from the latest API response, not an epoch timestamp.
 
 Timing aggregates are updated by the existing gate completion writes; instrumentation adds no MongoDB operations. Completion persistence duration is known only after its update returns, so it is buffered in memory and written by the next existing gate completion update. A process exit can therefore leave the latest completion sample unrecorded. Historical route records without these fields display `unknown`, not zero. Deliberate waits measure elapsed monotonic time around the actual delay; reservation and database durations use monotonic clocks. These categories explain where application gate time is spent, but do not measure MongoDB server execution separately from client-observed operation latency.
 

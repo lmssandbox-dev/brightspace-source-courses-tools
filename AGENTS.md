@@ -35,6 +35,8 @@ Date Manager Step 2 status uses a worker-fenced metadata-only progress update ab
 
 Step 2 discovery utilization lives in `src/shared/step2Utilization.js`; it uses a separate async context from Step 3 and persists bounded snapshots through existing metadata updates/checkpoints. Use `node scripts/date-step2-utilization-report.js [job-id]` for the admin-only metadata report. Interpret API waits as overlapping request sums; discovery permits are job-attributed, not global occupancy, and pending work without HTTP does not prove global capacity is available.
 
+Use `node scripts/api-gate-state-report.js` for a one-shot read-only snapshot of current shared API-gate state and stored discovery-route costs. It reads the tenant gate document only; snapshots do not establish historical gate conditions or available Brightspace capacity.
+
 ## Conventions and safety constraints
 
 - Follow the existing dependency-injected feature-factory pattern and wire shared clients/services in `index.js`.
