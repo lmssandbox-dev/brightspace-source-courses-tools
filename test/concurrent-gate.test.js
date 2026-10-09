@@ -93,6 +93,15 @@ test('denied atomic reservations separately measure their follow-up read and per
  for(let i=0;i<4;i++){assert.ok((await gate.reserve(route)).token);now+=250;}
  const denied=await gate.reserve(route);assert.equal(denied.mongoReservationMs,4);assert.equal(denied.deniedReservationReadMs,3);assert.equal(denied.waitReason,'permitContention');
 });
+test('throwing reservation diagnostics do not change successful or denied reservations',async()=>{
+ let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'throwing-reservation-diagnostics',now:()=>now,mongoClient:m.client});
+ const throws=()=>{throw Error('diagnostic failure');};
+ assert.ok((await gate.reserve(route,{onReservationAttempt:throws})).token);
+ now+=250;
+ for(let i=0;i<3;i++){assert.ok((await gate.reserve(route)).token);now+=250;}
+ const denied=await gate.reserve(route,{onReservationAttempt:throws,onDeniedReservationRead:throws});
+ assert.equal(denied.waitReason,'permitContention');assert.equal(m.calls.reserve,5);assert.equal(m.calls.read,1);
+});
 test('reserved credit budget blocks starts until its window resets',async()=>{
  let now=0;const m=mongoModel(),gate=createConcurrentGate({key:'k',now:()=>now,mongoClient:m.client});const initial=await gate.reserve(route);await gate.complete(initial,sample);
  m.doc.budgetUsed=29990;now=250;
