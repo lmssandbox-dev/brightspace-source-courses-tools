@@ -3,7 +3,7 @@ const {id}=require('../shared/id');
 const {atLeast}=require('../shared/client');
 function createCreationClient({api,http,oauth,baseUrl,lpVersion}){
  const root=new URL(baseUrl).origin+`/d2l/api/lp/${lpVersion}`;
- const configured=()=>{if(!/^\d+\.\d+$/.test(lpVersion||'')||!atLeast(lpVersion,'1.60'))throw Object.assign(Error('Bulk Source Course Creator requires LP API 1.60 or later.'),{code:'LP_VERSION_UNSUPPORTED'});};
+ const configured=()=>{if(!/^\d+\.\d+$/.test(lpVersion||'')||!atLeast(lpVersion,'1.60'))throw Object.assign(Error('Bulk Source Courses Creator requires LP API 1.60 or later.'),{code:'LP_VERSION_UNSUPPORTED'});};
  return {
   async orgUnit(value){configured();return api.read(`${root}/orgstructure/${id(value)}`);},
   async exactCode(code){configured();const url=new URL(`${root}/orgstructure/`);url.searchParams.set('exactOrgUnitCode',code);const rows=await api.list(url.href,undefined,{maxPages:100,maxItems:5000});return rows.filter(r=>r.Code===code).map(r=>({Identifier:id(r.Identifier),Code:r.Code,Name:r.Name,Type:r.Type}));},

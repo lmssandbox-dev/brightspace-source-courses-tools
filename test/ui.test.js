@@ -25,7 +25,7 @@ test('workspace renders the selected sidebar panel and omits development tools',
 });
 test('fresh workspace selects Source Course Creator and all sidebar entries use outline SVG icons',()=>{
  const html=workspace({copy:'Copy',creation:'Create',dates:'Dates',replication:'Deploy',history:'History'});
- assert.match(html,/data-section="creation" aria-current="page"/);assert.match(html,/id="pane-creation"  aria-label="Bulk Source Course Creator"/);
+ assert.match(html,/data-section="creation" aria-current="page"/);assert.match(html,/id="pane-creation"  aria-label="Bulk Source Courses Creator"/);
  assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/selected:res\.locals\.uiSection\|\|'creation'/);assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/req\.body\.section:'creation'/);
  const links=[...html.matchAll(/<a href="#([^"]+)" data-section="([^"]+)"[^>]*><span><svg/g)];assert.deepEqual(links.map(match=>match[1]),['creation','copy','dates','replication','apiHealth','history']);assert.equal((html.match(/<svg /g)||[]).length,6);assert.match(html,/data-section="apiHealth"[^>]*><span><svg/);assert.doesNotMatch(html,/＋|▧|▦|▤|◷/);
 });

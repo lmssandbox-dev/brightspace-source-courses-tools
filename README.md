@@ -1,6 +1,6 @@
 # Brightspace Source Courses Tools
 
-A toolkit for managing Brightspace Source Courses, offering Bulk Source Course Creator, Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with four workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration and MongoDB database are retained.
+A toolkit for managing Brightspace Source Courses, offering Bulk Source Courses Creator, Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with four workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration and MongoDB database are retained.
 
 Downloadable result CSV reports include the initiating administrator's LTI full name, User Org Code, and User ID columns on each row. Identity values are saved with the job at preview time; fields unavailable in the validated launch are blank. Historical jobs remain downloadable with blank identity columns.
 
@@ -28,7 +28,7 @@ Limit: 10,000 rows / 5 MB. Each source is split into batches of at most 100 repl
 
 Finish source date changes before replication. Saved deployment history does not reserve courses or block new jobs. The user confirmed live Source Course deployment after enabling the linked Service User’s course-copy permissions. User-provided reports and screenshots also confirm automatic reactivation and on-demand copy checks for two replicas; large-scale and restart validation remain outstanding.
 
-## 3. Bulk Source Course Creator
+## 3. Bulk Source Courses Creator
 
 Upload a UTF-8 CSV using exactly these headers:
 
@@ -77,7 +77,7 @@ Preview is the default; Discussion Topics require the forum ID. The CLI uses the
 
 ## D2L interface
 
-The workspace opens on Bulk Source Course Creator by default; the sidebar keeps direct navigation to Bulk Course Copy to Source Courses, Bulk Activity Dates Manager, Bulk Source Courses Deployer and Job History. Consistent outline icons identify all five tools. It uses `@brightspace-ui/core` buttons, alerts and loading indicators. Native date inputs use the selected time zone. CSV templates and compact aggregate results are included; per-row details remain in CSV reports. Development tools, the Workspace header button, and the footer are omitted. Deployment submission never implies copy completion.
+The workspace opens on Bulk Source Courses Creator by default; the sidebar keeps direct navigation to Bulk Course Copy to Source Courses, Bulk Activity Dates Manager, Bulk Source Courses Deployer and Job History. Consistent outline icons identify all five tools. It uses `@brightspace-ui/core` buttons, alerts and loading indicators. Native date inputs use the selected time zone. CSV templates and compact aggregate results are included; per-row details remain in CSV reports. Development tools, the Workspace header button, and the footer are omitted. Deployment submission never implies copy completion.
 
 `npm ci` builds frontend assets automatically through postinstall. `npm start` also builds them before starting the server. For manual builds use `npm run build`. Render may continue using the existing service; no separate frontend hosting or database is needed. Commit package.json, package-lock.json, src/ui, the updated source and scripts/build-ui.js. Generated public/assets files are ignored by Git and rebuilt during deployment. Browser assets are served locally; no CDN is required.
 
@@ -111,7 +111,7 @@ The script aborts if a worker is planning or running any bulk workflow in the de
 
 ## Application identity
 
-Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. Bulk Source Course Creator is the fourth workflow. This does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
+Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. Bulk Source Courses Creator is the fourth workflow. This does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
 
 ## Fresh database setup
 
