@@ -2,6 +2,7 @@
 const {targetStatus}=require('./outcomes');
 const deploymentProgress=require('./progress');
 const {escape,steps,upload,notice}=require('../ui/page');
+const {append:appendReportIdentity}=require('../shared/reportIdentity');
 function createDeploymentView({enabled}){return {
  canApply:()=>enabled(),
  form(res,{controls,button}){return `<section id="source-replication">${steps(['Upload Mappings','Review & Confirm','Deploy & Check Copy'])}<form method="post" action="/deploy/preview">${controls(res,'preview')}<div class="form-grid"><div class="panel">${upload('deploy','SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode','Provide an ID or code for each source and replica. If both are provided, they must identify the same course.')}</div><aside class="panel guidance"><span class="eyebrow">Before you begin</span><h3>Source Courses Replication</h3><ul class="explanation"><li><strong>What will change</strong><p>Replicas are made inactive and their content is replaced with a full copy of the source course.</p></li><li><strong>Check the results</strong><p>Accepted replicas are reactivated automatically. Check copy results from the job page to confirm completion.</p></li><li><strong>Course Mapping</strong><p>Use IDs, codes, or both. If both are supplied, they must match.</p></li></ul></aside></div><div class="action-bar date-upload-actions"><button class="primary">2. Review & Confirm</button></div></form></section>`;},
@@ -38,6 +39,7 @@ function createDeploymentView({enabled}){return {
   report(job){
    const rows=[['CSV row','Source ID','Replica ID','Source name','Replica name','Validation','Submission status','Deployment ID','Details','Deactivation','Activation','Deployment HTTP status','Brightspace error details','Request/correlation ID','Copy monitoring','Copy logs','Copy last checked UTC','Current check status']];
    for(const row of job.rows){const task=!['invalid','duplicate','ignored'].includes(row.status)?job.tasks.find(t=>t.sourceId===row.sourceId&&t.targets.some(target=>target.orgUnitId===row.targetId)):null,r=task?.result;rows.push([row.row,row.sourceId,row.targetId,row.sourceName,row.targetName,row.status,task?targetStatus(task,{orgUnitId:row.targetId}):'notAttempted',r?.deploymentId,[row.message,r?.error?.message,task?.targets.find(t=>t.orgUnitId===row.targetId)?.deactivation?.error?.message].filter(Boolean).join(' '),task?.targets.find(t=>t.orgUnitId===row.targetId)?.deactivation?.status,task?.targets.find(t=>t.orgUnitId===row.targetId)?.activation?.status,r?.error?.httpStatus,r?.error?.responseDetails,r?.error?.requestId,job.copyMonitor?.[row.targetId]?.status||'Not checked',job.copyMonitor?.[row.targetId]?.details,job.copyMonitor?.[row.targetId]?.checkedAt?new Date(job.copyMonitor[row.targetId].checkedAt).toISOString():'',job.copyCheck?job.copyMonitor?.[row.targetId]?.runId===job.copyCheck.runId?'Checked': 'Pending current check':'Not requested']);}
+   appendReportIdentity(rows,job);
    return '\uFEFF'+rows.map(row=>row.map(value=>{let v=String(value??'');if(/^\s*[=+\-@]|^[\t\r\n]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');
   }
  };

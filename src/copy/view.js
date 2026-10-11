@@ -1,6 +1,7 @@
 'use strict';
 const {escape,steps,upload,notice}=require('../ui/page');
 const {COMPONENTS,HEADERS,terminalCopy}=require('./jobs');
+const {append:appendReportIdentity}=require('../shared/reportIdentity');
 const copyProgress=require('./progress');
 const LABELS={AttendanceRegisters:'Attendance registers',CompletionTracking:'Completion tracking',CourseAppearance:'Course appearance',CourseFiles:'Course files',DisplaySettings:'Display settings',Dropbox:'Assignments',Faq:'FAQ',Forms:'Registration forms',GradesSettings:'Grade settings',IntelligentAgents:'Intelligent agents',LearningOutcomes:'Learning outcomes',LtiLink:'LTI links',LtiTP:'LTI tool providers',Navbars:'Navigation bars',News:'Announcements',QuestionLibrary:'Question library',ReleaseConditions:'Release conditions',S3Model:'S3 model',SelfAssessments:'Self assessments',ToolNames:'Tool names'};
 const label=c=>LABELS[c]||c;
@@ -41,6 +42,7 @@ function createCopyView(){return {
  report(job){
   const rows=[['CSV row',...HEADERS,'Origin name','Destination name','Validation','Copy status','Job token','Components','Copy last checked UTC','Details']];
   for(const row of job.rows){const r=job.tasks.find(t=>t.row===row.row)?.result;rows.push([row.row,row.originId,row.originCode,row.destinationId,row.destinationCode,row.originName,row.destinationName,row.status,r?.status||'notAttempted',r?.jobToken,job.components?.join(';')||'ALL',r?.checkedAt?new Date(r.checkedAt).toISOString():'',[row.message,r?.message].filter(Boolean).join(' ')]);}
+  appendReportIdentity(rows,job);
   return '\uFEFF'+rows.map(row=>row.map(v=>{let s=String(v??'');if(/^\s*[=+\-@]|^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');
  }
 };}

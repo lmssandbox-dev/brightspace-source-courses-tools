@@ -79,6 +79,13 @@ test('Mongo save is fenced by worker and running state; no ltijs collections are
  const saved=s.calls.find(c=>c.name==='bulk_date_jobs');assert.deepEqual(saved.filter,{_id:'j',namespace:'n',worker:'w',status:{$in:['planning','running']}});
  assert.ok(s.calls.every(c=>['bulk_date_jobs','bulk_date_locks'].includes(c.name)));
 });
+test('worker checkpoints never overwrite persisted creator identity',async()=>{
+ for(const kind of ['dates','courseCopy','sourceDeployment','sourceCreation']){
+  const s=setup(),job={_id:'j',kind,status:'planning',createdBy:{fullName:'Changed'},rows:[],courses:[],tasks:[]};
+  await s.store.save(job,'w');const write=s.calls.find(call=>call.name==='bulk_date_jobs'&&call.op==='updateOne');
+  assert.equal(Object.hasOwn(write.update.$set,'createdBy'),false,kind);
+ }
+});
 
 test('activation queues atomically for the owner and removes preview expiry',async()=>{
  const s=setup();await s.store.activate('j','owner',100);

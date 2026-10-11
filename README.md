@@ -2,6 +2,8 @@
 
 A toolkit for managing Brightspace Source Courses, offering Bulk Source Course Creator, Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with four workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration and MongoDB database are retained.
 
+Downloadable result CSV reports include the initiating administrator's LTI full name, User Org Code, and User ID columns on each row. Identity values are saved with the job at preview time; fields unavailable in the validated launch are blank. Historical jobs remain downloadable with blank identity columns.
+
 ## 1. Activity dates
 
 Upload a UTF-8 CSV with headers `OrgUnitId,OrgUnitCode`. Supply exactly one ID or code per row; keep both columns in the header. The app accepts Course Offerings and actual Source Courses.

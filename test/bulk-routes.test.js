@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {createHash,createHmac}=require('node:crypto');
 const {createBulkDates,report}=require('../src/shared/routes');
 const {createBulkJobs}=require('../src/shared/jobs');
-function response(session='s',user='u',deploymentId='d') {return {locals:{ltik:session,token:{user,deploymentId,iss:'https://tenant.example'}},headers:{},code:200,set(k,v){this.headers[k]=v;return this;},status(c){this.code=c;return this;},send(v){this.body=v;return this;}};}
+function response(session='s',user='u',deploymentId='d') {return {locals:{ltik:session,token:{user,deploymentId,iss:'https://tenant.example',userInfo:{name:'Trusted Admin'}}},headers:{},code:200,set(k,v){this.headers[k]=v;return this;},status(c){this.code=c;return this;},send(v){this.body=v;return this;}};}
 function ticket(html,action){const form=html.match(new RegExp(`<form[^>]*action="/bulk/${action}"[^>]*>([\\s\\S]*?)</form>`));return form?.[1].match(/name="ticket" value="([^"]+)"/)[1];}
 function setup(){let time=1000;const calls=[];let cancels=0;const job={_id:'j',status:'ready',expiresAt:9999999,dates:{start:'2027-01-01T00:00:00Z',due:'2027-01-02T00:00:00Z',end:'2027-01-03T00:00:00Z'},rows:[],courses:[],tasks:[{activity:{type:'quiz',id:'1'},orgUnitId:'1',name:'<script>alert(1)</script>',preview:{status:'ready',verifiedDates:{start:null,due:null,end:null}}}]};
 let savedOwner;
@@ -16,8 +16,14 @@ test('Date Manager form defaults to Uniform mode with all activity types and off
  assert.match(html,/data-rule-schedule/);assert.match(html,/data-add-rule/);assert.match(html,/name="timeZone"/);
 });
 async function preview(s){const res=response();await s.routes.preview({body:{ticket:ticket(s.routes.form(res),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00'}},res);return res;}
+test('preview ignores submitted creator fields and accepts missing optional LTI identity',async()=>{
+ const s=setup(),res=response();await s.routes.preview({body:{ticket:ticket(s.routes.form(res),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00',createdBy:{fullName:'Forged'},fullName:'Forged'}},res);
+ assert.equal(res.code,200);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',userId:''});
+ const missing=response();missing.locals.token.userInfo={};await s.routes.preview({body:{ticket:ticket(s.routes.form(missing),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00'}},missing);
+ assert.equal(missing.code,200);assert.deepEqual(s.calls[1].createdBy,{fullName:'',orgDefinedId:'',userId:''});
+});
 test('bulk preview creates a plan; apply uses saved ID only and cannot repeat',async()=>{
- const s=setup(),p=await preview(s);assert.equal(s.calls.length,1);assert.match(p.body,/3\. Apply &amp; Update/);assert.doesNotMatch(p.body,/Review your date updates/);assert.doesNotMatch(p.body,/<script>alert/);assert.doesNotMatch(p.body,/CSV validation|Course validation|Job details|My recent jobs|Page 1 of/);
+ const s=setup(),p=await preview(s);assert.equal(s.calls.length,1);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',userId:''});assert.match(p.body,/3\. Apply &amp; Update/);assert.doesNotMatch(p.body,/Review your date updates/);assert.doesNotMatch(p.body,/<script>alert/);assert.doesNotMatch(p.body,/CSV validation|Course validation|Job details|My recent jobs|Page 1 of/);
  const body={ticket:ticket(p.body,'apply'),jobId:'j',dates:'forged',csv:'forged'},r=response();await s.routes.apply({body},r);assert.equal(s.calls[1].id,'j');assert.equal(s.calls[1].dates,undefined);
  const repeat=response();await s.routes.apply({body},repeat);assert.equal(repeat.code,409);
 });
@@ -38,6 +44,12 @@ test('Date Manager planning cancellation remains signed, session-bound and owner
 test('report escapes CSV and neutralizes spreadsheet formulas',()=>{
  const csv=report({dates:{},rows:[{row:2,orgUnitCode:'=HYPERLINK("bad")',status:'invalid'}],courses:[],tasks:[{activity:{type:'quiz',id:'1'},name:'@formula',preview:{status:'failed'}}]});
  assert.match(csv,/'=HYPERLINK\(""bad""\)/);assert.match(csv,/'@formula/);
+});
+test('Date Manager CSV appends creator identity on every row and protects formulas',()=>{
+ const csv=report({createdBy:{fullName:'=2+2',orgDefinedId:'ORG-1',userId:'42'},dates:{},rows:[{row:2,status:'invalid'}],courses:[],tasks:[]});
+ const lines=csv.replace(/^\uFEFF/,'').split('\r\n').map(line=>line.match(/"((?:[^"]|"")*)"/g).map(cell=>cell.slice(1,-1).replace(/""/g,'"')));
+ assert.deepEqual(lines[0].slice(-3),['Full Name','User Org Code','User ID']);assert.deepEqual(lines[1].slice(-3),["'=2+2",'ORG-1','42']);
+ const legacy=report({dates:{},rows:[{row:3,status:'invalid'}],courses:[],tasks:[]});assert.deepEqual(legacy.replace(/^\uFEFF/,'').split('\r\n')[1].match(/"((?:[^"]|"")*)"/g).slice(-3),['""','""','""']);
 });
 test('rule CSV reports effective dates, rule label, and unmatched counts by course',()=>{
  const csv=report({scheduleMode:'rules',rules:[{id:'week1',label:'Week One'}],rows:[],courses:[{orgUnitId:'9',row:3,code:'BIO',coverage:{unmatched:4}}],tasks:[{orgUnitId:'9',ruleId:'week1',dates:{start:'s',due:'d',end:'e'},activity:{type:'assignment',id:'2'},name:'W01 Task',preview:{status:'ready'}}]});

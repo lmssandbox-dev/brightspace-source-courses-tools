@@ -16,7 +16,7 @@ function setup(options={}) {
  const courses={resolve:async r=>{calls.push('resolve');if(r.orgUnitId==='999')throw Error('bad');return {orgUnitId:r.orgUnitId||'1',code:'001',name:'Course'};},get:async id=>({orgUnitId:id}),...options.courses};
  const discovery={discover:async org=>{const activities=['assignment','quiz','discussionTopic'].map((type,i)=>({type,id:String(i+1),parentId:'7',key:`${type}:${org}:${i+1}`,name:type}));return {complete:!options.partial,activities,nativeActivities:activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:a.parentId}}))};},...options.discovery};
  const writer={updateActivityDates:async r=>{calls.push(r.dryRun?'preview':'write');if(!r.dryRun&&options.fail)return {status:'failed',error:{category:'API_FAILURE',httpStatus:options.fail}};return {status:r.dryRun?'ready':'updated',verifiedDates:{start:null,due:null,end:null},writeAttempted:!r.dryRun};},...options.writer};
- const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,deployment:options.deployment,buildSha:options.buildSha,now:options.now||(()=>1000)});
+ const jobs=createBulkJobs({store,courses,discovery,writers:{assignment:writer,quiz:writer,discussionTopic:writer},writeEnabled:()=>!options.noScope,deployment:options.deployment,courseCopy:options.courseCopy||{parse:()=>[],selection:()=>null},sourceCreation:options.sourceCreation,buildSha:options.buildSha,now:options.now||(()=>1000)});
  return {jobs,data,calls,store,courses,discovery};
 }
 test('bulk job interface forwards metadata-only status reads from its store',async()=>{
@@ -24,6 +24,19 @@ test('bulk job interface forwards metadata-only status reads from its store',asy
  const s=setup({getStatus:async(id,owner)=>{calls++;assert.equal(id,'completed');assert.equal(owner,'owner');return expected;}});
  let fullReads=0;s.store.get=async()=>{fullReads++;throw Error('full job load was not expected');};
  assert.equal(await s.jobs.getStatus('completed','owner'),expected);assert.equal(calls,1);assert.equal(fullReads,0);
+});
+test('all four job constructors persist optional creator identity as job metadata',async()=>{
+ const createdBy={fullName:'Ada Lovelace',orgDefinedId:'ORG-7',userId:'9001'},deployment={parse:()=>[]},sourceCreation={parse:()=>[]};
+ const s=setup({deployment,sourceCreation});
+ const jobs=[
+  await s.jobs.create({owner:'owner',createdBy,csv:'OrgUnitId,OrgUnitCode\n1,',dates}),
+  await s.jobs.create({owner:'owner',createdBy,kind:'courseCopy',csv:'OriginOrgUnitId,OriginOrgUnitCode,DestinationOrgUnitId,DestinationOrgUnitCode\n1,,2,'}),
+  await s.jobs.create({owner:'owner',createdBy,kind:'sourceDeployment',csv:'ignored'}),
+  await s.jobs.create({owner:'owner',createdBy,kind:'sourceCreation',csv:'ignored'})
+ ];
+ assert.deepEqual(jobs.map(job=>job.createdBy),Array(4).fill(createdBy));
+ assert.deepEqual(jobs.map(job=>s.data.get(job._id).createdBy),Array(4).fill(createdBy));
+ const dateJob=jobs[0];await s.jobs.tick();assert.deepEqual((await s.jobs.get(dateJob._id,'owner')).createdBy,createdBy);
 });
 test('Source Deployer preparation duration is saved with ready plan and retained after execution',async()=>{
  let time=1000;

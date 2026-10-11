@@ -30,6 +30,8 @@ Forms bind action, workflow, job, expiry and LTI session. Ownership is checked b
 
 HTML is escaped and CSV cells neutralize spreadsheet formula injection. API credentials are not returned in diagnostic output. Brightspace LTI installation governs user access; API permissions are those of the Service User.
 
+Bulk preview routes extract creator identity only from ltijs's validated `res.locals.token.userInfo` projection. The explicit `name` claim is preferred, with given/family name assembly as a fallback. The immutable optional `createdBy` metadata is saved on the primary job document and retained through existing worker saves; it is not an authorization identity and is absent from status projections and operational diagnostics. All four result CSVs append localized Full Name, User Org Code, and User ID headers and repeat saved values on each row with the existing CSV escaping. Older jobs and unavailable claims produce blank cells. The installed ltijs projection exposes name, given name, and family name, but does not expose verified Brightspace Org Defined ID or numeric Brightspace User ID claims, so those two values currently remain blank; `token.user` is the LTI subject and is not used as either identifier.
+
 The application does not enforce historical course reservations. Users can start another deployment; this may reset replicas while earlier copies are still queued or running.
 
 ## Browser presentation

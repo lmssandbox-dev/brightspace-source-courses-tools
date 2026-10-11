@@ -5,6 +5,8 @@ const {DEFAULT_ZONE,validateZone,localDateToUtc}=require('../dates/timeZone');
 const {createDateView}=require('../dates/view');
 const {badge,table}=require('../ui/page');
 const {translateReport}=require('../ui/i18n');
+const {extractLtiIdentity}=require('./ltiIdentity');
+const {append:appendReportIdentity}=require('./reportIdentity');
 const {markBulkStatusHandler,startBulkStatusPhase,recordBulkStatusPhase,setBulkStatusSize,recordBulkStatusError}=require('./bulkStatusDiagnostics');
 const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>v?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(v)):'—';
@@ -49,7 +51,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
         try {if(kind==='dates'){timeZone=validateZone(req.body.timeZone??DEFAULT_ZONE);scheduleMode=req.body.scheduleMode||'uniform';activityTypes=req.body.activityTypes;if(scheduleMode==='uniform')dates=Object.fromEntries(['start','due','end'].map(k=>[k,localDateToUtc(req.body[k],timeZone)]));else {const parsed=JSON.parse(req.body.rulesJson||'[]');rules=parsed.map(rule=>({...rule,dates:Object.fromEntries(['start','due','end'].map(k=>[k,localDateToUtc(rule[k],timeZone)]))}));}}}
         catch(e){return res.status(400).send(`<section class="form-error" role="alert"><h2>Check your requested dates</h2><p>${escape(e.code==='INVALID_DATE'?e.message:'Enter valid dates and a time zone.')}</p></section>${form(res)}`);}
         let job;
-        try {job=await jobs.create({owner:owner(res),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components,validationMode:req.body.validationMode,scheduleMode,activityTypes,rules});}
+        try {job=await jobs.create({owner:owner(res),createdBy:extractLtiIdentity(res.locals.token),csv:req.body.csv,dates,timeZone,kind,copyMode:req.body.copyMode,components:req.body.components,validationMode:req.body.validationMode,scheduleMode,activityTypes,rules});}
         catch(e){if(!['INVALID_CSV','INVALID_DATES','INVALID_DATE','INVALID_ACTIVITY_TYPES','INVALID_SCHEDULING_RULES'].includes(e.code))require('./diagnostics').logFailure('job_create_failed',e,{kind});return res.status(400).send(`<section class="form-error" role="alert"><h2>Unable to review your upload</h2><p>${escape(['INVALID_CSV','INVALID_DATES','INVALID_DATE','INVALID_ACTIVITY_TYPES','INVALID_SCHEDULING_RULES'].includes(e.code)?e.message:'Could not create preview. Check database availability.')}</p><p>Correct the issue, then select your CSV file and try again.</p></section>${form(res)}`);}
         return res.send(render(res,job));
       }
@@ -102,6 +104,7 @@ function report(job) {
   const rules=new Map((job.rules||[]).map(rule=>[rule.id,rule.label]));
   for(const t of job.tasks){const r=t.result||((job.cancelledDuringStep3||job.cancelRequestedAt)?{...t.preview,status:'pending'}:t.preview),c=coursesById.get(t.orgUnitId),requested=t.dates||job.dates||{},message=r.error?.message||(r.status==='pending'&&(job.cancelledDuringStep3||job.cancelRequestedAt)?'Not attempted because the job was cancelled.':undefined);rows.push(['Activity',c?.row,t.orgUnitId,c?.code,t.activity.type,t.activity.id,t.name,r.status,t.ruleId||'',rules.get(t.ruleId)||'',requested.start,requested.due,requested.end,r.verifiedDates?.start,r.verifiedDates?.due,r.verifiedDates?.end,message,job.timeZone||DEFAULT_ZONE]);}
   for(const course of job.courses||[])if(course.coverage?.unmatched)rows.push(['Course summary',course.row,course.orgUnitId,course.code,'','','','unmatched excluded','','','','','','','',`${course.coverage.unmatched} unmatched activities excluded from updates`,job.timeZone||DEFAULT_ZONE]);
+  appendReportIdentity(rows,job);
   // Quote all cells and neutralize spreadsheet formula injection in native names/codes.
   return '\uFEFF'+rows.map(row=>row.map(v=>{let s=String(v??'');if(/^[\s]*[=+\-@]/.test(s)||/^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');
 }

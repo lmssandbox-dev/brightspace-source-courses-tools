@@ -1,5 +1,7 @@
 # Server environment setup
 
+In the Brightspace LTI deployment, enable sharing of Full Name (including first, middle, and last name), User ID, Org Defined ID, Username, and Email under user information sharing. The application records Full Name from the validated LTI name claim when ltijs exposes it (otherwise from available name parts). The installed ltijs token projection does not currently expose verified Brightspace User ID or Org Defined ID claim paths, so the corresponding CSV fields remain blank until those mappings are verified and made available. Username and email are not substituted for these identifiers.
+
 This guide covers the core variables and optional shared-directory settings used by the app. Start with `.env.example`. Use one server instance per Brightspace tenant, with its own configuration and database. No real credentials are included in the template.
 
 For local use, copy `.env.example` to `.env` and replace the placeholders. On Render, enter the variables under the service's Environment settings. Render values should not include the surrounding quotes used in a .env file. Do not commit `.env` or private keys. Deploy the current project source before configuring a custom database name.

@@ -328,10 +328,10 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     activeStep3Tracker.finish();
   }
   return {
-    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode,scheduleMode='uniform',activityTypes=ACTIVITY_TYPES,rules}) {
-      if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
-      if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),buildSha:getBuildSha(buildSha),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
-      if(kind==='sourceCreation'){if(!sourceCreation)throw Error('Source Course Creator unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:sourceCreation.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+    async create({owner,createdBy,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode,scheduleMode='uniform',activityTypes=ACTIVITY_TYPES,rules}) {
+      if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),buildSha:getBuildSha(buildSha),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='sourceCreation'){if(!sourceCreation)throw Error('Source Course Creator unavailable');const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),rows:sourceCreation.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
       if(!['uniform','rules'].includes(scheduleMode))throw Object.assign(Error('Select a supported scheduling mode.'),{code:'INVALID_SCHEDULING_MODE'});
@@ -341,7 +341,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         if(Date.parse(dates.start)>=Date.parse(dates.due))throw Object.assign(new Error('Bulk dates must satisfy Start < Due <= End, including Discussion Topics.'),{code:'INVALID_DATES'});
       } else {rules=validateRules(rules);dates=null;}
       const rows=parseCourseCsv(csv);
-      const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),scheduleMode,scheduleVersion:1,activityTypes,...(scheduleMode==='rules'?{rules}:{}),...(dates?{dates}:{}),timeZone,rows,courses:[],tasks:[],totals:{total:0}};
+      const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),scheduleMode,scheduleVersion:1,activityTypes,...(scheduleMode==='rules'?{rules}:{}),...(dates?{dates}:{}),timeZone,rows,courses:[],tasks:[],totals:{total:0}};
       await store.insert(job);return job;
     },
     get:(id,owner)=>store.get(id,owner),

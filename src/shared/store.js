@@ -174,6 +174,9 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
       let encoded;
       try{encoded=job.kind==='dates'?await encodeDateJob(job,chunks,namespace,job.dateChunks):snapshot;}
       catch(error){logMongoOperationFailure('job_checkpoint_save',error);throw error;}
+      // Creator identity is write-once: initial insert stores it, later worker
+      // checkpoints leave the persisted value untouched.
+      delete encoded.createdBy;
       await this.renew(worker);
       const {_id,...data}=encoded;
       if(encoded.storageVersion===2&&job[DIRTY]&&job.dateChunks){
