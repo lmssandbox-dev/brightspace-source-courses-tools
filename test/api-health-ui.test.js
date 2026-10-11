@@ -1,5 +1,5 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const inventory=require('../src/apiHealth/endpoints.json').endpoints;
 const view=require('../src/apiHealth/view');
 const {assess}=require('../src/apiHealth/assessment');
@@ -22,18 +22,20 @@ test('API health navigation is fifth and Creator remains the default',()=>{
  assert.match(page('<h1>Health</h1>',{ltik:'session'}),/name="section" value="apiHealth"/);
 });
 
-test('health page shows configured versions, endpoint inventory, separate health and contract columns',()=>{
+test('health page uses compact version cards and grouped expandable endpoint details',()=>{
  const assessment=sampleAssessment();
  const verifiedIds=['lp-orgstructure-list','lp-orgstructure-detail','lp-versions','le-versions','versions-check'];
  const stateById=new Map(verifiedIds.map((id,index)=>[id,['healthy','update_available','at_risk','critical','unknown'][index]]));
  assessment.endpoints=assessment.endpoints.map(row=>({...row,versionHealth:stateById.get(row.endpointId)||row.versionHealth}));
  assessment.components.lp.findings=[{code:'minimum_not_met',status:'critical',endpointId:'lp-versions',message:'Configured version is below the application minimum.'}];
  const html=view.render({state:'success',assessment,lastSuccessfulAt:assessment.checkedAt},{inventory,minimums:trustedMinimums,checkTicket:'signed',ltik:'lti-session'});
- for(const label of ['Learning Platform (LP)','Learning Environment (LE)','1.90','1.99','Healthy','Update Available','At Risk','Critical','Unknown','Not Applicable','Not Verified','Version Health','Contract Verification','Run Health Check','inventoried endpoints'])assert.ok(html.includes(label),label);
+ for(const label of ['Learning Platform (LP)','Learning Environment (LE)','1.90','1.99','Healthy','Update Available','At Risk','Critical','Unknown','Not Applicable','Not Verified','Version Health','Contract Verification','Run Health Check','inventoried endpoints','Monitor Brightspace API compatibility.'])assert.ok(html.includes(label),label);
  assert.match(html,/action="\/api-health\/check"/);assert.match(html,/name="ticket" value="signed"/);assert.match(html,/data-api-health-content/);
- const header=html.split('<section class="panel api-health-header">')[0];
- assert.doesNotMatch(header,/api-status/);
- assert.match(html,/<strong>Assessment status:<\/strong> <span class="api-status/);
+ assert.doesNotMatch(html,/<span class="eyebrow">/);assert.doesNotMatch(html,/api-health-table|<table/);
+ assert.match(html,/<details class="api-endpoint"><summary>/);assert.match(html,/Critical risk/);assert.match(html,/A critical API version risk needs attention\./);
+ assert.match(html,/<details class="panel api-about"><summary>About this assessment<\/summary>/);
+ assert.match(html,/<section class="api-version-grid" aria-label="Configured platform versions">/);
+ assert.match(html,/<span class="api-status critical">Critical<\/span>/);
 });
 
 test('unverified endpoint contracts do not override supported version health',()=>{
@@ -92,6 +94,21 @@ test('health labels and summary classifications translate in all supported langu
  assert.equal(translate('Contract Verification','es-419'),'Verificación del contrato');
  assert.equal(translate('Not Verified','pt-BR'),'Não verificado');
  assert.equal(translate('25 inventoried endpoints · 7 contracts Verified · 17 Not Verified · 1 Not Applicable','es-419'),'25 endpoints inventariados · 7 contratos verificados · 17 sin verificar · 1 no aplican');
+ assert.equal(translate('Monitor Brightspace API compatibility.','pt-BR'),'Monitorar a compatibilidade da API Brightspace.');
+ assert.equal(translate('Assignment list','es-419'),'Lista de tareas');
+ assert.equal(translate('About this assessment','pt-BR'),'Sobre esta avaliação');
+});
+
+test('endpoint disclosures keep complete route, contract, risk and documentation information accessible',()=>{
+ const assessment=sampleAssessment();
+ const row=assessment.endpoints.find(item=>item.endpointId==='lp-orgstructure-list');row.finding='Version risk detail';row.versionHealth='critical';
+ const html=view.render({state:'success',assessment},{inventory,minimums:trustedMinimums});
+ assert.match(html,/<summary><span class="api-endpoint-name">Org structure listing<\/span><code>GET \/d2l\/api\/lp\/\{LP\}\/orgstructure\//);
+ for(const field of ['Full endpoint path','Configured version','Minimum version','Version Health','Contract Verification','Affected tools','Risk explanation','Recommended action','Official D2L documentation','Contract and version notes'])assert.ok(html.includes(field),field);
+ assert.match(html,/https:\/\/docs\.valence\.desire2learn\.com\/res\/orgunit\.html/);
+ assert.match(html,/role="alert"/);
+ assert.match(html,/<details class="api-endpoint"><summary>/);assert.doesNotMatch(html,/<details class="api-endpoint"[^>]*tabindex=/);
+ const styles=fs.readFileSync(require.resolve('../src/ui/app.css'),'utf8');assert.match(styles,/@media\(max-width:760px\).*\.api-endpoint>summary/);assert.match(styles,/@media\(max-width:520px\).*\.api-health-header/);
 });
 
 test('manual check route is LTI-bound, signed, cooldown protected, and returns refreshed assessment',async()=>{
