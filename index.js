@@ -32,8 +32,10 @@ const {createCreationJobs}=require('./src/creation/jobs');
 const {createCreationView}=require('./src/creation/view');
 const {resolveRuntimeVersions}=require('./src/apiHealth/runtimeVersions');
 const {createApiHealthService}=require('./src/apiHealth/service');
-const apiHealthEndpoints=require('./src/apiHealth/endpoints.json').endpoints;
+const apiHealthInventory=require('./src/apiHealth/endpoints.json').endpoints;
 const apiHealthLifecycle=require('./src/apiHealth/lifecycle.json');
+const apiHealthView=require('./src/apiHealth/view');
+const {createApiHealthRoutes}=require('./src/apiHealth/routes');
 
 // ===============================
 // Variáveis de ambiente
@@ -173,16 +175,18 @@ const activityDates = createActivityDates({writers,deploymentId:BS_DEPLOYMENT_ID
 const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256').update(`${BS_URL}|${BS_DEPLOYMENT_ID}`).digest('hex')});
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
 const runtimeApiVersions=resolveRuntimeVersions(process.env);
-const apiHealth=createApiHealthService({http:apiHttp,baseUrl:BS_URL,versions:runtimeApiVersions,uri:MONGODB_URL,
-  namespace:createHash('sha256').update(`${new URL(BS_URL).origin}|${D2L_OAUTH2_CLIENT_ID}`).digest('hex'),
-  endpoints:apiHealthEndpoints,lifecycle:apiHealthLifecycle,
-  minimums:{lp:[{minimum:'1.53',endpointId:'lp-source-course-deploy',tool:'Source Course Deployer'},
+const apiHealthMinimums={lp:[{minimum:'1.53',endpointId:'lp-source-course-deploy',tool:'Source Course Deployer'},
     {minimum:'1.60',endpointId:'lp-source-course-create',tool:'Bulk Source Course Creator'}],
     le:[{minimum:'1.90',endpointId:'le-assignment-list',tool:'Date Manager'},
       {minimum:'1.97',endpointId:'le-course-copy-submit',tool:'Bulk Course Copy'},
-      {minimum:'1.91',endpointId:'le-ccb-copy-logs',tool:'Copy status monitoring'}]},
+      {minimum:'1.91',endpointId:'le-ccb-copy-logs',tool:'Copy status monitoring'}]};
+const apiHealth=createApiHealthService({http:apiHttp,baseUrl:BS_URL,versions:runtimeApiVersions,uri:MONGODB_URL,
+  namespace:createHash('sha256').update(`${new URL(BS_URL).origin}|${D2L_OAUTH2_CLIENT_ID}`).digest('hex'),
+  endpoints:apiHealthInventory,lifecycle:apiHealthLifecycle,minimums:apiHealthMinimums,
   buildVersion:process.env.RENDER_GIT_COMMIT||'unknown'});
 lti.app.locals.apiHealth=apiHealth;
+const apiHealthRoutes=createApiHealthRoutes({service:apiHealth,view:apiHealthView,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID,
+  versions:runtimeApiVersions,inventory:apiHealthInventory,minimums:apiHealthMinimums});
 const resolution=require('./src/resolution/runtime').createResolutionRuntime({api:brightspace,http:apiHttp,downloadHttp:axios,oauth,baseUrl:BS_URL,lpVersion,uri:MONGODB_URL,clientId:D2L_OAUTH2_CLIENT_ID});
 const orgResolver=resolution.resolver;
 const syncControls=require('./src/resolution/routes').createSyncControls({store:resolution.store,sync:resolution.sync,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID});
@@ -206,19 +210,28 @@ const copyRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,se
 const creationRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'sourceCreation',view:createCreationView({canApply:creationEnabled})});
 const diagnostics = createDiagnostics({
   workspace: true,
-  activityForm: res => workspace({
-    copy:copyRoutes.form(res),dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
-    selected:res.locals.uiSection||'creation',creation:creationRoutes.form(res),
+  activityForm: async res => {
+    let health={state:'unavailable',assessment:null};try{health=await apiHealth.getLatest();}catch{}
+    lti.app.locals.apiHealthRisk=['critical','at_risk'].includes(health.assessment?.status)?health.assessment.status:'unknown';
+    const context={inventory:apiHealthInventory,minimums:apiHealthMinimums};
+    return workspace({
+    copy:apiHealthView.toolWarning(health,context,'Bulk Course Copy')+copyRoutes.form(res),
+    dates:apiHealthView.toolWarning(health,context,'Date Manager')+bulkDates.form(res),
+    replication:apiHealthView.toolWarning(health,context,'Source Course Deployer')+deploymentRoutes.form(res),
+    apiHealth:apiHealthRoutes.render(res,health),apiHealthRisk:health.assessment?.status||'unknown',
+    selected:res.locals.uiSection||'creation',creation:apiHealthView.toolWarning(health,context,'Bulk Source Course Creator')+creationRoutes.form(res),
     history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Source Course Creator</span><h3>Source Course Creation Jobs</h3><p>Review validated rows, creation outcomes and Org Library registration.</p>${creationRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Courses</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
-  }),
+  });},
   client: discovery,
   deploymentId: BS_DEPLOYMENT_ID
 });
 lti.onConnect(diagnostics.launch);
-lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['creation','copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'creation';return diagnostics.launch(res.locals.token,req,res);});
+lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['creation','copy','dates','replication','apiHealth','history'].includes(req.body?.section)?req.body.section:'creation';return diagnostics.launch(res.locals.token,req,res);});
 // Not whitelisted: ltijs validates the LTI session before this handler runs.
 lti.app.get('/diagnostics/activities', diagnostics.activities);
+// Not whitelisted: ltijs validates the session before rendering or starting a bounded manual check.
+lti.app.post('/api-health/check',apiHealthRoutes.check);
 // Protected POST routes; preview/apply tickets are bound to the validated LTI session.
 lti.app.post('/diagnostics/activity-dates/preview', activityDates.preview);
 lti.app.post('/diagnostics/activity-dates/apply', activityDates.apply);
@@ -250,8 +263,9 @@ const start = async () => {
     const directoryTimer=setInterval(()=>{void resolution.sync.tick();},60000);directoryTimer.unref();
     const copyTimer=setInterval(()=>{void copyMonitor.tick();},10000);
     copyTimer.unref();
-    void apiHealth.tick();
-    const apiHealthTimer=setInterval(()=>{void apiHealth.tick();},60*60*1000);
+    const refreshApiHealth=async()=>{try{await apiHealth.tick();const latest=await apiHealth.getLatest();lti.app.locals.apiHealthRisk=['critical','at_risk'].includes(latest.assessment?.status)?latest.assessment.status:'unknown';}catch{}};
+    void refreshApiHealth();
+    const apiHealthTimer=setInterval(()=>{void refreshApiHealth();},60*60*1000);
     apiHealthTimer.unref();
     if (!BS_DEPLOYMENT_ID?.trim()) {
       console.log('Setup mode: launches are blocked until BS_DEPLOYMENT_ID is configured. Key endpoints remain available.');

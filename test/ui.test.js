@@ -27,7 +27,7 @@ test('fresh workspace selects Source Course Creator and all sidebar entries use 
  const html=workspace({copy:'Copy',creation:'Create',dates:'Dates',replication:'Deploy',history:'History'});
  assert.match(html,/data-section="creation" aria-current="page"/);assert.match(html,/id="pane-creation"  aria-label="Bulk Source Course Creator"/);
  assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/selected:res\.locals\.uiSection\|\|'creation'/);assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/req\.body\.section:'creation'/);
- const links=[...html.matchAll(/<a href="#([^"]+)" data-section="([^"]+)"[^>]*><span><svg/g)];assert.deepEqual(links.map(match=>match[1]),['creation','copy','dates','replication','history']);assert.equal((html.match(/<svg /g)||[]).length,5);assert.doesNotMatch(html,/＋|▧|▦|▤|◷/);
+ const links=[...html.matchAll(/<a href="#([^"]+)" data-section="([^"]+)"[^>]*><span><svg/g)];assert.deepEqual(links.map(match=>match[1]),['creation','copy','dates','replication','apiHealth','history']);assert.equal((html.match(/<svg /g)||[]).length,6);assert.match(html,/data-section="apiHealth"[^>]*><span><svg/);assert.doesNotMatch(html,/＋|▧|▦|▤|◷/);
 });
 test('rule editor shares one value-preserving renderer and styles matching method like Language selector',()=>{
  const browser=readFileSync(require.resolve('../src/ui/app.mjs'),'utf8'),css=readFileSync(require.resolve('../src/ui/app.css'),'utf8');
@@ -68,8 +68,8 @@ test('entry point installs page shell in serverAddon before launch routes',()=>{
 
 test('review and results retain sidebar POST navigation without exposing session in URLs',()=>{
  const html=page('<h1>Review your date updates</h1>',{ltik:'session-secret',section:'dates'});
- assert.equal((html.match(/data-sidebar-native/g)||[]).length,5);
- for(const section of ['creation','copy','dates','replication','history'])assert.ok(html.includes(`name="section" value="${section}"`));
+ assert.equal((html.match(/data-sidebar-native/g)||[]).length,6);
+ for(const section of ['creation','copy','dates','replication','apiHealth','history'])assert.ok(html.includes(`name="section" value="${section}"`));
  assert.match(html,/data-sidebar-native aria-current="page"/);
  assert.doesNotMatch(html,/href="[^"]*session-secret/);
  const home=page(workspace({dates:'Dates',replication:'Deploy',history:'History'}),{ltik:'session-secret'});

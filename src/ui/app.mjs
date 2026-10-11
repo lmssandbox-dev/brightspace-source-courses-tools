@@ -1,4 +1,4 @@
-import {initLanguage, message, text} from './language.mjs';
+import {applyLanguage, initLanguage, message, text} from './language.mjs';
 import '@brightspace-ui/core/components/button/button.js';
 import '@brightspace-ui/core/components/alert/alert.js';
 import '@brightspace-ui/core/components/loading-spinner/loading-spinner.js';
@@ -65,6 +65,24 @@ for(const form of document.querySelectorAll('#bulk-input')){
  for(const mode of modes)mode.addEventListener('change',syncMode);syncMode();
  form.addEventListener('submit',event=>{const selected=[...form.querySelectorAll('[name="activityTypes"]:checked')];if(!selected.length){event.preventDefault();form.querySelector('[name="activityTypes"]').focus();return;}if(currentMode()==='rules'){const entries=readRules();if(entries.length<1||entries.length>20){event.preventDefault();return;}json.value=JSON.stringify(entries);}});
 }
+
+// Run the bounded, LTI-protected check without replacing other tool panels or form values.
+document.addEventListener('submit',async event=>{
+  const form=event.target.closest('[data-api-health-check]');if(!form)return;
+  event.preventDefault();for(const button of form.querySelectorAll('button,d2l-button'))button.disabled=true;
+  let feedback=form.parentElement.querySelector('.api-check-feedback');if(!feedback){feedback=document.createElement('p');feedback.className='api-check-feedback';feedback.setAttribute('role','status');form.parentElement.append(feedback);}
+  feedback.textContent=text('Health check running. This can take up to 30 seconds.');
+  try{
+   const response=await fetch(form.action,{method:'POST',credentials:'same-origin',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(form))});
+   const result=await response.json(),pane=form.closest('[data-api-health-content]');
+   if(result.html&&pane){pane.outerHTML=result.html;applyLanguage();}
+   else throw new Error('unavailable');
+  }catch{
+   feedback.textContent=text('The health check failed. The last successful result is shown as stale.');
+   for(const button of form.querySelectorAll('button,d2l-button'))button.disabled=false;
+   applyLanguage();
+  }
+});
 initLanguage();
 
 // Remove the initial, dependency-free launch indicator after enhancement and translation.

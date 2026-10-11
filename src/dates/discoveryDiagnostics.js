@@ -31,7 +31,8 @@ function createDiagnostics({ client, deploymentId, activityForm = () => '', work
     launch(token, req, res) {
       if (!authorize(token, req, res)) return;
       // Do not assume the LTI context ID is a Brightspace OrgUnitId.
-      res.send((workspace?'':diagnosticForm(res.locals.ltik)) + activityForm(res));
+      const prefix=workspace?'':diagnosticForm(res.locals.ltik),form=activityForm(res);
+      return form&&typeof form.then==='function'?form.then(content=>res.send(prefix+content)):res.send(prefix+form);
     },
     async activities(req, res) {
       if (!authorize(res.locals.token, req, res)) return;
@@ -41,7 +42,7 @@ function createDiagnostics({ client, deploymentId, activityForm = () => '', work
       try {
         const result = await client.discover(orgUnitId, { includeRaw: req.query.raw === '1', includeUndated: req.query.includeUndated === '1' });
         if (req.query.format === 'json') return res.json(result);
-        res.send(`${diagnosticForm(res.locals.ltik, orgUnitId)}${activityForm(res, orgUnitId)}
+        res.send(`${diagnosticForm(res.locals.ltik, orgUnitId)}${await activityForm(res, orgUnitId)}
           <h2>Org Unit</h2><p>${escapeHtml(result.orgUnitId)} — ${result.complete ? 'Complete discovery' : 'Partial discovery'}</p>
           <pre>${escapeHtml(JSON.stringify(result.counts, null, 2))}</pre>
           <h2>Normalized activities (${result.activities.length})</h2>
