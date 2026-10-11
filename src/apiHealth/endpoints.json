@@ -27,7 +27,7 @@
         "src/resolution/resolver.js"
       ],
       "versionSource": "D2L_LP_VERSION; application fallback 1.53",
-      "documentedMinimum": null,
+      "documentedMinimum": "1.49",
       "applicationMinimum": "1.53 for Source Course Deployer; 1.60 for Source Course Creator",
       "contract": {
         "query": "exactOrgUnitCode (when code lookup)",
@@ -38,7 +38,39 @@
         "https://docs.valence.desire2learn.com/res/orgunit.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11."
+      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, exactOrgUnitCode filter, paged OrgUnitProperties response, and route version lifecycle reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
     },
     {
       "id": "lp-orgstructure-detail",
@@ -57,7 +89,7 @@
         "src/resolution/resolver.js"
       ],
       "versionSource": "D2L_LP_VERSION; application fallback 1.53",
-      "documentedMinimum": null,
+      "documentedMinimum": "1.49",
       "applicationMinimum": null,
       "contract": {
         "response": "org-unit record; consumed fields Identifier, Name, Code, Type"
@@ -67,7 +99,39 @@
         "https://docs.valence.desire2learn.com/res/orgunit.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11."
+      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, orgUnitId parameter, OrgUnit response, and route version lifecycle reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
     },
     {
       "id": "lp-courses-detail-get",
@@ -84,7 +148,7 @@
         "src/replication/client.js"
       ],
       "versionSource": "D2L_LP_VERSION; application fallback 1.53",
-      "documentedMinimum": null,
+      "documentedMinimum": "1.49",
       "applicationMinimum": "1.53 for Source Course Deployer",
       "contract": {
         "response": "course record; consumed fields Identifier, Name, Code, IsActive and native course settings"
@@ -94,7 +158,39 @@
         "https://docs.valence.desire2learn.com/res/course.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, orgUnitId parameter, CourseOffering response, and route version lifecycle reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/course.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/course.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/course.html"
+          ]
+        }
+      ]
     },
     {
       "id": "lp-reoffered-courses",
@@ -117,9 +213,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#source-courses"
       ],
-      "minimumVersion": "1.53",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "lp-course-status-put",
@@ -133,7 +236,7 @@
         "src/replication/client.js"
       ],
       "versionSource": "D2L_LP_VERSION; application fallback 1.53",
-      "documentedMinimum": null,
+      "documentedMinimum": "1.49",
       "applicationMinimum": "1.53",
       "contract": {
         "request": "course status fields, preserving existing native settings; response is verified by read-back"
@@ -142,9 +245,40 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html"
       ],
-      "minimumVersion": "1.53",
+      "minimumVersion": "1.49",
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, CourseOfferingInfo request, replace semantics, route version lifecycle, and documented version-conditioned fields reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/course.html"
+        ]
+      },
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/course.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-11",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/course.html"
+          ]
+        }
+      ]
     },
     {
       "id": "lp-source-course-deploy",
@@ -168,9 +302,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#source-courses"
       ],
-      "minimumVersion": "1.53",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "lp-source-course-create",
@@ -194,9 +335,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#source-courses"
       ],
-      "minimumVersion": "1.60",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "lp-datasets-bds",
@@ -220,7 +368,15 @@
         "https://docs.valence.desire2learn.com/reference.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "minimumVersion": null,
+      "versionRisks": []
     },
     {
       "id": "lp-versions",
@@ -244,7 +400,15 @@
         "https://docs.valence.desire2learn.com/res/apiprop.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, ProductVersions response, and support in all API versions reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/apiprop.html"
+        ]
+      }
     },
     {
       "id": "le-versions",
@@ -268,7 +432,15 @@
         "https://docs.valence.desire2learn.com/res/apiprop.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, ProductVersions response, and support in all API versions reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/apiprop.html"
+        ]
+      }
     },
     {
       "id": "versions-check",
@@ -294,7 +466,16 @@
         "https://docs.valence.desire2learn.com/basic/version.html"
       ],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-11",
+        "summary": "Method, route, SupportedVersionRequest array, BulkSupportedVersionResponse response, and support in all API versions reviewed against D2L documentation.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/apiprop.html",
+          "https://docs.valence.desire2learn.com/basic/version.html"
+        ]
+      }
     },
     {
       "id": "le-assignment-list",
@@ -317,9 +498,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/dropbox.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-assignment-detail-get",
@@ -342,9 +530,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/dropbox.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-assignment-detail-put",
@@ -369,9 +564,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/dropbox.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-quiz-list",
@@ -394,9 +596,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/quizzing.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-quiz-detail-get",
@@ -419,9 +628,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/quizzing.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-quiz-detail-put",
@@ -445,9 +661,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/quizzing.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-discussion-forums",
@@ -470,9 +693,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/discussions.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-discussion-topics",
@@ -495,9 +725,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/discussions.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-discussion-topic-detail-get",
@@ -520,9 +757,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/discussions.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-discussion-topic-detail-put",
@@ -546,9 +790,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/le/discussions.html"
       ],
-      "minimumVersion": "1.90",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-course-copy-submit",
@@ -572,9 +823,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
       ],
-      "minimumVersion": "1.97",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-course-copy-status",
@@ -598,9 +856,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
       ],
-      "minimumVersion": "1.97",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "le-ccb-copy-logs",
@@ -624,9 +889,16 @@
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
       ],
-      "minimumVersion": "1.91",
+      "minimumVersion": null,
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_verified",
+        "verifiedAt": null,
+        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
+        "sources": []
+      },
+      "versionRisks": []
     },
     {
       "id": "external-dataset-download",
@@ -649,7 +921,15 @@
       "versionBehavior": "External/dataset link is distinct from versioned API endpoints; exact URL and payload vary by tenant data.",
       "docs": [],
       "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "contractVerification": {
+        "status": "not_applicable",
+        "verifiedAt": null,
+        "summary": "Tenant-provided dataset download URL; no stable Valence endpoint contract applies.",
+        "sources": []
+      },
+      "minimumVersion": null,
+      "versionRisks": []
     }
   ]
 }

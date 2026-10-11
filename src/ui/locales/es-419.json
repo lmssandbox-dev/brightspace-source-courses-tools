@@ -640,5 +640,15 @@
   "Org Library": "Biblioteca de unidades organizativas",
   "Copy status monitoring": "Supervisión del estado de copia",
   "Org Library synchronization": "Sincronización de la biblioteca de unidades organizativas",
-  "course resolution": "resolución de cursos"
+  "course resolution": "resolución de cursos",
+  "Version Health": "Estado de la versión",
+  "Contract Verification": "Verificación del contrato",
+  "Verified": "Verificado",
+  "Not Verified": "No verificado",
+  "Not Applicable": "No aplica",
+  "{0} inventoried endpoints · {1} contracts Verified · {2} Not Verified · {3} Not Applicable": "{0} endpoints inventariados · {1} contratos verificados · {2} sin verificar · {3} no aplican",
+  "Contract review incomplete. Version support is assessed independently.": "La revisión del contrato está incompleta. La compatibilidad de la versión se evalúa por separado.",
+  "Review the verified minimum or incompatibility and plan a tested correction.": "Revisa el mínimo o la incompatibilidad confirmada y planifica una corrección probada.",
+  "Refresh missing version or lifecycle evidence before treating this endpoint as compatible.": "Actualiza la evidencia de versión o ciclo de vida faltante antes de considerar compatible este endpoint.",
+  "No Valence API version assessment applies to this external URL.": "La evaluación de versión de la API Valence no aplica a esta URL externa."
 }

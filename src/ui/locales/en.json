@@ -640,5 +640,15 @@
   "Org Library": "Org Library",
   "Copy status monitoring": "Copy status monitoring",
   "Org Library synchronization": "Org Library synchronization",
-  "course resolution": "course resolution"
+  "course resolution": "course resolution",
+  "Version Health": "Version Health",
+  "Contract Verification": "Contract Verification",
+  "Verified": "Verified",
+  "Not Verified": "Not Verified",
+  "Not Applicable": "Not Applicable",
+  "{0} inventoried endpoints · {1} contracts Verified · {2} Not Verified · {3} Not Applicable": "{0} inventoried endpoints · {1} contracts Verified · {2} Not Verified · {3} Not Applicable",
+  "Contract review incomplete. Version support is assessed independently.": "Contract review incomplete. Version support is assessed independently.",
+  "Review the verified minimum or incompatibility and plan a tested correction.": "Review the verified minimum or incompatibility and plan a tested correction.",
+  "Refresh missing version or lifecycle evidence before treating this endpoint as compatible.": "Refresh missing version or lifecycle evidence before treating this endpoint as compatible.",
+  "No Valence API version assessment applies to this external URL.": "No Valence API version assessment applies to this external URL."
 }

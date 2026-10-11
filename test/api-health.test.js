@@ -41,6 +41,34 @@ test('assessment flags app minimum violations and verified lifecycle bands; unkn
   assert.equal(staleEvidence.components.lp.lifecycleStatus, 'unknown');
 });
 
+test('endpoint version health is independent from contract verification and preserves endpoint risks', () => {
+  const unverified = endpoints.find(row => row.id === 'lp-reoffered-courses');
+  const healthy = assess({ ...base, endpoints: [unverified] });
+  assert.equal(healthy.endpoints[0].versionHealth, 'update_available');
+  assert.equal(healthy.endpoints[0].contractVerification, 'not_verified');
+
+  const unsupported = structuredClone(base); unsupported.checks.components.lp.supported = false;
+  assert.equal(assess({ ...unsupported, endpoints: [unverified] }).endpoints[0].versionHealth, 'critical');
+
+  const belowMinimum = { ...unverified, minimumVersion: '1.61' };
+  assert.equal(assess({ ...base, endpoints: [belowMinimum] }).endpoints[0].versionHealth, 'critical');
+
+  const deprecated = structuredClone(base); deprecated.configured.lp.version = '1.48';
+  deprecated.checks.components.lp = { supported: true, latestVersion: '1.65' };
+  assert.equal(assess({ ...deprecated, endpoints: [unverified] }).endpoints[0].versionHealth, 'at_risk');
+
+  const latestSame = structuredClone(base); latestSame.checks.components.lp.latestVersion = '1.60';
+  assert.equal(assess({ ...latestSame, endpoints: [unverified] }).endpoints[0].versionHealth, 'healthy');
+
+  const missingEvidence = assess({ ...base, lifecycle: { sources: [], components: {} }, endpoints: [unverified] });
+  assert.equal(missingEvidence.endpoints[0].versionHealth, 'unknown');
+
+  const incompatible = { ...unverified, versionRisks: [{ status: 'critical', min: '1.60', message: 'Verified route incompatibility.' }] };
+  const routeRisk = assess({ ...base, endpoints: [incompatible] });
+  assert.equal(routeRisk.endpoints[0].versionHealth, 'critical');
+  assert.match(routeRisk.endpoints[0].finding, /Verified route incompatibility/);
+});
+
 function fakeMongo() {
   let row = null;
   const matches = filter => !filter || filter.namespace === row?.namespace &&
