@@ -1,5 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
+const {readFileSync}=require('node:fs');
 const {installUi}=require('../src/ui/install');
 const {page,workspace}=require('../src/ui/page');
 const {createDeploymentView}=require('../src/replication/view');
@@ -21,6 +22,18 @@ test('workspace renders the selected sidebar panel and omits development tools',
  assert.match(html,/data-section="replication" aria-current="page"/);assert.match(html,/id="pane-dates" hidden/);assert.match(html,/id="pane-replication"  aria-label="Bulk Source Courses Deployer"/);assert.doesNotMatch(html,/Development tools|d2l-tabs/);
  assert.match(page('content'),/Brightspace Source Courses Tools/);assert.doesNotMatch(page('content'),/<footer>/);
  assert.doesNotMatch(page('content',{ltik:'secret'}),/href="[^\"]*secret/);
+});
+test('fresh workspace selects Source Course Creator and all sidebar entries use outline SVG icons',()=>{
+ const html=workspace({copy:'Copy',creation:'Create',dates:'Dates',replication:'Deploy',history:'History'});
+ assert.match(html,/data-section="creation" aria-current="page"/);assert.match(html,/id="pane-creation"  aria-label="Bulk Source Course Creator"/);
+ assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/selected:res\.locals\.uiSection\|\|'creation'/);assert.match(readFileSync(require.resolve('../index.js'),'utf8'),/req\.body\.section:'creation'/);
+ const links=[...html.matchAll(/<a href="#([^"]+)" data-section="([^"]+)"[^>]*><span><svg/g)];assert.deepEqual(links.map(match=>match[1]),['creation','copy','dates','replication','history']);assert.equal((html.match(/<svg /g)||[]).length,5);assert.doesNotMatch(html,/＋|▧|▦|▤|◷/);
+});
+test('rule editor shares one value-preserving renderer and styles matching method like Language selector',()=>{
+ const browser=readFileSync(require.resolve('../src/ui/app.mjs'),'utf8'),css=readFileSync(require.resolve('../src/ui/app.css'),'utf8');
+ assert.match(browser,/const readRules=\(\)=>/);assert.match(browser,/const renderRules=rules=>/);assert.match(browser,/rules\.push\(\{id:`rule-\$\{crypto\.randomUUID\(\)\}`/);assert.match(browser,/renderRules\(rules\);syncMode\(\)/);
+ assert.match(css,/\.language-picker select,select\[name="timeZone"\],\.date-rule-fields select\{[^}]*background-image:url\("data:image\/svg\+xml/);assert.doesNotMatch(css,/\.date-schedule-fields>\.field:first-child\{grid-column:1\/-1/);
+ assert.match(css,/\.date-schedule-fields\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);assert.match(css,/@media\(max-width:850px\)\{\.date-schedule-fields\{grid-template-columns:1fr\}/);
 });
 test('submitted replication exposes monitoring and reactivation without claiming completion',()=>{
  const job={_id:'j',status:'submitted',rows:[],tasks:[{sourceId:'10',sourceName:'<script>bad</script>',targets:[{orgUnitId:'20',name:'Replica',isActive:true,deactivation:{status:'updated'}}],result:{status:'submitted',deploymentId:'123'}}]};

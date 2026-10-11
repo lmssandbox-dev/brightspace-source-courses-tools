@@ -547,5 +547,6 @@
   "Not started because processing was stopped.": "Not started because processing was stopped.",
   "Not started because the job was cancelled.": "Not started because the job was cancelled.",
   "Confirm creation of the eligible Source Courses before continuing.": "Confirm creation of the eligible Source Courses before continuing.",
-  "Registration pending": "Registration pending"
+  "Registration pending": "Registration pending",
+  "Rule-Based Scheduling": "Rule-Based Scheduling"
 }

@@ -193,7 +193,7 @@ const diagnostics = createDiagnostics({
   workspace: true,
   activityForm: res => workspace({
     copy:copyRoutes.form(res),dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
-    selected:res.locals.uiSection||'copy',creation:creationRoutes.form(res),
+    selected:res.locals.uiSection||'creation',creation:creationRoutes.form(res),
     history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Source Course Creator</span><h3>Source Course Creation Jobs</h3><p>Review validated rows, creation outcomes and Org Library registration.</p>${creationRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Courses</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
@@ -201,7 +201,7 @@ const diagnostics = createDiagnostics({
   deploymentId: BS_DEPLOYMENT_ID
 });
 lti.onConnect(diagnostics.launch);
-lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['creation','copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'copy';return diagnostics.launch(res.locals.token,req,res);});
+lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['creation','copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'creation';return diagnostics.launch(res.locals.token,req,res);});
 // Not whitelisted: ltijs validates the LTI session before this handler runs.
 lti.app.get('/diagnostics/activities', diagnostics.activities);
 // Protected POST routes; preview/apply tickets are bound to the validated LTI session.

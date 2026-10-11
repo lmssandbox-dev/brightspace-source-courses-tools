@@ -547,5 +547,6 @@
   "Not started because processing was stopped.": "Não iniciado porque o processamento foi interrompido.",
   "Not started because the job was cancelled.": "Não iniciado porque o trabalho foi cancelado.",
   "Confirm creation of the eligible Source Courses before continuing.": "Confirme a criação dos cursos de origem elegíveis para continuar.",
-  "Registration pending": "Registro pendente"
+  "Registration pending": "Registro pendente",
+  "Rule-Based Scheduling": "Agendamento baseado em regras"
 }

@@ -11,7 +11,9 @@ const jobs={create:async r=>{calls.push(r);savedOwner=r.owner;return job;},get:a
 const routes=createBulkDates({jobs,deploymentId:'d',secret:'secret',writeEnabled:()=>true,now:()=>time});
 return {routes,calls,job,get cancels(){return cancels;},advance:()=>{time+=1800001;}};}
 test('Date Manager form defaults to Uniform mode with all activity types and offers rule scheduling',()=>{
- const html=setup().routes.form(response());assert.match(html,/name="scheduleMode"[^>]*id="schedule-mode"/);assert.match(html,/value="uniform" selected/);assert.match(html,/value="rules"/);
+ const html=setup().routes.form(response());assert.match(html,/name="scheduleMode" id="schedule-mode" value="uniform" checked/);assert.match(html,/name="scheduleMode" value="rules"[^>]*> Rule-Based Scheduling/);assert.doesNotMatch(html,/Rule ID/);assert.match(html,/type="hidden" data-rule-id value="rule-[^"]+"/);
+ const uniformFields=html.slice(html.indexOf('class="date-schedule-fields"'),html.indexOf('</div><p class="muted">Start must'));const start=uniformFields.indexOf('name="start"'),due=uniformFields.indexOf('name="due"'),end=uniformFields.indexOf('name="end"');assert.ok(start<due&&due<end);assert.equal((uniformFields.match(/class="field">/g)||[]).length,3);
+ const rulesHtml=html.slice(html.indexOf('data-rule-list'),html.indexOf('data-add-rule'));const ruleFields=['Rule label','Matching method','Activity title pattern','Start date and time','Due date and time','End date and time'].map(label=>rulesHtml.indexOf(label));assert.ok(ruleFields.every((position,index)=>position>=0&&(!index||ruleFields[index-1]<position)));
  for(const type of ['assignment','quiz','discussionTopic'])assert.match(html,new RegExp(`name="activityTypes" value="${type}" checked`));
  assert.match(html,/data-rule-schedule/);assert.match(html,/data-add-rule/);assert.match(html,/name="timeZone"/);
 });
