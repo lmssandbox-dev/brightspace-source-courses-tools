@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    { "url": "https://docs.valence.desire2learn.com/about.html", "verifiedAt": "2026-10-11", "claim": "Current API contract lifecycle bands for LP and LE." },
+    { "url": "https://docs.valence.desire2learn.com/basic/version.html", "verifiedAt": "2026-10-11", "claim": "Deprecation, obsolescence, EOL meanings and version support semantics." }
+  ],
+  "components": {
+    "lp": { "verifiedAt": "2026-10-11", "ranges": [{ "status": "obsolete", "max": "1.45" }, { "status": "deprecated", "max": "1.48" }, { "status": "supported", "min": "1.49" }] },
+    "le": { "verifiedAt": "2026-10-11", "ranges": [{ "status": "obsolete", "max": "1.74" }, { "status": "deprecated", "max": "1.81" }, { "status": "supported", "min": "1.82" }] }
+  },
+  "limitations": "D2L lifecycle information is maintained in this source-controlled snapshot. The application does not automatically discover documentation changes."
+}

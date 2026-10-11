@@ -150,3 +150,9 @@ Code resolution uses eight mapping workers in Course Copy, Source Deployer and D
 
 
 Directory sync now downloads a full plus newer differentials for initial setup (and once when upgrading a legacy cache). Later runs download only unprocessed differentials; a newer full rebuilds the baseline. There is no fixed 36-hour interval assumption. The extract ledger and directory publish together after success. Incremental runs use a bounded local MongoDB staging copy for atomic publication, so they reduce API downloads but still require staging storage and database I/O. See [RESOLUTION.md](RESOLUTION.md) for continuity checks and operational details. No environment or CSV changes are required.
+
+## API Version Health Check backend
+
+No new environment variables or database are required. The backend reads the same effective `D2L_LP_VERSION` and `D2L_LE_VERSION` values as the application and queries the tenant's `/d2l/api/lp/versions/`, `/d2l/api/le/versions/`, and `/d2l/api/versions/check` endpoints through the shared API gate. D2L permits anonymous version calls; this application still uses its guarded, rate-limited transport. See [`API_ENDPOINTS.md`](API_ENDPOINTS.md) for the complete route inventory, documented contracts, and lifecycle snapshot. Health results show component support, latest supported versions, application feature minimums, and verified lifecycle evidence separately. Version checks do not verify individual endpoint contracts or permissions; a higher latest version is not an automatic upgrade recommendation.
+
+The checked-in `.env.example` currently sets `D2L_LE_VERSION=1.91`. That satisfies the documented copy-log check guard but is below this application's Course Copy minimum of LE 1.97. We did not change the template in this task; when updating it separately, use a tenant-supported LE version of 1.97 or later.

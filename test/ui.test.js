@@ -32,6 +32,7 @@ test('fresh workspace selects Source Course Creator and all sidebar entries use 
 test('rule editor shares one value-preserving renderer and styles matching method like Language selector',()=>{
  const browser=readFileSync(require.resolve('../src/ui/app.mjs'),'utf8'),css=readFileSync(require.resolve('../src/ui/app.css'),'utf8');
  assert.match(browser,/const readRules=\(\)=>/);assert.match(browser,/const renderRules=rules=>/);assert.match(browser,/rules\.push\(\{id:`rule-\$\{crypto\.randomUUID\(\)\}`/);assert.match(browser,/renderRules\(rules\);syncMode\(\)/);
+ assert.match(css,/\.field input,\.field select\{display:block;width:100%;margin-top:7px\}/);
  assert.match(css,/\.language-picker select,select\[name="timeZone"\],\.date-rule-fields select\{[^}]*background-image:url\("data:image\/svg\+xml/);assert.doesNotMatch(css,/\.date-schedule-fields>\.field:first-child\{grid-column:1\/-1/);
  assert.match(css,/\.date-schedule-fields\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);assert.match(css,/@media\(max-width:850px\)\{\.date-schedule-fields\{grid-template-columns:1fr\}/);
 });

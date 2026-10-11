@@ -11,6 +11,7 @@ Brightspace Source Courses Tools is a Node.js LTI 1.3 application for Brightspac
 - `src/creation/` handles Bulk Source Course Creator CSV planning, guarded creation, and result reporting.
 - `src/shared/` contains OAuth/API transport, LTI guards, MongoDB job storage, worker/checkpoint coordination, rate limits, and common routes.
 - `src/resolution/` provides the shared org-unit code directory and Brightspace dataset synchronization.
+- `src/apiHealth/` contains the source-derived endpoint inventory, verified lifecycle evidence, runtime version resolver, and read-only API health assessment/persistence service.
 - `src/ui/` contains server-rendered page helpers, styles, localization catalogs, and browser enhancements. `scripts/build-ui.js` bundles ignored assets under `public/assets/`.
 - `test/` contains Node built-in tests and API fixtures.
 
@@ -69,3 +70,4 @@ Source Deployer Step 3 supports graceful cancellation while running. A durable `
 - Run `npm test` and `npm run check` for source changes. Run `npm run build` after UI changes; `npm start` also builds assets through `prestart`.
 - `npm run activity:dates -- ...` is a preview-first single-activity diagnostic CLI; `npm run verify:discovery` runs discovery verification. Bulk changes should be exercised through saved-job workflows.
 - Do not commit `.env`, private keys, `node_modules/`, or generated `public/assets/` bundles. Configure tenant-specific LTI/OAuth credentials and scopes using `.env.example` and `ENVIRONMENT.md`.
+- **API inventory maintenance:** whenever a Brightspace API endpoint, method, LP/LE version, minimum-version guard, or request/response contract changes, update `src/apiHealth/endpoints.json`, `API_ENDPOINTS.md`, the endpoint coverage/contract tests, and the relevant documentation. Keep documented minimums and lifecycle claims tied to official D2L sources and verification dates; use `unknown` when evidence is unavailable. Keep `.env.example` version values unchanged unless separately requested.

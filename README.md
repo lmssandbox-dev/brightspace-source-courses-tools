@@ -244,3 +244,7 @@ Directory sync now downloads a full plus newer differentials for initial setup (
 Use the sync icon beside Language to request an org-unit directory refresh without leaving your current form. Hover for its label. A short message confirms the background request; server-side sync reports show the final result. See [RESOLUTION.md](RESOLUTION.md).
 
 Date mapping uses IDs directly or cached code matches, then discovers activities without course-detail preflight. Source Deployer likewise skips type/access preflight; Brightspace reports execution errors. An invalid source may be rejected after replicas are deactivated, so inspect the report for replicas left inactive. See PERFORMANCE.md for the exact retained reads and safeguards.
+
+## API Version Health Check backend
+
+The backend includes a read-only API Version Health Check foundation. The complete source-derived endpoint reference is [`API_ENDPOINTS.md`](API_ENDPOINTS.md), backed by `src/apiHealth/endpoints.json`; verified lifecycle ranges live in `src/apiHealth/lifecycle.json`. Effective LP/LE runtime values are checked against the tenant with D2L's component version endpoints and one combined version-check request. No public health-check route or UI is included in this backend task. Native checks establish component version support only; they do not validate individual endpoint or JSON contracts. Lifecycle evidence is a dated source-controlled snapshot and is not automatically scraped. Developers must register API changes in the inventory and relevant tests/docs as required in `AGENTS.md`.

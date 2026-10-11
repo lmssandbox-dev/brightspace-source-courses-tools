@@ -1,0 +1,655 @@
+{
+  "schemaVersion": 1,
+  "inventoryVerifiedAt": "2026-10-11",
+  "sources": {
+    "versioning": "https://docs.valence.desire2learn.com/res/apiprop.html",
+    "general": "https://docs.valence.desire2learn.com/reference.html"
+  },
+  "endpoints": [
+    {
+      "id": "lp-orgstructure-list",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/orgstructure/",
+      "features": [
+        "Date Manager",
+        "Source Course Deployer",
+        "Bulk Course Copy",
+        "Bulk Source Course Creator",
+        "Org Library",
+        "course resolution"
+      ],
+      "sourceFiles": [
+        "src/shared/courses.js",
+        "src/replication/client.js",
+        "src/copy/resolver.js",
+        "src/creation/client.js",
+        "src/resolution/resolver.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.53 for Source Course Deployer; 1.60 for Source Course Creator",
+      "contract": {
+        "query": "exactOrgUnitCode (when code lookup)",
+        "response": "paged org-structure records; consumed fields Identifier, Code, Name, Type"
+      },
+      "versionBehavior": "No route-specific compatibility behavior verified; source creation is gated at LP 1.60.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11."
+    },
+    {
+      "id": "lp-orgstructure-detail",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/orgstructure/{orgUnitId}",
+      "features": [
+        "Bulk Source Course Creator",
+        "Bulk Course Copy",
+        "Org Library",
+        "course resolution"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js",
+        "src/copy/resolver.js",
+        "src/resolution/resolver.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": null,
+      "contract": {
+        "response": "org-unit record; consumed fields Identifier, Name, Code, Type"
+      },
+      "versionBehavior": "Unknown; no route-specific version behavior verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11."
+    },
+    {
+      "id": "lp-courses-detail-get",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/courses/{orgUnitId}",
+      "features": [
+        "Date Manager",
+        "Source Course Deployer",
+        "Bulk Course Copy"
+      ],
+      "sourceFiles": [
+        "src/shared/courses.js",
+        "src/replication/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.53 for Source Course Deployer",
+      "contract": {
+        "response": "course record; consumed fields Identifier, Name, Code, IsActive and native course settings"
+      },
+      "versionBehavior": "Source Deployer preserves native status fields; payload shape is version-conditioned at LP 1.54.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-reoffered-courses",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/sourceCourses/{orgUnitId}/reofferedCourses",
+      "features": [
+        "Source Course Deployer"
+      ],
+      "sourceFiles": [
+        "src/replication/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.53",
+      "contract": {
+        "response": "object with ReofferedCourses array"
+      },
+      "versionBehavior": "No route-specific compatibility behavior verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#source-courses"
+      ],
+      "minimumVersion": "1.53",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-course-status-put",
+      "component": "lp",
+      "method": "PUT",
+      "pattern": "/d2l/api/lp/{LP}/courses/{orgUnitId}",
+      "features": [
+        "Source Course Deployer"
+      ],
+      "sourceFiles": [
+        "src/replication/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.53",
+      "contract": {
+        "request": "course status fields, preserving existing native settings; response is verified by read-back"
+      },
+      "versionBehavior": "Payload fields are version-conditioned at LP 1.54.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html"
+      ],
+      "minimumVersion": "1.53",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-source-course-deploy",
+      "component": "lp",
+      "method": "POST",
+      "pattern": "/d2l/api/lp/{LP}/sourceCourses/{sourceOrgUnitId}/deploy",
+      "features": [
+        "Source Course Deployer"
+      ],
+      "sourceFiles": [
+        "src/replication/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.53",
+      "contract": {
+        "request": "TargetCourseOfferingIds numeric array",
+        "response": "HTTP 200 deployment ID or HTTP 207 partial result"
+      },
+      "versionBehavior": "Accepted deployment is asynchronous; activation does not mean copy completion.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#source-courses"
+      ],
+      "minimumVersion": "1.53",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-source-course-create",
+      "component": "lp",
+      "method": "POST",
+      "pattern": "/d2l/api/lp/{LP}/sourceCourses/",
+      "features": [
+        "Bulk Source Course Creator"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.60",
+      "contract": {
+        "request": "Name, Code, TemplateId",
+        "response": "created org-unit identifier"
+      },
+      "versionBehavior": "Feature execution is gated at LP 1.60.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#source-courses"
+      ],
+      "minimumVersion": "1.60",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-datasets-bds",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/datasets/bds",
+      "features": [
+        "Org Library synchronization"
+      ],
+      "sourceFiles": [
+        "src/resolution/sync.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": null,
+      "applicationMinimum": null,
+      "contract": {
+        "response": "dataset schema records; consumed SchemaId and ExtractsLink"
+      },
+      "versionBehavior": "Unknown; exact route contract not verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/reference.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "lp-versions",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/versions/",
+      "features": [
+        "API Version Health Check"
+      ],
+      "sourceFiles": [
+        "src/apiHealth/service.js"
+      ],
+      "versionSource": "Unversioned version-discovery route",
+      "documentedMinimum": "all",
+      "applicationMinimum": null,
+      "contract": {
+        "response": "ProductVersions with ProductCode, LatestVersion, SupportedVersions"
+      },
+      "versionBehavior": "Official docs state the version route is available in all API versions and may be called anonymously; this app routes through the guarded shared rate-limited transport.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/apiprop.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+    },
+    {
+      "id": "le-versions",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/versions/",
+      "features": [
+        "API Version Health Check"
+      ],
+      "sourceFiles": [
+        "src/apiHealth/service.js"
+      ],
+      "versionSource": "Unversioned version-discovery route",
+      "documentedMinimum": "all",
+      "applicationMinimum": null,
+      "contract": {
+        "response": "ProductVersions with ProductCode, LatestVersion, SupportedVersions"
+      },
+      "versionBehavior": "Official docs state the version route is available in all API versions and may be called anonymously; this app routes through the guarded shared rate-limited transport.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/apiprop.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+    },
+    {
+      "id": "versions-check",
+      "component": "lp",
+      "method": "POST",
+      "pattern": "/d2l/api/versions/check",
+      "features": [
+        "API Version Health Check"
+      ],
+      "sourceFiles": [
+        "src/apiHealth/service.js"
+      ],
+      "versionSource": "Unversioned version-discovery route",
+      "documentedMinimum": "all",
+      "applicationMinimum": null,
+      "contract": {
+        "request": "array of {ProductCode, Version}; app sends LP and LE pairs together",
+        "response": "{Supported:boolean, Versions:[{ProductCode, Version, Supported, LatestVersion}]}"
+      },
+      "versionBehavior": "Checks component version support only; it does not validate endpoint or JSON contracts.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/apiprop.html",
+        "https://docs.valence.desire2learn.com/basic/version.html"
+      ],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Official D2L versioning contract verified 2026-10-11."
+    },
+    {
+      "id": "le-assignment-list",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/dropbox/folders/",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activities/assignments.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "paged assignment folder collection"
+      },
+      "versionBehavior": "No route-specific compatibility behavior verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/dropbox.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-assignment-detail-get",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/dropbox/folders/{folderId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "native assignment settings used to construct preview and preserve omitted fields"
+      },
+      "versionBehavior": "Version-conditioned fields are retained by the writer.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/dropbox.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-assignment-detail-put",
+      "component": "le",
+      "method": "PUT",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/dropbox/folders/{folderId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/shared/client.js",
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "request": "preserved native assignment fields plus requested availability dates",
+        "response": "followed by read-back verification"
+      },
+      "versionBehavior": "Payload changes with supported LE fields; uncertain writes are not replayed.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/dropbox.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-quiz-list",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/quizzes/",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activities/quizzes.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "paged quiz collection"
+      },
+      "versionBehavior": "No route-specific compatibility behavior verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/quizzing.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-quiz-detail-get",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/quizzes/{quizId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "native quiz settings"
+      },
+      "versionBehavior": "Version-conditioned fields are retained by the writer.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/quizzing.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-quiz-detail-put",
+      "component": "le",
+      "method": "PUT",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/quizzes/{quizId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/shared/client.js",
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "request": "preserved native quiz fields plus requested dates; followed by read-back"
+      },
+      "versionBehavior": "Payload changes with supported LE fields; uncertain writes are not replayed.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/quizzing.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-discussion-forums",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/discussions/forums/",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activities/discussions.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "paged forums; consumes ForumId values"
+      },
+      "versionBehavior": "No route-specific compatibility behavior verified.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/discussions.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-discussion-topics",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/discussions/forums/{forumId}/topics/",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activities/discussions.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "paged discussion topic collection"
+      },
+      "versionBehavior": "Topic DueDate is available from LE 1.90 in this app's model.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/discussions.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-discussion-topic-detail-get",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/discussions/forums/{forumId}/topics/{topicId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "response": "native discussion topic settings"
+      },
+      "versionBehavior": "Native settings are preserved before date changes.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/discussions.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-discussion-topic-detail-put",
+      "component": "le",
+      "method": "PUT",
+      "pattern": "/d2l/api/le/{LE}/{orgUnitId}/discussions/forums/{forumId}/topics/{topicId}",
+      "features": [
+        "Date Manager"
+      ],
+      "sourceFiles": [
+        "src/shared/client.js",
+        "src/dates/activityWriters.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.90",
+      "contract": {
+        "request": "preserved native discussion topic fields plus requested dates; followed by read-back"
+      },
+      "versionBehavior": "Uncertain writes are not replayed.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/le/discussions.html"
+      ],
+      "minimumVersion": "1.90",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-course-copy-submit",
+      "component": "le",
+      "method": "POST",
+      "pattern": "/d2l/api/le/{LE}/import/{destinationOrgUnitId}/copy/",
+      "features": [
+        "Bulk Course Copy"
+      ],
+      "sourceFiles": [
+        "src/copy/client.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.97",
+      "contract": {
+        "request": "SourceOrgUnitId, Components, CallbackUrl",
+        "response": "HTTP 202 with native JobToken"
+      },
+      "versionBehavior": "Accepted asynchronous submissions are not evidence that copy processing completed.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
+      ],
+      "minimumVersion": "1.97",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-course-copy-status",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/import/{destinationOrgUnitId}/copy/{jobToken}",
+      "features": [
+        "Bulk Course Copy"
+      ],
+      "sourceFiles": [
+        "src/copy/client.js",
+        "src/replication/monitor.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.97",
+      "contract": {
+        "response": "native Status enum"
+      },
+      "versionBehavior": "App accepts PENDING, PROCESSING, COMPLETE, COMPLETE_WITH_ERRORS, FAILED and CANCELLED.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
+      ],
+      "minimumVersion": "1.97",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "le-ccb-copy-logs",
+      "component": "le",
+      "method": "GET",
+      "pattern": "/d2l/api/le/{LE}/ccb/logs",
+      "features": [
+        "Source Course Deployer copy status monitoring"
+      ],
+      "sourceFiles": [
+        "src/replication/monitor.js"
+      ],
+      "versionSource": "D2L_LE_VERSION",
+      "documentedMinimum": null,
+      "applicationMinimum": "1.91",
+      "contract": {
+        "query": "sourceOrgUnitId, destinationOrgUnitId, startDate, optional endDate, pageSize",
+        "response": "Objects copy-log entries and optional Next"
+      },
+      "versionBehavior": "Monitoring reports copy-log availability; it does not activate replicas or infer completion beyond recognized log evidence.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/course.html#copying-courses"
+      ],
+      "minimumVersion": "1.91",
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    },
+    {
+      "id": "external-dataset-download",
+      "component": "external",
+      "method": "GET",
+      "pattern": "URL returned by LP datasets ExtractsLink",
+      "features": [
+        "Org Library synchronization"
+      ],
+      "sourceFiles": [
+        "src/resolution/extract.js",
+        "src/resolution/sync.js"
+      ],
+      "versionSource": "Dataset-provided URL; not a versioned Valence route",
+      "documentedMinimum": null,
+      "applicationMinimum": null,
+      "contract": {
+        "response": "streamed dataset extract; redirect constrained to configured tenant origin"
+      },
+      "versionBehavior": "External/dataset link is distinct from versioned API endpoints; exact URL and payload vary by tenant data.",
+      "docs": [],
+      "verifiedAt": "2026-10-11",
+      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference."
+    }
+  ]
+}

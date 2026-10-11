@@ -30,6 +30,10 @@ const {diagnosticForm}=require('./src/dates/discoveryDiagnostics');
 const {createCreationClient}=require('./src/creation/client');
 const {createCreationJobs}=require('./src/creation/jobs');
 const {createCreationView}=require('./src/creation/view');
+const {resolveRuntimeVersions}=require('./src/apiHealth/runtimeVersions');
+const {createApiHealthService}=require('./src/apiHealth/service');
+const apiHealthEndpoints=require('./src/apiHealth/endpoints.json').endpoints;
+const apiHealthLifecycle=require('./src/apiHealth/lifecycle.json');
 
 // ===============================
 // Variáveis de ambiente
@@ -168,6 +172,17 @@ const writeEnabled = type => hasScope(D2L_OAUTH2_SCOPES, {assignment:'dropbox:fo
 const activityDates = createActivityDates({writers,deploymentId:BS_DEPLOYMENT_ID,writeEnabled});
 const bulkStore = createBulkStore({uri:MONGODB_URL,namespace:createHash('sha256').update(`${BS_URL}|${BS_DEPLOYMENT_ID}`).digest('hex')});
 const lpVersion = process.env.D2L_LP_VERSION || '1.53';
+const runtimeApiVersions=resolveRuntimeVersions(process.env);
+const apiHealth=createApiHealthService({http:apiHttp,baseUrl:BS_URL,versions:runtimeApiVersions,uri:MONGODB_URL,
+  namespace:createHash('sha256').update(`${new URL(BS_URL).origin}|${D2L_OAUTH2_CLIENT_ID}`).digest('hex'),
+  endpoints:apiHealthEndpoints,lifecycle:apiHealthLifecycle,
+  minimums:{lp:[{minimum:'1.53',endpointId:'lp-source-course-deploy',tool:'Source Course Deployer'},
+    {minimum:'1.60',endpointId:'lp-source-course-create',tool:'Bulk Source Course Creator'}],
+    le:[{minimum:'1.90',endpointId:'le-assignment-list',tool:'Date Manager'},
+      {minimum:'1.97',endpointId:'le-course-copy-submit',tool:'Bulk Course Copy'},
+      {minimum:'1.91',endpointId:'le-ccb-copy-logs',tool:'Copy status monitoring'}]},
+  buildVersion:process.env.RENDER_GIT_COMMIT||'unknown'});
+lti.app.locals.apiHealth=apiHealth;
 const resolution=require('./src/resolution/runtime').createResolutionRuntime({api:brightspace,http:apiHttp,downloadHttp:axios,oauth,baseUrl:BS_URL,lpVersion,uri:MONGODB_URL,clientId:D2L_OAUTH2_CLIENT_ID});
 const orgResolver=resolution.resolver;
 const syncControls=require('./src/resolution/routes').createSyncControls({store:resolution.store,sync:resolution.sync,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID});
@@ -235,6 +250,9 @@ const start = async () => {
     const directoryTimer=setInterval(()=>{void resolution.sync.tick();},60000);directoryTimer.unref();
     const copyTimer=setInterval(()=>{void copyMonitor.tick();},10000);
     copyTimer.unref();
+    void apiHealth.tick();
+    const apiHealthTimer=setInterval(()=>{void apiHealth.tick();},60*60*1000);
+    apiHealthTimer.unref();
     if (!BS_DEPLOYMENT_ID?.trim()) {
       console.log('Setup mode: launches are blocked until BS_DEPLOYMENT_ID is configured. Key endpoints remain available.');
     }
