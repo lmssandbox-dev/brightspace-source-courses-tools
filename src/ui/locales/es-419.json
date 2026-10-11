@@ -701,5 +701,8 @@
   "Submit course copy": "Enviar copia del curso",
   "Course copy status": "Estado de la copia del curso",
   "Copy log retrieval": "Consulta del registro de copia",
-  "External dataset download": "Descarga externa del conjunto de datos"
+  "External dataset download": "Descarga externa del conjunto de datos",
+  "LP/LE versions": "Versiones LP/LE",
+  "Last successful check": "Última verificación exitosa",
+  "{0} inventoried endpoints · {1} Not Applicable": "{0} endpoints inventariados · {1} no aplican"
 }

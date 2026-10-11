@@ -701,5 +701,8 @@
   "Submit course copy": "Submit course copy",
   "Course copy status": "Course copy status",
   "Copy log retrieval": "Copy log retrieval",
-  "External dataset download": "External dataset download"
+  "External dataset download": "External dataset download",
+  "LP/LE versions": "LP/LE versions",
+  "Last successful check": "Last successful check",
+  "{0} inventoried endpoints · {1} Not Applicable": "{0} inventoried endpoints · {1} Not Applicable"
 }
