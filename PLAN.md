@@ -2,6 +2,9 @@
 
 ## Implemented locally
 
+- Bulk Source Course Creator: exact CSV schema, partial-validity template/code checks, four-worker confirmed creation, graceful cancellation, durable outcomes, immediate Org Library registration overlay, and result CSV.
+- Org Library directory version 5 includes non-deleted Course Templates and forces a full rebuild for older directory generations.
+
 - Application branding, sidebar navigation, and simplified date and deployment forms.
 - 10,000-row / 5 MB CSV support for both workflows; deployment requests contain up to 100 replicas per source batch.
 - Named time zones and date conversion validation; bulk date discovery, updates, read-back checks and CSV reports.
@@ -56,7 +59,7 @@ CSV templates: the date template downloads as `date-manager-template.csv`. Deplo
 
 Added the first sidebar workflow for Offering → existing Offering/Source Course copies. It supports a four-column ID/code CSV, all or selected component types, saved confirmation plans, durable native job tokens, on-demand cumulative status checks, translated compact pages, reports, and separate Job History. Reuses session/owner guards, worker leases and API rate limiting. It does not create/reset/reactivate courses. Restart recovery preserves uncertain outcomes without resubmitting. See README and ENVIRONMENT for usage, component dependencies, permissions, and required tenant acceptance tests. Live verification of this implementation and bulk-volume timing remain pending.
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+Course Copy, Source Deployer, Date Manager and Source Course Creator use the shared MongoDB org-code directory for code resolution, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 ## Bounded bulk processing
 
@@ -72,16 +75,20 @@ Date Manager performance update: course resolution uses up to eight workers; dis
 
 Date Manager CSV accepts an ID, a code, or both in `OrgUnitId,OrgUnitCode`. With both supplied, directory/live code resolution must match the supplied ID before activity discovery. Distinct pairs are validated before resolved-course deduplication, so a repeated ID with a different code cannot bypass matching. Mismatches appear in the report and block the date plan under the existing all-courses-valid requirement. IDs alone skip code resolution; pairs use the shared directory and per-job lookup cache. CSV headers are unchanged; dataset scheduling has optional settings documented in RESOLUTION.md.
 
-Upload guidance is condensed into short “Before you begin” cards across all three tools. Date Manager places upload and guidance side by side, with a full-width schedule below; the three date fields share a row on desktop and stack on narrow screens.
+Upload guidance is condensed into short “Before you begin” cards across the four tools. Date Manager places upload and guidance side by side, with a full-width schedule below; the three date fields share a row on desktop and stack on narrow screens.
 
 Code resolution uses eight mapping workers in Course Copy, Source Deployer and Date Manager. GET orgstructure requests with a nonempty exactOrgUnitCode filter, POST import/{id}/copy/ submissions, GET import/{id}/copy/{token} result checks, Source Deployer POST deploy and PUT course status calls, GET course/org-unit metadata and reofferedCourses, and GET ccb/logs qualify for the eight-request allowance. Other calls (including activity discovery and date updates) share a four-request allowance; all classes together are capped at eight. Credit reservations, pacing, cooldowns and lease expiry remain shared and unchanged. No new environment variables are needed. Compare the same CSV before/after deployment using server-side timing reports; doubling workers does not guarantee twice the throughput.
 
 
 ## Shared directory and nightly dataset refresh
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+Course Copy, Source Deployer, Date Manager and Source Course Creator use the shared MongoDB org-code directory for code resolution, in 500-code batches. Missing codes use bounded exactOrgUnitCode API searches and are saved for future jobs. Per-job promises deduplicate concurrent misses. The nightly Organizational Units dataset import refreshes the directory; known matches reflect the saved snapshot, not a live permission/code check. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 Run `node scripts/sync-org-units.js` to initialize/refresh after granting the Service User dataset access, then `node scripts/org-unit-cache-report.js` to inspect freshness. Scheduled refresh defaults to 06:00 UTC. The OAuth scope is `datasets:bds:read`; no extra credentials or CSV changes are needed. The 8-worker resolution / 4-worker ordinary API limits remain unchanged. A failed import preserves the previous generation.
 
 
 Directory sync now downloads a full plus newer differentials for initial setup (and once when upgrading a legacy cache). Later runs download only unprocessed differentials; a newer full rebuilds the baseline. There is no fixed 36-hour interval assumption. The extract ledger and directory publish together after success. Incremental runs use a bounded local MongoDB staging copy for atomic publication, so they reduce API downloads but still require staging storage and database I/O. See [RESOLUTION.md](RESOLUTION.md) for continuity checks and operational details. No environment or CSV changes are required.
+
+## Date Manager rule-based scheduling
+
+Implemented Uniform and Rule-Based Date Update modes with a global activity-type multiselect. Rule-Based plans validate up to 20 trimmed, case-insensitive Contains/Starts with title rules, resolve matches locally during the existing discovery pass, exclude unmatched/unselected activities, and block readiness on conflicts or an empty executable plan. Rule tasks persist their rule ID and effective UTC dates; Step 3 writes and interrupted-task reconciliation use those saved dates without rematching. Added bounded aggregate and course coverage, rule-aware review/status/CSV output, backward compatibility for legacy Uniform jobs, focused resolver/integration tests, and user/technical/performance guidance. Discovery and execution concurrency, API limits, checkpoint cadence, chunk storage, confirmation, cancellation, and uncertain-write safeguards remain unchanged.

@@ -14,21 +14,23 @@ function mergeMatches(code,base,overlay,byId,fullAt){
 }
 function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
  databaseConfig(uri);const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000,socketTimeoutMS:30000});let ready;
- async function db(){ready ||= (async()=>{await client.connect();const d=client.db();await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Code:1});await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Identifier:1},{unique:true});return d;})().catch(e=>{ready=null;throw e;});return ready;}
+ async function db(){ready ||= (async()=>{await client.connect();const d=client.db();await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Code:1});await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Identifier:1},{unique:true});await d.collection('org_resolution_created').createIndex({namespace:1,Identifier:1},{unique:true});await d.collection('org_resolution_created').createIndex({namespace:1,Code:1});return d;})().catch(e=>{ready=null;throw e;});return ready;}
  const metaId=namespace,liveId=code=>namespace+':'+digest(code);
  return {
   async lookup(codes){const d=await db(),meta=await d.collection('org_resolution_state').findOne({_id:metaId}),found=new Map(),safeCodes=new Set();
    const parts=Array.from({length:Math.ceil(codes.length/500)},(_,i)=>codes.slice(i*500,(i+1)*500)),results=new Array(parts.length);
    await pool(parts,4,async(part,index)=>{const overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
     const ids=overlays.flatMap(o=>o.matches.map(r=>r.Identifier));const records=meta?.generation?await d.collection('org_resolution_units').find({namespace,generation:meta.generation,$or:[{Code:{$in:part}},{Identifier:{$in:ids}}]}).toArray():[];
+    const created=await d.collection('org_resolution_created').find({namespace,Code:{$in:part},status:{$ne:'superseded'}}).toArray();
     const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)).map(r=>[r.code,r]));
     for(const r of records){if(!byCode.has(r.Code))byCode.set(r.Code,[]);byCode.get(r.Code).push(r);}
-    const batch=new Map();for(const code of part){const overlay=live.get(code),matches=mergeMatches(code,byCode.get(code)||[],overlay,byId,meta?.fullAt||0);if(matches.length)batch.set(code,matches);if(overlay)safeCodes.add(code);}results[index]=batch;
+    const batch=new Map();for(const code of part){const overlay=live.get(code),matches=mergeMatches(code,byCode.get(code)||[],overlay,byId,meta?.fullAt||0),merged=new Map(matches.map(r=>[r.Identifier,r]));for(const record of created.filter(r=>r.Code===code)){const authoritative=byId.get(record.Identifier);if(authoritative&&authoritative.observedAt>record.createdAt){if(!authoritative.deleted)merged.set(record.Identifier,authoritative);continue;}if(record.status==='pending'||record.status==='ready')merged.set(record.Identifier,{Identifier:record.Identifier,Code:record.Code,Name:record.Name,Type:{Code:'Source Course'},deleted:false,observedAt:record.createdAt,provenance:'creation'});}const values=[...merged.values()];if(values.length)batch.set(code,values);if(overlay)safeCodes.add(code);}results[index]=batch;
    });
    for(const batch of results)for(const [code,matches] of batch)found.set(code,matches);
    found.safeCodes=safeCodes;return found;
   },
   async remember(code,matches,verifiedAt){if(!matches.length)return;const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]}}}],{upsert:true});},
+  async registerCreated(record){const d=await db(),createdAt=Number(record.createdAt)||now(),doc={namespace,Identifier:String(record.Identifier),Name:String(record.Name),Code:String(record.Code),Type:{Code:'Source Course'},createdAt,provenance:String(record.provenance||'bulk-source-creator'),status:'ready'};await d.collection('org_resolution_created').updateOne({namespace,Identifier:doc.Identifier},{$setOnInsert:doc}, {upsert:true});return true;},
   async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},
   async requestSync(){
    const state=(await db()).collection('org_resolution_state');
@@ -53,11 +55,13 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    }if(batch.length)await this.stage(generation,batch);}finally{await cursor.close();}
   },
   async publish(token,generation,fullAt,asOf,summary){
-   const state=(await db()).collection('org_resolution_state'),previous=await state.findOne({_id:metaId,token});
+   const d=await db(),state=d.collection('org_resolution_state'),previous=await state.findOne({_id:metaId,token});
    const update={$set:{generation,fullAt,asOf,...summary}};
    if(previous?.generation&&previous.generation!==generation)update.$push={retired:{generation:previous.generation,retiredAt:now()}};
    const r=await state.updateOne({_id:metaId,token,leaseUntil:{$gt:now()},$or:[{asOf:{$lte:asOf}},{asOf:{$exists:false}}]},update);
    if(r.matchedCount!==1)throw Object.assign(Error('Snapshot not published'),{code:'RESOLUTION_PUBLISH_REJECTED'});
+   const created=d.collection('org_resolution_created'),cursor=created.find({namespace,status:{$ne:'superseded'}}).batchSize(500);
+   for await(const record of cursor){const authoritative=await d.collection('org_resolution_units').findOne({namespace,generation,Identifier:record.Identifier});if(authoritative&&authoritative.observedAt>record.createdAt)await created.updateOne({namespace,Identifier:record.Identifier},{$set:{status:'superseded',supersededAt:now(),supersededBy:'dataset'}});else if(!authoritative&&asOf>record.createdAt)await created.updateOne({namespace,Identifier:record.Identifier},{$set:{status:'superseded',supersededAt:now(),supersededBy:'authoritative-absence'}});}
   },
   async finish(token,nextRunAt,error){await (await db()).collection('org_resolution_state').updateOne({_id:metaId,token},{$set:{status:error?'failed':'ready',lastError:error?{name:/^[A-Za-z0-9_]{1,80}$/.test(error.name||'')?error.name:'Error',code:/^[A-Za-z0-9_:-]{1,100}$/.test(String(error.code||''))?String(error.code):'',status:Number.isInteger(error.status??error.response?.status)?(error.status??error.response?.status):null}:null,finishedAt:now(),nextRunAt,leaseUntil:0},$unset:{token:'',manualRequested:''}});},
   async cleanup(generation,fullAt){

@@ -3,7 +3,7 @@ const {randomUUID,createHash}=require('node:crypto');
 const {normalize,fail}=require('./extract');
 const {logFailure}=require('../shared/diagnostics');
 function nextNight(now,hour){const date=new Date(now);date.setUTCHours(hour,0,0,0);if(date.getTime()<=now)date.setUTCDate(date.getUTCDate()+1);return date.getTime();}
-function eligible(record){const type=record.Type.Code.trim().toLowerCase();return !record.deleted&&(type==='course offering'||type==='source course');}
+function eligible(record){const type=record.Type.Code.trim().toLowerCase();return !record.deleted&&['course offering','source course','course template'].includes(type);}
 function extractList(rows,schemaId){
  const seen=new Set();
  return rows.filter(r=>r.SchemaId===schemaId&&['Full','Differential'].includes(r.BdsType)).map(r=>{
@@ -22,7 +22,7 @@ function selectExtracts(rows,schemaId){
 function planSync(rows,schemaId,state){
  const available=extractList(rows,schemaId),full=available.filter(r=>r.BdsType==='Full').at(-1);
  const hasLedger=state?.generation&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
- const tracked=hasLedger&&state.syncVersion===4;
+ const tracked=hasLedger&&state.syncVersion===5;
  const rebuild=!tracked||full&&(full.at>state.fullAt||full.at===state.fullAt&&full.key!==state.fullKey);
  if(rebuild){
   if(!full)throw fail('DATASET_FULL_MISSING');
@@ -92,7 +92,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
     if(extract.BdsType==='Full'){fullRows=count;if(!count)throw fail('DATASET_EMPTY_FULL');}
    }
    await check();await store.renew(token);
-   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:4,liveInvalidBefore:now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
+   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:5,liveInvalidBefore:now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
    await store.finish(token,nextNight(now(),hour));
    await store.cleanup(generation,fullAt);
    return {status:'ready',mode:plan.mode,fullRows,importedRows:rows,extracts:extracts.length,asOf};

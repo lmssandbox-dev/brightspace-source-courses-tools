@@ -96,6 +96,46 @@ test('all course validation and discovery are read-only; confirmation executes o
  assert.equal(await s.jobs.confirm(j._id,'other'),false);assert.equal(await s.jobs.confirm(j._id,'a'),true);assert.equal(await s.jobs.confirm(j._id,'a'),false);
  await Promise.all([s.jobs.tick(),s.jobs.tick()]);assert.equal(s.calls.filter(c=>c==='write').length,6);assert.equal((await s.jobs.get(j._id,'a')).status,'completed');
 });
+test('rule plans filter globally, save per-task dates, report coverage, and reuse dates in writes and reconciliation',async()=>{
+ const requests=[];
+ const activities=[
+  {type:'assignment',id:'1',parentId:'',key:'a1',name:'W01 - Assignment A'},
+  {type:'assignment',id:'2',parentId:'',key:'a2',name:'W02 - Quiz B'},
+  {type:'assignment',id:'3',parentId:'',key:'a3',name:'Extra activity'},
+  {type:'quiz',id:'4',parentId:'',key:'q4',name:'W01 - excluded quiz'}
+ ];
+ const nativeActivities=activities.map(a=>({key:a.key,data:{Id:a.id,QuizId:a.id,TopicId:a.id,ForumId:'7'}}));
+ const s=setup({discovery:{discover:async()=>({complete:true,activities,nativeActivities})},writer:{updateActivityDates:async request=>{requests.push(request);if(request.dryRun)return {status:'ready',verifiedDates:request.dates,settingsFingerprint:'stable'};if(request.reconcileOnly)return {status:'unchanged',verifiedDates:request.dates,error:null};return {status:'updated',verifiedDates:request.dates,writeAttempted:true};}}});
+ const ruleDates=(day)=>({start:`2027-01-${day}T00:00:00Z`,due:`2027-01-${day}T01:00:00Z`,end:`2027-01-${day}T02:00:00Z`});
+ const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'rules',activityTypes:['assignment'],timeZone:'UTC',rules:[{id:'w1',label:'Week 1',method:'startsWith',pattern:' W01 ',dates:ruleDates('01')},{id:'w2',label:'Week 2',method:'startsWith',pattern:'W02',dates:ruleDates('02')}]});
+ await s.jobs.tick();let plan=await s.jobs.get(created._id,'a');
+ assert.equal(plan.status,'ready');assert.equal(plan.tasks.length,2);assert.deepEqual(plan.tasks.map(task=>task.ruleId),['w1','w2']);assert.equal(plan.tasks[1].dates.start,'2027-01-02T00:00:00.000Z');
+ assert.deepEqual(plan.scheduleCoverage,{discovered:4,selected:3,matched:2,unmatched:1,conflicts:0,zeroMatchCourses:0,rules:{w1:1,w2:1}});
+ plan.tasks[0].result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME'}};s.data.set(created._id,structuredClone(plan));
+ assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
+ const saved=await s.jobs.get(created._id,'a');assert.equal(saved.status,'completed');
+ assert.equal(requests.filter(request=>request.reconcileOnly).length,1);assert.equal(requests.find(request=>request.reconcileOnly).dates.start,'2027-01-01T00:00:00.000Z');
+ assert.equal(requests.filter(request=>!request.dryRun&&!request.reconcileOnly).length,1);assert.equal(requests.find(request=>!request.dryRun&&!request.reconcileOnly).dates.start,'2027-01-02T00:00:00.000Z');
+});
+test('rule conflicts and zero eligible tasks cannot be confirmed',async()=>{
+ for(const rules of [[{id:'one',label:'One',method:'contains',pattern:'task',dates},{id:'two',label:'Two',method:'startsWith',pattern:'Week',dates}],[{id:'one',label:'One',method:'contains',pattern:'missing',dates}]]){
+  const s=setup({discovery:{discover:async()=>({complete:true,activities:[{type:'assignment',id:'1',key:'a',name:'Week task'}],nativeActivities:[{key:'a',data:{Id:'1'}}]})}});
+  const created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'rules',activityTypes:['assignment'],rules});await s.jobs.tick();const plan=await s.jobs.get(created._id,'a');
+  assert.equal(plan.status,'failed');assert.equal(plan.tasks.length,0);assert.equal(await s.jobs.confirm(created._id,'a'),false);
+  if(rules.length===2)assert.equal(plan.scheduleCoverage.conflicts,1);else assert.equal(plan.scheduleCoverage.zeroMatchCourses,1);
+ }
+});
+test('Uniform mode keeps all types by default and supports a global type subset',async()=>{
+ const all=setup(),created=await all.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'uniform',dates});await all.jobs.tick();
+ const defaultPlan=await all.jobs.get(created._id,'a');assert.deepEqual(defaultPlan.activityTypes,['assignment','quiz','discussionTopic']);assert.equal(defaultPlan.tasks.length,3);
+ const subset=setup(),selected=await subset.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'uniform',activityTypes:['assignment'],dates});await subset.jobs.tick();
+ const subsetPlan=await subset.jobs.get(selected._id,'a');assert.equal(subsetPlan.tasks.length,1);assert.equal(subsetPlan.tasks[0].activity.type,'assignment');assert.equal(subsetPlan.scheduleCoverage.selected,1);
+});
+test('missing saved rule dates fail closed before an activity write',async()=>{
+ const s=setup(),created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'rules',activityTypes:['assignment'],rules:[{id:'r1',label:'Assignments',method:'contains',pattern:'assignment',dates}]});await s.jobs.tick();
+ const plan=await s.jobs.get(created._id,'a');delete plan.tasks[0].dates;s.data.set(created._id,structuredClone(plan));assert.equal(await s.jobs.confirm(created._id,'a'),true);await s.jobs.tick();
+ const saved=await s.jobs.get(created._id,'a');assert.equal(saved.tasks[0].result.status,'failed');assert.equal(saved.tasks[0].result.writeAttempted,false);assert.equal(s.calls.filter(call=>call==='write').length,0);
+});
 test('Date Manager Step 3 persists compact utilization snapshots with the job checkpoints',async()=>{
  const s=setup(),created=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,',dates});await s.jobs.tick();
  const plan=await s.jobs.get(created._id,'a');await s.jobs.confirm(created._id,'a');await s.jobs.tick();

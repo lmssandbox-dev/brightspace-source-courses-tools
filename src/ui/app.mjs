@@ -53,6 +53,15 @@ for(const form of document.querySelectorAll('form[action="/copy/preview"]')){
  update();
 }
 
+for(const form of document.querySelectorAll('#bulk-input')){
+ const mode=form.querySelector('#schedule-mode'),uniform=form.querySelector('[data-uniform-dates]'),rulesPanel=form.querySelector('[data-rule-schedule]'),list=form.querySelector('[data-rule-list]'),json=form.querySelector('[name="rulesJson"]');
+ const syncMode=()=>{const isRules=mode.value==='rules';uniform.hidden=isRules;rulesPanel.hidden=!isRules;for(const input of uniform.querySelectorAll('input')){input.disabled=isRules;input.required=!isRules;}for(const input of list.querySelectorAll('input,select')){input.disabled=!isRules;input.required=isRules&&input.type!=='hidden';}};
+ const addRow=()=>{const index=list.children.length+1,section=document.createElement('fieldset');section.className='date-rule';section.dataset.rule='';section.innerHTML=`<legend>${text('Rule {0}').replace('{0}',index)}</legend><div class="date-rule-fields"><label class="field">${text('Rule ID')}<input data-rule-id maxlength="80" value="rule-${crypto.randomUUID()}" required></label><label class="field">${text('Rule label')}<input data-rule-label maxlength="120" required></label><label class="field">${text('Matching method')}<select data-rule-method><option value="contains">${text('Contains')}</option><option value="startsWith">${text('Starts with')}</option></select></label><label class="field">${text('Activity title pattern')}<input data-rule-pattern maxlength="200" required></label>${['start','due','end'].map(key=>`<label class="field">${text(`${key[0].toUpperCase()+key.slice(1)} date and time`)}<input data-rule-${key} type="datetime-local" step="1" required></label>`).join('')}</div><button type="button" class="secondary" data-remove-rule>${text('Remove rule')}</button>`;list.append(section);syncMode();};
+ form.addEventListener('click',event=>{if(event.target.closest('[data-add-rule]')){if(list.children.length<20)addRow();return;}if(event.target.closest('[data-remove-rule]')){if(list.children.length>1)event.target.closest('[data-rule]').remove();}});
+ mode.addEventListener('change',syncMode);syncMode();
+ form.addEventListener('submit',event=>{const selected=[...form.querySelectorAll('[name="activityTypes"]:checked')];if(!selected.length){event.preventDefault();form.querySelector('[name="activityTypes"]').focus();return;}if(mode.value==='rules'){const entries=[...list.querySelectorAll('[data-rule]')].map(row=>({id:row.querySelector('[data-rule-id]').value,label:row.querySelector('[data-rule-label]').value,method:row.querySelector('[data-rule-method]').value,pattern:row.querySelector('[data-rule-pattern]').value,start:row.querySelector('[data-rule-start]').value,due:row.querySelector('[data-rule-due]').value,end:row.querySelector('[data-rule-end]').value}));if(entries.length<1||entries.length>20){event.preventDefault();return;}json.value=JSON.stringify(entries);}});
+}
+
 initLanguage();
 
 // Remove the initial, dependency-free launch indicator after enhancement and translation.

@@ -121,11 +121,12 @@ test('Mongo cache lookup uses 500-code batches with four concurrent batches and 
   find:filter=>({toArray:async()=>{
    calls.push({name,filter});
    if(name==='org_resolution_live'){peak=Math.max(peak,++active);await new Promise(resolve=>setImmediate(resolve));active--;return [];}
+   if(name==='org_resolution_created')return [];
    return filter.$or[0].Code.$in.map(code=>record(`id-${code}`,code));
   }})
  });
  const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'tenant-client',mongoClient:{connect:async()=>{},db:()=>({collection})}});
- const codes=Array.from({length:5000},(_,i)=>'C'+i),found=await store.lookup(codes);assert.equal(calls.length,20);assert.equal(peak,4);assert.equal(found.size,5000);
+ const codes=Array.from({length:5000},(_,i)=>'C'+i),found=await store.lookup(codes);assert.equal(calls.length,30);assert.equal(peak,4);assert.equal(found.size,5000);
  assert.deepEqual([...found.keys()],codes);assert.deepEqual(found.get('C2500'),[record('id-C2500','C2500')]);
  for(const c of calls){assert.equal(c.filter.namespace,'tenant-client');if(c.name==='org_resolution_live')assert.equal(c.filter._id.$in.length,500);if(c.name==='org_resolution_units'){assert.equal(c.filter.generation,'g');assert.equal(c.filter.$or[0].Code.$in.length,500);}}
 });
@@ -232,7 +233,7 @@ test('reported five historical org units yield only the unrecycled destination',
 });
 test('previous directory version requires a full rebuild even when extract timestamps have not changed',async()=>{
  const f=incrementalFixture();await createDirectorySync({...f,root}).run();f.state.syncVersion=3;
- assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,4);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
+ assert.equal((await createDirectorySync({...f,root}).run()).mode,'full');assert.equal(f.state.syncVersion,5);assert.ok(f.state.liveInvalidBefore>0);assert.deepEqual(f.downloads,[1,4,7,1,4,7]);
 });
 
 test('full import stages only active course types while validating all rows',async()=>{
@@ -246,7 +247,7 @@ test('full import stages only active course types while validating all rows',asy
   ])await consume({...row,Name:''});
  };
  await createDirectorySync({...f,root}).run();const saved=f.generations.get(f.state.generation);
- assert.deepEqual([...saved.keys()].sort(),['1','2']);assert.equal(f.state.fullRows,5);
+ assert.deepEqual([...saved.keys()].sort(),['1','2','3']);assert.equal(f.state.fullRows,5);
  const duplicate=incrementalFixture();duplicate.readExtract=async(e,consume)=>{for(const type of ['Course Template','Other'])await consume({OrgUnitId:'8',Code:'x',Name:'',Type:type,IsDeleted:'false'});};
  await assert.rejects(createDirectorySync({...duplicate,root}).run(),{code:'DATASET_DUPLICATE_ID'});assert.equal(duplicate.state,null);
 });
@@ -270,7 +271,7 @@ test('differentials update and rename, insert, remove deletions and type transit
  await createDirectorySync({...f,root}).run();const renamed=f.generations.get(f.state.generation);
  assert.equal(renamed.get('1').Code,'renamed');assert.equal(renamed.get('3').Code,'new');
  f.available.push(f.e('Differential',7));await createDirectorySync({...f,root}).run();const records=f.generations.get(f.state.generation);
- assert.equal(records.has('1'),false);assert.equal(records.has('3'),false);assert.equal(records.get('5').Code,'became-course');
+ assert.equal(records.has('1'),true);assert.equal(records.has('3'),false);assert.equal(records.get('5').Code,'became-course');
 });
 
 test('failed filtered full rebuild preserves the old published generation',async()=>{

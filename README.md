@@ -1,6 +1,6 @@
 # Brightspace Source Courses Tools
 
-A toolkit for managing Brightspace Source Courses, offering Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with three workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration, MongoDB database and local `.env` are retained.
+A toolkit for managing Brightspace Source Courses, offering Bulk Source Course Creator, Bulk Course Copy to Source Courses, Bulk Activity Dates Manager and Bulk Source Courses Deployer. One LTI application with four workflow sections, deployed to one Render service. The existing LTI installation, OAuth configuration and MongoDB database are retained.
 
 ## 1. Activity dates
 
@@ -9,6 +9,8 @@ Upload a UTF-8 CSV with headers `OrgUnitId,OrgUnitCode`. Supply exactly one ID o
 Choose a time zone (Brasília by default), then enter Start, Due and End. The selected zone is saved with the job; skipped or repeated local times around clock changes are rejected. Start must be before Due; Due must be on or before End. 2. Review Updates resolves every course and discovers Assignments, Quizzes and Discussion Topics, including undated activities, without changes. Review Progress separates course resolution from activity discovery; Requested Dates stays above progress in both review and apply screens. Apply shows processed activity counts, result counters, elapsed time, throughput and an approximate remaining time while work is running. Apply writes the saved plan, reads dates back and records per-activity results. While Step 3 is running, **Cancel this job** stops new writes after the cancellation request is observed and lets already-dispatched operations finish. Confirmed changes remain in Brightspace; the job saves a partial result and CSV with updated, unchanged, failed, uncertain, skipped and not-attempted activities. Return through Job History or download the CSV report.
 
 Limits: 10,000 CSV data rows, 5 MB of UTF-8 CSV, 250,000 activities per date job. Duplicates are processed once. Invalid rows or incomplete discovery block the plan. Previews must be confirmed within 30 minutes; confirmed jobs can finish or resume after that window. Changed dates are rejected unless already equal to the requested dates. Availability modes and unrelated activity settings are preserved.
+
+Date scheduling offers **Uniform Date Update** (the default) and **Rule-Based Date Update**. Both modes share a global activity-type selection; all three types are selected initially, and any nonempty subset is allowed. Uniform mode keeps one Start, Due and End schedule for every selected activity. Rule-Based mode accepts 1–20 labeled rules, each with a case-insensitive `contains` or `startsWith` activity-title pattern and its own absolute Start, Due and End in the selected time zone. Rules match activity titles only. Unmatched and unselected activities are excluded from updates and shown in coverage; courses with no matches are allowed. A title matching more than one rule blocks confirmation so the rules can be corrected. The CSV includes the matching rule and effective requested dates for updated-plan activities, plus unmatched counts by course; it does not export individual unmatched activities.
 
 Read-only discovery and the single-activity preview/apply form remain available for troubleshooting. All three activity writers and the CSV date workflow have been validated live by the user.
 
@@ -24,6 +26,20 @@ Limit: 10,000 rows / 5 MB. Each source is split into batches of at most 100 repl
 
 Finish source date changes before replication. Saved deployment history does not reserve courses or block new jobs. The user confirmed live Source Course deployment after enabling the linked Service User’s course-copy permissions. User-provided reports and screenshots also confirm automatic reactivation and on-demand copy checks for two replicas; large-scale and restart validation remain outstanding.
 
+## 3. Bulk Source Course Creator
+
+Upload a UTF-8 CSV using exactly these headers:
+
+```csv
+SourceCourseName,SourceCourseCode,TemplateId,TemplateCode
+Introduction to Biology,BIO101-SOURCE,12345,
+Introduction to Chemistry,CHE101-SOURCE,,SCI-TEMPLATE
+```
+
+Each row needs a name, a unique Source Course code within the file, and exactly one existing Course Template ID or code. The Creator verifies that the parent is a Course Template, skips codes already used by Source Courses, and excludes duplicate or conflicting codes. Invalid rows do not block eligible rows. Validation performs reads only; confirm the saved plan before any Source Course creation request. Upload limits are 10,000 rows and 5 MB.
+
+After confirmation, the page reports progress, elapsed time and an approximate ETA with created, skipped, failed, uncertain and not-attempted counts. **Cancel** stops new requests while in-flight requests finish. Successful creation is never rolled back. Uncertain POSTs are not repeated automatically. Each successful Brightspace Org Unit ID is saved and registered in the Org Library immediately; if registration fails, recovery retries only the database registration. Download the results CSV for the original row, resolved Template ID and returned Source Course ID.
+
 ## Project layout
 
 ```text
@@ -32,6 +48,7 @@ src/
   dates/                 Activity readers, normalization, discovery and date writer
     activities/          Assignments, Quizzes, Discussions and normalizers
   replication/           Source validation, deployment, activation and its view
+  creation/              Source Course CSV validation, creation and Org Library registration
   shared/                LTI/OAuth helpers, API transport, database and job infrastructure
   ui/                    D2L components, responsive styles and shared page layout
 scripts/                 Local discovery and single-activity CLI tools
@@ -58,7 +75,7 @@ Preview is the default; Discussion Topics require the forum ID. The CLI uses the
 
 ## D2L interface
 
-The workspace has a left sidebar for Bulk Activity Dates Manager, Bulk Source Courses Deployer and Job History. It uses `@brightspace-ui/core` buttons, alerts and loading indicators. Native date inputs use the selected time zone. CSV templates and compact aggregate results are included; per-replica details remain in CSV reports. Development tools, the Workspace header button, and the footer are omitted. Deployment submission never implies copy completion.
+The workspace sidebar contains Bulk Source Course Creator immediately above Bulk Course Copy to Source Courses, along with Bulk Activity Dates Manager, Bulk Source Courses Deployer and Job History. It uses `@brightspace-ui/core` buttons, alerts and loading indicators. Native date inputs use the selected time zone. CSV templates and compact aggregate results are included; per-row details remain in CSV reports. Development tools, the Workspace header button, and the footer are omitted. Deployment submission never implies copy completion.
 
 `npm ci` builds frontend assets automatically through postinstall. `npm start` also builds them before starting the server. For manual builds use `npm run build`. Render may continue using the existing service; no separate frontend hosting or database is needed. Commit package.json, package-lock.json, src/ui, the updated source and scripts/build-ui.js. Generated public/assets files are ignored by Git and rebuilt during deployment. Browser assets are served locally; no CDN is required.
 
@@ -92,7 +109,7 @@ The script aborts if a worker is planning or running any bulk workflow in the de
 
 ## Application identity
 
-Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. The date and deployment tools retain their feature names; Bulk Course Copy to Source Courses is the third workflow. This branding change does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
+Display name: **Brightspace Source Courses Tools**. Package name: `brightspace-source-courses-tools`. Project folder: `Brightspace Source Courses Tools`. Bulk Source Course Creator is the fourth workflow. This does not rename the existing Render service URL, LTI registration, environment variables, collections or job namespace. The database configuration is described below.
 
 ## Fresh database setup
 
@@ -188,7 +205,7 @@ Report downloads use the template name with `results` in place of `template`: `d
 
 ### Faster copy mapping validation
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. The directory stores non-deleted Course Offerings and Source Courses. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+Course Copy, Source Deployer, Date Manager and Source Course Creator use the shared MongoDB org-code directory for code resolution, in 500-code batches. The directory stores non-deleted Course Offerings, Source Courses and Course Templates. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 The first step shows a mapping validation panel with processed count, percentage, valid/invalid/duplicate/pending counters, elapsed time, and an approximate ETA after at least three saved throughput samples and 15 seconds. Before then it shows **Calculating ETA…**; interrupted or stalled validation has no ETA. Cancel remains available. These are read-only checks; copying still requires confirmation. Actual speed depends on the number of unique supplied codes, API latency and result pagination. Automatic mapping retains local checks and unique code resolution; course type and access checks are deferred to the copy POST.
 
@@ -208,14 +225,14 @@ Date Manager resolves codes through the shared persistent directory, checks ID/c
 
 Date Manager CSV accepts an ID, a code, or both in `OrgUnitId,OrgUnitCode`. With both supplied, directory/live code resolution must match the supplied ID before activity discovery. Distinct pairs are validated before resolved-course deduplication, so a repeated ID with a different code cannot bypass matching. Mismatches appear in the report and block the date plan under the existing all-courses-valid requirement. IDs alone skip code resolution; pairs use the shared directory and per-job lookup cache. CSV headers are unchanged; dataset scheduling has optional settings documented in RESOLUTION.md.
 
-Upload guidance is condensed into short “Before you begin” cards across all three tools. Date Manager places upload and guidance side by side, with a full-width schedule below; the three date fields share a row on desktop and stack on narrow screens.
+Upload guidance is condensed into short “Before you begin” cards across the four tools. Date Manager places upload and guidance side by side, with a full-width schedule below; the three date fields share a row on desktop and stack on narrow screens.
 
 Code resolution uses eight mapping workers in Course Copy, Source Deployer and Date Manager. GET orgstructure requests with a nonempty exactOrgUnitCode filter, POST import/{id}/copy/ submissions, GET import/{id}/copy/{token} result checks, Source Deployer POST deploy and PUT course status calls, GET course/org-unit metadata and reofferedCourses, and GET ccb/logs qualify for the eight-request allowance. Other calls (including activity discovery and date updates) share a four-request allowance; all classes together are capped at eight. Credit reservations, pacing, cooldowns and lease expiry remain shared and unchanged. No new environment variables are needed. Compare the same CSV before/after deployment using server-side timing reports; doubling workers does not guarantee twice the throughput.
 
 
 ## Shared directory and nightly dataset refresh
 
-All three tools use the shared MongoDB org-code directory first, in 500-code batches. The directory stores non-deleted Course Offerings and Source Courses. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
+Course Copy, Source Deployer, Date Manager and Source Course Creator use the shared MongoDB org-code directory for code resolution, in 500-code batches. The directory stores non-deleted Course Offerings, Source Courses and Course Templates. Codes without a live exact-code verification since the latest publication use the bounded exactOrgUnitCode API search; verified results are reused until the next successful sync. See [RESOLUTION.md](RESOLUTION.md) for setup, freshness, failure behavior and server-only commands.
 
 Run `node scripts/sync-org-units.js` to initialize/refresh after granting the Service User dataset access, then `node scripts/org-unit-cache-report.js` to inspect freshness. Scheduled refresh defaults to 06:00 UTC. The OAuth scope is `datasets:bds:read`; no extra credentials or CSV changes are needed. The 8-worker resolution / 4-worker ordinary API limits remain unchanged. A failed import preserves the previous generation.
 

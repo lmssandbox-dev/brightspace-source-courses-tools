@@ -6,7 +6,7 @@ require('dotenv').config();
 const axios = require('axios');
 const { createBrightspaceAuth } = require('./src/shared/auth');
 const { databaseConfig } = require('./src/shared/database');
-const { createBrightspaceClient, createBrightspaceGet, createActivityPut, hasScope } = require('./src/shared/client');
+const { createBrightspaceClient, createBrightspaceGet, createActivityPut, hasScope, atLeast } = require('./src/shared/client');
 const { createAssignmentsClient } = require('./src/dates/activities/assignments');
 const { createQuizzesClient } = require('./src/dates/activities/quizzes');
 const { createDiscussionsClient } = require('./src/dates/activities/discussions');
@@ -27,6 +27,9 @@ const lti = require('ltijs').Provider;
 const {installUi,installPageShell}=require('./src/ui/install');
 const {workspace}=require('./src/ui/page');
 const {diagnosticForm}=require('./src/dates/discoveryDiagnostics');
+const {createCreationClient}=require('./src/creation/client');
+const {createCreationJobs}=require('./src/creation/jobs');
+const {createCreationView}=require('./src/creation/view');
 
 // ===============================
 // Variáveis de ambiente
@@ -177,25 +180,28 @@ const {createCopyClient}=require('./src/copy/client');
 const {createCopyJobs}=require('./src/copy/jobs');
 const {createCopyView}=require('./src/copy/view');
 const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient,lpVersion,orgResolver})});
+const creationEnabled=()=>hasScope(D2L_OAUTH2_SCOPES,'orgunits:sourcecourses:write')&&hasScope(D2L_OAUTH2_SCOPES,'organizations:organization:read')&&atLeast(lpVersion,'1.60');
+const sourceCreation=createCreationJobs({client:createCreationClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion}),orgResolver,store:resolution.store});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,orgResolver,resolveCode:code=>sourceClient.resolveCode(code)});
-const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,
+const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,sourceCreation,
   courses:createCoursesClient({api:brightspace,baseUrl:BS_URL,lpVersion,sourceClient,orgResolver})});
 const bulkDates = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,writeEnabled});
 const deploymentRoutes = createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'sourceDeployment',view:createDeploymentView({enabled:deployEnabled})});
 const copyRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'courseCopy',view:createCopyView()});
+const creationRoutes=createBulkDates({jobs:bulkJobs,deploymentId:BS_DEPLOYMENT_ID,secret:LTI_KEY,kind:'sourceCreation',view:createCreationView({canApply:creationEnabled})});
 const diagnostics = createDiagnostics({
   workspace: true,
   activityForm: res => workspace({
     copy:copyRoutes.form(res),dates:bulkDates.form(res),replication:deploymentRoutes.form(res),
-    selected:res.locals.uiSection||'copy',
-    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Courses</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
+    selected:res.locals.uiSection||'copy',creation:creationRoutes.form(res),
+    history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Source Course Creator</span><h3>Source Course Creation Jobs</h3><p>Review validated rows, creation outcomes and Org Library registration.</p>${creationRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Courses</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   }),
   client: discovery,
   deploymentId: BS_DEPLOYMENT_ID
 });
 lti.onConnect(diagnostics.launch);
-lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'copy';return diagnostics.launch(res.locals.token,req,res);});
+lti.app.post('/workspace',(req,res)=>{res.locals.uiSection=['creation','copy','dates','replication','history'].includes(req.body?.section)?req.body.section:'copy';return diagnostics.launch(res.locals.token,req,res);});
 // Not whitelisted: ltijs validates the LTI session before this handler runs.
 lti.app.get('/diagnostics/activities', diagnostics.activities);
 // Protected POST routes; preview/apply tickets are bound to the validated LTI session.
@@ -210,6 +216,7 @@ for (const action of ['preview','apply','status','cancel','history','report','re
 }
 
 for(const action of ['preview','apply','status','cancel','history','report','checkCopies'])lti.app.post(`/copy/${action}`,copyRoutes[action]);
+for(const action of ['preview','apply','status','cancel','history','report'])lti.app.post(`/create/${action}`,creationRoutes[action]);
 
 // Health-check
 lti.app.get('/ping', (req, res) => {

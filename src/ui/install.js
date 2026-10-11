@@ -17,7 +17,7 @@ function installPageShell(app){
    const type=String(res.getHeader('Content-Type')||'');
    if(typeof body==='string'&&(!type||type.includes('text/html'))&&req.path!=='/ping'&&!req.path.startsWith('/assets/')){
     res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
-    const section=req.path.endsWith('/history')?'history':req.path.startsWith('/copy')?'copy':req.path.startsWith('/deploy')?'replication':'dates';
+    const section=req.path.endsWith('/history')?'history':req.path.startsWith('/create')?'creation':req.path.startsWith('/copy')?'copy':req.path.startsWith('/deploy')?'replication':'dates';
     body=page(body.trimStart().startsWith('<')?body:`<section class="panel"><h1>Unable to continue</h1><p>${escape(body)}</p><p>Return to Workspace or relaunch from Brightspace to continue.</p></section>`,{ltik:res.locals.ltik,section,language:normalizeLanguage(req.body?.uiLanguage),syncTicket:app.locals?.orgSyncTicket?.(res)||'',launchLoading:req.path==='/'});
    }
    return send(body);

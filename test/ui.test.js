@@ -54,8 +54,8 @@ test('entry point installs page shell in serverAddon before launch routes',()=>{
 
 test('review and results retain sidebar POST navigation without exposing session in URLs',()=>{
  const html=page('<h1>Review your date updates</h1>',{ltik:'session-secret',section:'dates'});
- assert.equal((html.match(/data-sidebar-native/g)||[]).length,4);
- for(const section of ['copy','dates','replication','history'])assert.ok(html.includes(`name="section" value="${section}"`));
+ assert.equal((html.match(/data-sidebar-native/g)||[]).length,5);
+ for(const section of ['creation','copy','dates','replication','history'])assert.ok(html.includes(`name="section" value="${section}"`));
  assert.match(html,/data-sidebar-native aria-current="page"/);
  assert.doesNotMatch(html,/href="[^"]*session-secret/);
  const home=page(workspace({dates:'Dates',replication:'Deploy',history:'History'}),{ltik:'session-secret'});

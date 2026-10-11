@@ -86,7 +86,7 @@ The Service User must have access to the source and replica org units and permis
 3. Register the LTI tool using the app URLs above; copy Brightspace's issuer, client ID and endpoints. Create its deployment and copy the deployment ID.
 4. Create the Service User and OAuth Client Credentials application with the app's OAuth JWKS URL. Copy the OAuth client ID and configure approved scopes. If Brightspace requires a reachable JWKS before saving registration, host the public JWKS derived from the same RSA key/key ID at an HTTPS setup location, then switch the registration to the app endpoint once deployed. Never publish the private PEM.
 5. Fill all required variables and deploy the current source. Use Node.js 22, `npm ci` for the build and `npm start` to start. Check `/ping` and both public key endpoints.
-6. Launch through the configured Brightspace LTI link. Validate a small CSV and test the three workflows with disposable courses. Check copy results and download the report. Confirm job data is written to the intended MongoDB database.
+6. Launch through the configured Brightspace LTI link. Validate a small CSV and test the four workflows with disposable courses. Check copy results and download the report. Confirm job data is written to the intended MongoDB database.
 
 ## Troubleshooting
 
@@ -131,6 +131,10 @@ Tenant acceptance: copy a small Course Offering into an existing test Course Off
 Copy validation now reuses orgstructure ID/code/name/type metadata. All code lookups use exactOrgUnitCode with the existing `organizations:organization:read` scope and service-user permissions. No full-directory scan or new variables are required. Course Copy delegates type/access validation to the submission API; mapping does not perform extra course-detail checks.
 
 See [PERFORMANCE.md](PERFORMANCE.md) for the new preparation modes, durable parallel workers and server-only timing reports. Run `node scripts/job-performance-report.js` alongside the API cost report after a small test. No extra credentials or variables are needed. Deploy after current bulk jobs have finished: restarting active copy/deployment work preserves checkpoints but interrupts that job. Keep all instances sharing an OAuth registration on this version and the same MongoDB database for coordinated limits.
+
+## Bulk Source Course Creator configuration and permissions
+
+Set `D2L_LP_VERSION` to a tenant-supported version at least **1.60**. The feature-specific compatibility check leaves the minimum versions used by other tools unchanged. Add the OAuth scope `orgunits:sourcecourses:write` to both the Brightspace OAuth registration and `D2L_OAUTH2_SCOPES`; code resolution also uses the existing `organizations:organization:read` scope. The linked Service User role must have Manage Courses access at the organization and **Manage Courses > Create Source Courses**. Grant access to the parent Course Templates so their orgstructure records can be read. Brightspace documents the create route and response at [Source Courses API](https://docs.valence.desire2learn.com/res/course.html#source-courses) and the role permission in [Manage Courses permissions](https://community.d2l.com/brightspace/kb/articles/4803-manage-courses-permissions). Validate permissions in a tenant test course before production use. No new environment variables, service, or database are required.
 
 ### Database round-trip optimization
 

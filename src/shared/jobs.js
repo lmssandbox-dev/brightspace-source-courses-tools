@@ -4,6 +4,7 @@ const {performance}=require('node:perf_hooks');
 const { parseCourseCsv } = require('../dates/courseCsv');
 const { validateDates } = require('../dates/activityWriters');
 const {validateZone,DEFAULT_ZONE}=require('../dates/timeZone');
+const {ACTIVITY_TYPES,validateActivityTypes,validateRules,resolveActivity}=require('../dates/schedulingRules');
 const TYPES=['assignment','quiz','discussionTopic'];
 const MAX_ACTIVITIES=250000;
 const DISCOVERY_CHECKPOINT_SIZE=500;
@@ -16,6 +17,16 @@ const {createStep2Utilization,withStep2Utilization}=require('./step2Utilization'
 const {createDeploymentStep3Utilization,getBuildSha}=require('../replication/step3Utilization');
 const terminal = new Set(['completed','completedWithErrors','failed','interrupted','cancelled','submitted','submittedWithErrors','outcomeUnknown','reviewed','activated','activationWithErrors']);
 const counts = tasks => tasks.reduce((out,t)=>{const s=t.result?.status || 'pending';out[s]=(out[s]||0)+1;return out;},{total:tasks.length});
+function updateScheduleCoverage(job){
+ const coverages=(job.courses||[]).map(course=>course.coverage).filter(Boolean);
+ job.scheduleCoverage={discovered:coverages.reduce((n,c)=>n+(Number(c.discovered)||0),0),selected:coverages.reduce((n,c)=>n+(Number(c.selected)||0),0),matched:coverages.reduce((n,c)=>n+(Number(c.matched)||0),0),unmatched:coverages.reduce((n,c)=>n+(Number(c.unmatched)||0),0),conflicts:coverages.reduce((n,c)=>n+(Number(c.conflicts)||0),0),zeroMatchCourses:coverages.filter(c=>Number(c.matched)===0).length,rules:Object.fromEntries((job.rules||[]).map(rule=>[rule.id,coverages.reduce((n,c)=>n+(Number(c.rules?.[rule.id])||0),0)]))};
+ return job.scheduleCoverage;
+}
+function effectiveTaskDates(job,task){
+  if((job.scheduleMode||'uniform')==='uniform')return job.dates;
+  try{return validateDates(task.dates);}catch{throw Object.assign(Error('Saved rule-based task dates are missing or invalid; no activity update was attempted.'),{code:'INVALID_SAVED_TASK_DATES'});}
+}
+const selectedTypesFor=job=>Array.isArray(job.activityTypes)&&job.activityTypes.length?job.activityTypes:TYPES;
 function interruptJob(job) {
   job.status='interrupted';job.message='Processing stopped. Saved results are retained; create a fresh preview before retrying.';
   if(job.kind==='sourceDeployment'&&job.operation==='activate'){
@@ -23,6 +34,11 @@ function interruptJob(job) {
     job.status='activationWithErrors';job.message='Activation interrupted; deployment results are retained. Retry activation to read current states and finish.';return job;
   }
   if(job.kind==='courseCopy'){job.message='Processing interrupted. Saved copy tokens are retained. Check submitted copies; unconfirmed submissions are never automatically repeated.';return job;}
+  if(job.kind==='sourceCreation'){
+    const planning=job.status==='planning';
+    for(const task of job.tasks||[])if(task.result?.submissionIntent&&task.result?.status==='uncertain'){task.result={status:'uncertain',message:'Creation outcome is unconfirmed after interruption. Inspect Brightspace; the POST was not repeated.'};}
+    job.status=planning?'validating':'queued';job.resuming=true;job.message=planning?'Validation will resume from the saved CSV without sending creation requests.':'Processing resumed safely. Confirmed creations may retry Org Library registration; unconfirmed POSTs will not be repeated.';return job;
+  }
   for(const task of job.tasks) {
     if(task.result?.status==='running')task.result=job.kind==='dates'
       ?{status:'uncertain',verifiedDates:null,writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',message:'Processing stopped during this activity. Reconcile its current dates before any further action.'}}
@@ -33,7 +49,7 @@ function interruptJob(job) {
   if(job.kind==='sourceDeployment'){job.message='Deployment processing was interrupted. Check Brightspace before any new submission; saved acceptance IDs remain available.';for(const task of job.tasks)if(task.result?.error?.category==='UNCERTAIN_OUTCOME'){task.result.status='uncertain';task.result.error.message='Deployment outcome is unknown. Check Brightspace before retrying.';}}
   job.totals=counts(job.tasks);return job;
 }
-function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,now=Date.now,buildSha=process.env.RENDER_GIT_COMMIT}) {
+function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment,courseCopy,sourceCreation,now=Date.now,buildSha=process.env.RENDER_GIT_COMMIT}) {
   let busy=false;
   const worker=randomUUID();
   const cancelledJobs=new Set(),step3CancelJobs=new Set(),deploymentCancelJobs=new Set(),activePlans=new Map();
@@ -70,6 +86,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
   async function saveCheckpoint(job,dirty) { job.updatedAt=now();let cached=countCache.get(job);
     if(!dirty||!cached){job.totals=counts(job.tasks);cached=job.tasks.map(t=>t.result?.status||'pending');countCache.set(job,cached);}
     else for(const i of dirty.tasks||[]){const before=cached[i]||'pending',after=job.tasks[i].result?.status||'pending';if(before!==after){job.totals[before]=(job.totals[before]||0)-1;job.totals[after]=(job.totals[after]||0)+1;cached[i]=after;}}
+    if(job.kind==='sourceCreation')job.creationSummary={eligible:(job.rows||[]).filter(r=>r.status==='eligible').length,skipped:(job.rows||[]).filter(r=>r.status==='skipped').length+(job.tasks||[]).filter(t=>t.result?.status==='skipped').length,invalid:(job.rows||[]).filter(r=>r.status==='invalid').length,created:(job.tasks||[]).filter(t=>t.result?.status==='created').length,registrationPending:(job.tasks||[]).filter(t=>t.result?.status==='created'&&t.result.registration!=='ready').length,failed:(job.tasks||[]).filter(t=>t.result?.status==='failed').length,uncertain:(job.tasks||[]).filter(t=>t.result?.status==='uncertain').length,notAttempted:(job.tasks||[]).filter(t=>t.result?.status==='notAttempted').length,total:(job.tasks||[]).length};
     if(job.kind==='dates'&&job.status==='planning'&&Number.isFinite(job.step2StartedAt)){
       const time=now(),previous=job.step2DurableProgress;
       job.step2ProgressAt=time;
@@ -148,7 +165,8 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     await save(job);
     job.step2SampleAt=now();job.step2SampleProcessed=job.courses.filter(c=>c.status!=='pending').length;job.step2SamplePhase='Discovering activities';job.step2SampleCount=0;job.step2RatePerMs=0;
     let reserved=job.tasks.length, discovered=job.courses.filter(c=>c.status!=='pending').length;
-    job.progress={phase:'Discovering activities',processed:discovered,total:job.courses.length,activities:job.tasks.length};
+    let discoveredActivities=job.courses.reduce((sum,course)=>sum+(Number(course.coverage?.discovered)||0),0);
+    job.progress={phase:'Discovering activities',processed:discovered,total:job.courses.length,activities:discoveredActivities};
     let discoveryCheckpoint=0;
     activeStep2Tracker=createStep2Utilization({prior:job.performance?.dateStep2Utilization});activeStep2Job=job._id;
     const discoveryCourses=job.courses.filter(c=>c.status==='pending');activeStep2Tracker.setPending(discoveryCourses.length);
@@ -156,11 +174,19 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       activeStep2Tracker.courseStarted();
       try {
       let checkpointFailure;
+      const priorCourseTasks=job.tasks.filter(task=>task.orgUnitId===course.orgUnitId);
+      const priorDiscovered=Number(course.coverage?.discovered)||0;
+      const courseCoverage={discovered:0,selected:0,matched:priorCourseTasks.length,unmatched:0,conflicts:0,rules:Object.fromEntries((job.rules||[]).map(rule=>[rule.id,0])),conflictExamples:[]};
+      for(const task of priorCourseTasks)if(task.ruleId)courseCoverage.rules[task.ruleId]=(courseCoverage.rules[task.ruleId]||0)+1;
       try {
         const found=await discovery.discover(course.orgUnitId,{includeUndated:true,includeNative:true,check:checkCancelled});
         course.counts=Object.fromEntries(TYPES.map(t=>[t,(found.activities||[]).filter(a=>a.type===t).length]));
         await checkCancelled();
         if(!found.complete)throw new Error('Incomplete discovery');
+        courseCoverage.discovered=found.activities.length;
+        courseCoverage.selected=found.activities.filter(a=>selectedTypesFor(job).includes(a.type)).length;
+        discoveredActivities+=courseCoverage.discovered-priorDiscovered;
+        course.coverage=structuredClone(courseCoverage);
         const nativeByKey=new Map((found.nativeActivities||[]).map(item=>[item.key,item.data]));
         const additional=new Set(found.activities.filter(a=>!previewed.has(`${course.orgUnitId}:${a.type}:${a.id}:${a.parentId||''}`)).map(a=>`${a.type}:${a.id}:${a.parentId||''}`)).size;
         if(reserved+additional>MAX_ACTIVITIES)throw new Error('Activity limit exceeded');
@@ -174,29 +200,39 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           const activity={type:a.type,id:a.id,parentId:a.parentId,orgUnitId:course.orgUnitId,key:a.key};
           const nativeActivity=nativeByKey.get(a.key);
           if(!nativeActivity)throw new Error('Native activity data missing from discovery');
-          const request={orgUnitId:course.orgUnitId,activity,dates:job.dates,dryRun:true,nativeActivity};
+          const resolvedActivity=job.scheduleMode==='rules'?resolveActivity(a,job.rules,selectedTypesFor(job)):selectedTypesFor(job).includes(a.type)?{status:'matched',dates:job.dates}:{status:'excluded',reason:'unselected'};
+          if(resolvedActivity.status==='conflict'){courseCoverage.conflicts++;courseCoverage.conflictExamples??=[];if(courseCoverage.conflictExamples.length<5)courseCoverage.conflictExamples.push({activityId:a.id,name:String(a.name||'').slice(0,120),ruleIds:resolvedActivity.ruleIds});course.coverage=structuredClone(courseCoverage);continue;}
+          if(resolvedActivity.status==='unmatched'){courseCoverage.unmatched++;course.coverage=structuredClone(courseCoverage);continue;}
+          if(resolvedActivity.status==='excluded')continue;
+          const taskDates=resolvedActivity.dates;
+          const request={orgUnitId:course.orgUnitId,activity,dates:taskDates,dryRun:true,nativeActivity};
           const preview=await writers[a.type].updateActivityDates(request);
-          job.tasks.push({orgUnitId:course.orgUnitId,activity,name:a.name,preview});previewed.add(taskKey);
+          job.tasks.push({orgUnitId:course.orgUnitId,activity,name:a.name,preview,...(job.scheduleMode==='rules'?{ruleId:resolvedActivity.rule.id,dates:taskDates}:{})});previewed.add(taskKey);courseCoverage.matched++;if(job.scheduleMode==='rules')courseCoverage.rules[resolvedActivity.rule.id]=(courseCoverage.rules[resolvedActivity.rule.id]||0)+1;
+          course.coverage=structuredClone(courseCoverage);
           if(!['ready','unchanged'].includes(preview.status))course.previewInvalid=true;
           if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)try{await save(job);}catch(error){checkpointFailure=error;throw error;}
         }
+        course.coverage=courseCoverage;
         course.status=course.previewInvalid?'invalid':'valid';
       } catch(error) {if(checkpointFailure)throw checkpointFailure;if(error.code==='JOB_CANCELLED')throw error;course.status='invalid';course.message='Discovery failed, was incomplete, or exceeded the 250,000-activity limit.';}
-      job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:job.tasks.length};
+      job.progress={phase:'Discovering activities',processed:++discovered,total:job.courses.length,activities:discoveredActivities};
       if(++discoveryCheckpoint%DISCOVERY_CHECKPOINT_SIZE===0)await save(job);
       } finally {activeStep2Tracker.courseFinished();}
     },async()=>{await checkCancelled();return true;}));
     await checkCancelled(true);
     await persistPlanningProgress(true);
-    job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length ? 'failed':'ready';
+    updateScheduleCoverage(job);
+    job.status=job.rows.some(r=>r.status==='invalid') || job.courses.some(c=>c.status!=='valid') || !job.tasks.length || job.scheduleCoverage.conflicts>0 ? 'failed':'ready';
     job.expiresAt=now()+30*60*1000;
-    if(!job.tasks.length)job.message='No eligible activities were found.';
+    if(job.scheduleCoverage.conflicts)job.message=`${job.scheduleCoverage.conflicts} activities match multiple rules. Resolve every conflict and create a new preview.`;
+    else if(!job.tasks.length)job.message='No eligible activities were found.';
     } catch(error) {
       if(error.code!=='JOB_CANCELLED')throw error;
       job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';
     } finally {
       clearInterval(progressTimer);
       await planningWriteQueue;
+      updateScheduleCoverage(job);
       if(activeStep2Job===job._id){activeStep2Tracker.finish();job.performance ||= {};job.performance.dateStep2Utilization=activeStep2Tracker.snapshot();}
       if(['ready','failed','cancelled'].includes(job.status)){
         job.step2ElapsedMs=(Number(job.step2ElapsedMs)||0)+Math.max(0,now()-segmentStartedAt);job.step2StartedAt=null;
@@ -234,11 +270,16 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         task.result={status:'uncertain',writeAttempted:true,error:{category:'UNCERTAIN_OUTCOME',stage:'interruption',message:'The activity was in flight when processing stopped. Brightspace is checked read-only; no PUT is repeated.'}};
         await saveStep3(job,{tasks:[taskIndex]});
         try {
-          const reconciled=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,dates:job.dates,expectedSettingsFingerprint:task.preview?.settingsFingerprint,reconcileOnly:true,dryRun:false});
+          const dates=effectiveTaskDates(job,task);
+          const reconciled=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,dates,expectedSettingsFingerprint:task.preview?.settingsFingerprint,reconcileOnly:true,dryRun:false});
           if(['PERSISTENCE_FAILURE','WORKER_LEASE_INTERRUPTION'].includes(reconciled.error?.category))throw Object.assign(Error('Worker or persistence state could not be confirmed.'),{persistenceFailure:reconciled.error.category==='PERSISTENCE_FAILURE',workerLease:reconciled.error.category==='WORKER_LEASE_INTERRUPTION'});
           task.result=reconciled.status==='unchanged'?{...reconciled,status:task.preview?.status==='ready'?'updated':'unchanged',writeAttempted:true,error:null}:{...task.result,...(reconciled.error?{error:reconciled.error}:{})};
           if(['HTTP_API_FAILURE','API_TRANSPORT_FAILURE'].includes(reconciled.error?.category)&&(reconciled.error.httpStatus==null||[401,403,429].includes(reconciled.error.httpStatus)||reconciled.error.httpStatus>=500))stop=true;
         } catch(error) {
+          if(error.code==='INVALID_SAVED_TASK_DATES'){
+            task.result={status:'uncertain',writeAttempted:true,error:{category:'INVALID_SAVED_TASK_DATES',stage:'reconciliation',message:'Saved rule dates are unavailable, so the interrupted write could not be reconciled. Manual review is required; no write was repeated.'}};
+            processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;
+          }
           const category=error?.name?.startsWith('Mongo')||error?.persistenceFailure?'PERSISTENCE_FAILURE':error?.workerLease||/lease/i.test(String(error?.message||''))?'WORKER_LEASE_INTERRUPTION':'API_TRANSPORT_FAILURE';
           if(category!=='API_TRANSPORT_FAILURE')throw error;
           task.result.error={category:'UNCERTAIN_OUTCOME',stage:'reconciliation',message:'Read-only reconciliation could not establish the result. Manual review is required; no write was repeated.'};
@@ -250,11 +291,13 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
       if(stop) {task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped after a systemic API failure.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {await store.renew(worker);} catch(error) {unsafeWorkerJobs.add(job._id);throw error;} // Lease failure stops every worker before a later write.
       if(unsafeWorkerJobs.has(job._id))return;
+      let dates;
+      try{dates=effectiveTaskDates(job,task);}catch(error){task.result={status:'failed',writeAttempted:false,error:{category:'INVALID_SAVED_TASK_DATES',message:'Saved rule dates are missing or invalid. No activity update was attempted.'}};processed++;job.progress={phase:'Applying dates',processed,total:job.tasks.length};job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       task.result={status:'running',writeAttempted:false};await saveStep3(job,{tasks:[taskIndex]});
       if(stop||stopped()||unsafeWorkerJobs.has(job._id)){task.result={status:'skipped',writeAttempted:false,error:{message:'Stopped before writing.'}};processed++;job.step3ProgressAt=now();await saveStep3(job,{tasks:[taskIndex]});continue;}
       try {
         task.result=await writers[task.activity.type].updateActivityDates({orgUnitId:task.orgUnitId,activity:task.activity,
-          dates:job.dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});if(await cancellationRequested(true))throw Object.assign(Error('Date update cancelled before dispatch.'),{code:'JOB_CANCELLED'});},dryRun:false});
+          dates,expectedDates:task.preview.verifiedDates,beforeWrite:async()=>{if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});await store.renew(worker);if(unsafeWorkerJobs.has(job._id))throw Object.assign(Error('Worker persistence is unavailable.'),{persistenceFailure:true});if(await cancellationRequested(true))throw Object.assign(Error('Date update cancelled before dispatch.'),{code:'JOB_CANCELLED'});},dryRun:false});
       } catch(error) {
         if(error.code==='JOB_CANCELLED'){step3CancelJobs.add(job._id);delete task.result;return;}
         const category=error?.name?.startsWith('Mongo')||error?.persistenceFailure?'PERSISTENCE_FAILURE':/lease/i.test(String(error?.message||''))?'WORKER_LEASE_INTERRUPTION':'UNCERTAIN_OUTCOME';
@@ -285,15 +328,20 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     activeStep3Tracker.finish();
   }
   return {
-    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode}) {
+    async create({owner,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode,scheduleMode='uniform',activityTypes=ACTIVITY_TYPES,rules}) {
       if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),buildSha:getBuildSha(buildSha),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='sourceCreation'){if(!sourceCreation)throw Error('Source Course Creator unavailable');const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),rows:sourceCreation.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
-      dates=validateDates(dates);
-      if(Date.parse(dates.start)>=Date.parse(dates.due))throw Object.assign(new Error('Bulk dates must satisfy Start < Due <= End, including Discussion Topics.'),{code:'INVALID_DATES'});
+      if(!['uniform','rules'].includes(scheduleMode))throw Object.assign(Error('Select a supported scheduling mode.'),{code:'INVALID_SCHEDULING_MODE'});
+      activityTypes=validateActivityTypes(activityTypes);
+      if(scheduleMode==='uniform'){
+        dates=validateDates(dates);
+        if(Date.parse(dates.start)>=Date.parse(dates.due))throw Object.assign(new Error('Bulk dates must satisfy Start < Due <= End, including Discussion Topics.'),{code:'INVALID_DATES'});
+      } else {rules=validateRules(rules);dates=null;}
       const rows=parseCourseCsv(csv);
-      const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),dates,timeZone,rows,courses:[],tasks:[],totals:{total:0}};
+      const job={_id:randomUUID(),owner,kind,status:'validating',createdAt:now(),updatedAt:now(),scheduleMode,scheduleVersion:1,activityTypes,...(scheduleMode==='rules'?{rules}:{}),...(dates?{dates}:{}),timeZone,rows,courses:[],tasks:[],totals:{total:0}};
       await store.insert(job);return job;
     },
     get:(id,owner)=>store.get(id,owner),
@@ -318,7 +366,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         job.performance ||= {};const phase=job.status==='planning'?'preparation':job.operation==='check'?'check':'submission';
         job.performance[phase+'StartedAt']=now();
         if(job.status==='planning') {
-          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else {activePlans.set(job._id,job);try{await plan(job);}finally{activePlans.delete(job._id);cancelledJobs.delete(job._id);}}
+          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else if(job.kind==='sourceCreation'){let checkedAt=-Infinity;await sourceCreation.plan(job,save,async()=>{if(now()-checkedAt>=500){checkedAt=now();if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});}});}else {activePlans.set(job._id,job);try{await plan(job);}finally{activePlans.delete(job._id);cancelledJobs.delete(job._id);}}
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.
@@ -331,6 +379,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
           }
           else if(job.kind==='sourceDeployment')await deployment.activate(job,save,()=>store.renew(worker));
           else if(job.kind==='courseCopy')await courseCopy.execute(job,save,()=>store.renew(worker));
+          else if(job.kind==='sourceCreation')await sourceCreation.execute(job,save,()=>store.renew(worker),(id,owner)=>store.isCancelled?.(id,owner));
           else await execute(job);
         }
         const preparationSaved=job.kind==='sourceDeployment'&&phase==='preparation'&&job.performance.preparationMs!=null;

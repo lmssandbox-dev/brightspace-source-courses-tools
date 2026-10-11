@@ -10,6 +10,11 @@ let savedOwner;
 const jobs={create:async r=>{calls.push(r);savedOwner=r.owner;return job;},get:async(id,owner)=>id==='j'&&owner===savedOwner?job:null,list:async()=>[],confirm:async(id,owner)=>{calls.push({id,owner});if(job.status!=='ready')return false;job.status='queued';return true;},cancel:async(id,owner)=>{cancels++;calls.push({id,owner});job.status='cancelled';return true;}};
 const routes=createBulkDates({jobs,deploymentId:'d',secret:'secret',writeEnabled:()=>true,now:()=>time});
 return {routes,calls,job,get cancels(){return cancels;},advance:()=>{time+=1800001;}};}
+test('Date Manager form defaults to Uniform mode with all activity types and offers rule scheduling',()=>{
+ const html=setup().routes.form(response());assert.match(html,/name="scheduleMode"[^>]*id="schedule-mode"/);assert.match(html,/value="uniform" selected/);assert.match(html,/value="rules"/);
+ for(const type of ['assignment','quiz','discussionTopic'])assert.match(html,new RegExp(`name="activityTypes" value="${type}" checked`));
+ assert.match(html,/data-rule-schedule/);assert.match(html,/data-add-rule/);assert.match(html,/name="timeZone"/);
+});
 async function preview(s){const res=response();await s.routes.preview({body:{ticket:ticket(s.routes.form(res),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00'}},res);return res;}
 test('bulk preview creates a plan; apply uses saved ID only and cannot repeat',async()=>{
  const s=setup(),p=await preview(s);assert.equal(s.calls.length,1);assert.match(p.body,/3\. Apply &amp; Update/);assert.doesNotMatch(p.body,/Review your date updates/);assert.doesNotMatch(p.body,/<script>alert/);assert.doesNotMatch(p.body,/CSV validation|Course validation|Job details|My recent jobs|Page 1 of/);
@@ -33,6 +38,16 @@ test('Date Manager planning cancellation remains signed, session-bound and owner
 test('report escapes CSV and neutralizes spreadsheet formulas',()=>{
  const csv=report({dates:{},rows:[{row:2,orgUnitCode:'=HYPERLINK("bad")',status:'invalid'}],courses:[],tasks:[{activity:{type:'quiz',id:'1'},name:'@formula',preview:{status:'failed'}}]});
  assert.match(csv,/'=HYPERLINK\(""bad""\)/);assert.match(csv,/'@formula/);
+});
+test('rule CSV reports effective dates, rule label, and unmatched counts by course',()=>{
+ const csv=report({scheduleMode:'rules',rules:[{id:'week1',label:'Week One'}],rows:[],courses:[{orgUnitId:'9',row:3,code:'BIO',coverage:{unmatched:4}}],tasks:[{orgUnitId:'9',ruleId:'week1',dates:{start:'s',due:'d',end:'e'},activity:{type:'assignment',id:'2'},name:'W01 Task',preview:{status:'ready'}}]});
+ assert.match(csv,/"Activity","3","9","BIO","assignment","2","W01 Task","ready","week1","Week One","s","d","e"/);
+ assert.match(csv,/"Course summary","3","9","BIO","","","","unmatched excluded"/);assert.match(csv,/4 unmatched activities excluded from updates/);
+});
+test('bulk preview converts rule dates in the selected timezone and passes activity types',async()=>{
+ const s=setup(),form=response(),html=s.routes.form(form),localRules=[{id:'w1',label:'Week 1',method:'startsWith',pattern:' W01 ',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-02T09:00'}];
+ await s.routes.preview({body:{ticket:ticket(html,'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',scheduleMode:'rules',activityTypes:['assignment','quiz'],timeZone:'America/Sao_Paulo',rulesJson:JSON.stringify(localRules)}},response());
+ assert.deepEqual(s.calls[0].activityTypes,['assignment','quiz']);assert.equal(s.calls[0].scheduleMode,'rules');assert.equal(s.calls[0].rules[0].pattern,' W01 ');assert.equal(s.calls[0].rules[0].dates.start,'2027-01-01T12:00:00.000Z');
 });
 test('partial cancellation report marks untouched activities pending and not attempted',()=>{
  const csv=report({cancelRequestedAt:10,cancelledDuringStep3:true,dates:{start:'s',due:'d',end:'e'},rows:[],courses:[{orgUnitId:'1',row:2}],tasks:[{orgUnitId:'1',activity:{type:'quiz',id:'1'},name:'Saved',result:{status:'updated',verifiedDates:{start:'s',due:'d',end:'e'}}},{orgUnitId:'1',activity:{type:'quiz',id:'2'},name:'Pending',preview:{status:'ready'}}]});

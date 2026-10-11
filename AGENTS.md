@@ -8,6 +8,7 @@ Brightspace Source Courses Tools is a Node.js LTI 1.3 application for Brightspac
 - `src/dates/` handles activity discovery, native settings normalization, date previews/writes, and date reports.
 - `src/replication/` handles Source Course deployment, replica activation, copy-log checks, and reports.
 - `src/copy/` handles native component-copy planning, submission, token checks, and reports.
+- `src/creation/` handles Bulk Source Course Creator CSV planning, guarded creation, and result reporting.
 - `src/shared/` contains OAuth/API transport, LTI guards, MongoDB job storage, worker/checkpoint coordination, rate limits, and common routes.
 - `src/resolution/` provides the shared org-unit code directory and Brightspace dataset synchronization.
 - `src/ui/` contains server-rendered page helpers, styles, localization catalogs, and browser enhancements. `scripts/build-ui.js` bundles ignored assets under `public/assets/`.
@@ -22,6 +23,7 @@ All bulk workflows validate and save a plan, require explicit confirmation befor
 - Dates: resolve Course Offerings or Source Courses, discover Assignments/Quizzes/Discussion Topics, preview all changes, then apply and read dates back.
 - Source deployment: validate source-to-replica mappings, deactivate and verify replicas, submit deployment batches, then reactivate accepted replicas. Copy-log checks are user-requested and separate from activation.
 - Course copy: copy all or selected component types from an existing Course Offering to an existing Offering or Source Course; save native job tokens and check status on request.
+- Source Course creation: validate rows against existing Course Templates, confirm a partial-validity plan, create Source Courses, and immediately register returned IDs in the shared Org Library.
 
 Course Copy progress measures mapping validation and native copy request submissions separately. Keep `copyStep2*` and `copyStep3*` timing metadata independent, derive submissions from existing outcomes, and retain active elapsed time only through durable progress on recovery. Accepted native `PENDING`/`PROCESSING` submissions count as submitted; never present submission progress as native copy completion or change persisted result classifications for display.
 
@@ -52,11 +54,14 @@ Source Deployer Step 3 supports graceful cancellation while running. A durable `
 - Never automatically repeat a write with an uncertain outcome. Timeouts, process restarts, or lost responses can occur after Brightspace accepted a request; keep the saved result inspectable and require reconciliation.
 - Deployment preparation can leave replicas inactive if it fails. Surface per-replica outcomes and do not add rollback or resubmission assumptions casually. Activation does not establish that copying has completed.
 - Treat org-unit code cache hits as snapshots, not live identity checks. Do not resolve ambiguous codes by choosing the first match.
-- The shared org-unit directory stores only non-deleted Course Offerings and Source Courses. Because excluded types may share a code, directory-only matches require current live exact-code verification before resolution; successful verification can be reused until directory publication.
+- The shared org-unit directory stores non-deleted Course Offerings, Source Courses, and Course Templates. Because other org-unit types may share a code, directory-only matches require current live exact-code verification before resolution; successful verification can be reused until directory publication.
+- Org Library publication version 5 forces an authoritative full rebuild to add historical Course Templates. Confirmed Source Course creations use an isolated, idempotent overlay keyed by namespace and Org Unit ID; newer authoritative dataset data reconciles or supersedes it. The overlay participates in duplicate-code ambiguity checks and does not prove code uniqueness by itself.
+- Source Course Creator requires LP 1.60+, `orgunits:sourcecourses:write`, and the Brightspace Manage Courses permission to create Source Courses. Save each write intent before POST and the returned ID before Org Library registration. Registration recovery may repeat only the database upsert; uncertain creation POSTs are never replayed.
 - Escape rendered HTML and spreadsheet CSV values; sanitize API diagnostics and never expose credentials or raw request configuration.
 - Visible UI text belongs in all three catalogs under `src/ui/locales/` (English, Latin American Spanish, Brazilian Portuguese). Keep catalog keys/placeholders aligned.
 - Do not casually change Brightspace API payloads, minimum API versions, job persistence/checkpoint semantics, tenant/database namespacing, scopes, or retry behavior; inspect the related tests and subsystem docs first.
 - Preserve phase-specific persistence semantics: persist read-only resolution at its phase boundary before dependent discovery; discovery plans and write outcomes require durable checkpointing. Keep large MongoDB chunk writes batched rather than issuing high-volume sequential round trips.
+- Date Manager supports `uniform` and `rules` scheduling while retaining `kind: "dates"`. Missing `scheduleMode` is legacy Uniform. New jobs persist `scheduleVersion: 1` and a nonempty global `activityTypes` selection (defaults to all supported types). Rule-based jobs save 1–20 validated rules and each matched task's immutable UTC `dates` plus `ruleId`; unmatched and unselected activities are not executable tasks. Match activity titles locally, case-insensitively, using only `contains` or `startsWith`; multiple matches block readiness. Step 3 and interrupted-task reconciliation must use the saved task dates without rerunning matching; missing or invalid dates fail closed. Keep bounded rule counters in metadata and compact course coverage/conflict examples in course chunks. Do not add unmatched-activity task records, API reads, worker paths or checkpoint writes.
 
 ## Development checks
 

@@ -94,7 +94,7 @@ test('Date Manager planning cancellation is owner-scoped and fenced checkpoints 
  const save=s.calls.find(call=>call.name==='bulk_date_jobs');assert.deepEqual(save.filter.status,{$in:['planning','running','cancelled']});
 });
 test('running cancellation persists an owner-scoped marker and accepts repeated requests',async()=>{
- const s=setup({runningCancel:true});assert.equal(await s.store.cancel('j','owner'),true);const write=s.calls.find(call=>call.op==='updateOne'&&call.filter.status==='running');assert.equal(write.filter.owner,'owner');assert.deepEqual(write.filter.kind,{$in:['dates','sourceDeployment']});assert.deepEqual(write.filter.cancelRequestedAt,{$exists:false});assert.ok(Number.isFinite(write.update.$set.cancelRequestedAt));
+ const s=setup({runningCancel:true});assert.equal(await s.store.cancel('j','owner'),true);const write=s.calls.find(call=>call.op==='updateOne'&&call.filter.status==='running');assert.equal(write.filter.owner,'owner');assert.deepEqual(write.filter.kind,{$in:['dates','sourceDeployment','sourceCreation']});assert.deepEqual(write.filter.cancelRequestedAt,{$exists:false});assert.ok(Number.isFinite(write.update.$set.cancelRequestedAt));
  const repeated=setup({alreadyCancelled:true});assert.equal(await repeated.store.cancel('j','owner'),true);
 });
 test('completion cannot overwrite a cancellation marker that wins the race',async()=>{
