@@ -21,13 +21,21 @@ function createBulkStore({uri,namespace,now=Date.now,leaseMs=120000,mongoClient}
   return {
     async insert(job) {const {jobs,chunks}=await collections();const data=job.kind==='dates'?await encodeDateJob(job,chunks,namespace):job;await jobs.insertOne({...data,namespace});},
     async get(_id,owner) {const {jobs,chunks}=await collections();return decodeDateJob(await jobs.findOne({_id,owner,namespace}),chunks,namespace);},
-    async getStatus(_id,owner) {const {jobs}=await collections();return jobs.findOne({_id,owner,namespace},{projection:{_id:1,owner:1,kind:1,status:1,createdAt:1,updatedAt:1,dates:1,timeZone:1,scheduleMode:1,scheduleVersion:1,activityTypes:1,rules:1,scheduleCoverage:1,courseTotal:1,totals:1,progress:1,step2StartedAt:1,step2ElapsedMs:1,step2ProgressAt:1,step2CourseProgressAt:1,step2RatePerMs:1,step2SampleAt:1,step2SampleProcessed:1,step2SamplePhase:1,step2SampleCount:1,step3StartedAt:1,step3ElapsedMs:1,step3ProgressAt:1,deploymentStep2StartedAt:1,deploymentStep2ElapsedMs:1,deploymentStep2ProgressAt:1,deploymentStep2RatePerMs:1,deploymentStep2SampleCount:1,deploymentStep2SampleAt:1,deploymentStep2SampleProcessed:1,deploymentStep3StartedAt:1,deploymentStep3ElapsedMs:1,deploymentStep3ProgressAt:1,message:1,systemicFailure:1,expiresAt:1,confirmedAt:1,resuming:1,cancelRequestedAt:1,cancelledDuringStep3:1,step3ElapsedMs:1,step3StartedAt:1,step3ProgressAt:1,creationSummary:1,operation:1,templateReconciliationPlan:1}});},
+    async getStatus(_id,owner) {const {jobs}=await collections();return jobs.findOne({_id,owner,namespace},{projection:{_id:1,owner:1,kind:1,status:1,createdAt:1,updatedAt:1,dates:1,timeZone:1,scheduleMode:1,scheduleVersion:1,activityTypes:1,rules:1,scheduleCoverage:1,courseTotal:1,totals:1,progress:1,step2StartedAt:1,step2ElapsedMs:1,step2ProgressAt:1,step2CourseProgressAt:1,step2RatePerMs:1,step2SampleAt:1,step2SampleProcessed:1,step2SamplePhase:1,step2SampleCount:1,step3StartedAt:1,step3ElapsedMs:1,step3ProgressAt:1,deploymentStep2StartedAt:1,deploymentStep2ElapsedMs:1,deploymentStep2ProgressAt:1,deploymentStep2RatePerMs:1,deploymentStep2SampleCount:1,deploymentStep2SampleAt:1,deploymentStep2SampleProcessed:1,deploymentStep3StartedAt:1,deploymentStep3ElapsedMs:1,deploymentStep3ProgressAt:1,message:1,systemicFailure:1,expiresAt:1,confirmedAt:1,resuming:1,cancelRequestedAt:1,cancelledDuringStep3:1,step3ElapsedMs:1,step3StartedAt:1,step3ProgressAt:1,creationSummary:1,liveSourceCourseRecheck:1,validationMetadata:1,operation:1,templateReconciliationPlan:1}});},
     async savePlanningProgress(job,worker,fields) {
       await this.renew(worker);
       const {jobs}=await collections();
       let result;
       try{result=await jobs.updateOne({_id:job._id,namespace,worker,status:'planning'},{$set:{...fields,updatedAt:now()}});}
       catch(error){logMongoOperationFailure('planning_metadata_save',error);throw error;}
+      return result.matchedCount===1;
+    },
+    async saveCreationProgress(job,worker,fields) {
+      await this.renew(worker);
+      const {jobs}=await collections();let result;
+      try{result=await jobs.updateOne({_id:job._id,namespace,worker,status:'planning'},{$set:{...fields,updatedAt:now()}});}
+      catch(error){logMongoOperationFailure('source_creation_progress_save',error);throw error;}
+      if(result.matchedCount===1)Object.assign(job,fields);
       return result.matchedCount===1;
     },
     async list(owner,kind) {const {jobs}=await collections();return jobs.find({owner,namespace,...(['sourceDeployment','courseCopy','sourceCreation'].includes(kind)?{kind}:kind==='dates'?{$or:[{kind:'dates'},{kind:{$exists:false}}]}:{})},{projection:{_id:1,status:1,createdAt:1,totals:1,copyMonitorCheckedAt:1,copyCheck:1,...(kind==='sourceCreation'?{confirmedAt:1}:{}),...(kind==='sourceDeployment'?{copySummary:{$let:{vars:{targets:{$reduce:{input:{$ifNull:['$tasks',[]]},initialValue:[],in:{$concatArrays:['$$value','$$this.targets']}}},monitors:{$objectToArray:{$ifNull:['$copyMonitor',{}]}}},in:{total:{$size:'$$targets'},copied:{$size:{$filter:{input:'$$targets',as:'target',cond:{$anyElementTrue:{$map:{input:'$$monitors',as:'monitor',in:{$and:[{$eq:['$$monitor.k','$$target.orgUnitId']},{$eq:['$$monitor.v.status','Copied successfully']}]}}}}}}}}}}}:{})}}).sort({createdAt:-1}).limit(100).toArray();},

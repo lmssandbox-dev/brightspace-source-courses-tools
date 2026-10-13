@@ -1,11 +1,37 @@
 {
   "schemaVersion": 1,
-  "inventoryVerifiedAt": "2026-10-12",
+  "inventoryVerifiedAt": "2026-10-13",
   "sources": {
     "versioning": "https://docs.valence.desire2learn.com/res/apiprop.html",
     "general": "https://docs.valence.desire2learn.com/reference.html"
   },
   "endpoints": [
+    {
+      "id": "lp-orgunit-types-list",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/outypes/",
+      "features": ["Bulk Source Course Creator"],
+      "sourceFiles": ["src/creation/client.js"],
+      "versionSource": "D2L_LP_VERSION; Source Course Creator minimum 1.60",
+      "documentedMinimum": "1.49",
+      "applicationMinimum": "1.60 for optional live Source Course recheck",
+      "contract": {
+        "response": "JSON array of visible OrgUnitType records; Creator resolves the unique SourceCourse code and its tenant-specific numeric ID",
+        "scope": "organizations:organizationtypes:read"
+      },
+      "versionBehavior": "Used only when optional live Source Course recheck has candidate codes. Missing permission or an unavailable/ambiguous Source Course type fails those candidate rows safely.",
+      "docs": ["https://docs.valence.desire2learn.com/res/orgunit.html"],
+      "verifiedAt": "2026-10-13",
+      "contractEvidence": "Official D2L visible org-unit-type list response, permission scope, and route lifecycle reviewed 2026-10-13.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-13",
+        "summary": "Method, route, visible OrgUnitType array response, organizationtypes read scope, and route version lifecycle reviewed against D2L documentation.",
+        "sources": ["https://docs.valence.desire2learn.com/res/orgunit.html"]
+      },
+      "minimumVersion": "1.49"
+    },
     {
       "id": "lp-orgstructure-list",
       "component": "lp",
@@ -30,19 +56,19 @@
       "documentedMinimum": "1.49",
       "applicationMinimum": "1.53 for Source Course Deployer; 1.60 for Source Course Creator",
       "contract": {
-        "query": "exactOrgUnitCode (when code lookup)",
+        "query": "exactOrgUnitCode (when code lookup); optional orgUnitType combined with exactOrgUnitCode for Creator live Source Course recheck",
         "response": "paged org-structure records; consumed fields Identifier, Code, Name, Type"
       },
       "versionBehavior": "No route-specific compatibility behavior verified; source creation is gated at LP 1.60.",
       "docs": [
         "https://docs.valence.desire2learn.com/res/orgunit.html"
       ],
-      "verifiedAt": "2026-10-11",
-      "contractEvidence": "Official D2L org-structure route and response contract verified 2026-10-11.",
+      "verifiedAt": "2026-10-13",
+      "contractEvidence": "Official D2L org-structure route, exact-code and type filters, and paged response verified 2026-10-13; combined filter behavior also confirmed in tenant Postman testing.",
       "contractVerification": {
         "status": "verified",
-        "verifiedAt": "2026-10-11",
-        "summary": "Method, route, exactOrgUnitCode filter, paged OrgUnitProperties response, and route version lifecycle reviewed against D2L documentation.",
+        "verifiedAt": "2026-10-13",
+        "summary": "Method, route, combined orgUnitType and exactOrgUnitCode filters, paged OrgUnitProperties response, and route version lifecycle reviewed against D2L documentation; combined filter behavior confirmed in tenant Postman testing.",
         "sources": [
           "https://docs.valence.desire2learn.com/res/orgunit.html"
         ]

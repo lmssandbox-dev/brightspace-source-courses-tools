@@ -6,6 +6,7 @@ const {createCreationClient}=require('../src/creation/client');
 const {createCreationView}=require('../src/creation/view');
 const creationProgress=require('../src/creation/progress');
 const {createOrgResolver}=require('../src/resolution/resolver');
+const {createBulkJobs}=require('../src/shared/jobs');
 const header=HEADERS.join(',');
 const record=(Identifier,Code,Type='CourseTemplate',lifecycle='current',typeId)=>({Identifier,Code,Name:Code,Type:{Code:Type,...(typeId?{Id:typeId,Name:'Renamed department type'}:{})},lifecycle});
 function resolverFixture({matches={}}={}){
@@ -25,6 +26,15 @@ test('CSV accepts six columns and enforces row, size, identifier-list, and dupli
  assert.throws(()=>parseCreationCsv('x'.repeat(5*1024*1024+1)),{code:'INVALID_CSV'});
 });
 
+test('Creator recheck setting defaults off, persists with validation, and is included in the report',async()=>{
+ const inserted=[],jobs=createBulkJobs({store:{insert:async job=>inserted.push(structuredClone(job))},sourceCreation:{parse:parseCreationCsv}});
+ const off=await jobs.create({owner:'owner',csv:`${header}\nA,A,10,,50,`,kind:'sourceCreation'}),on=await jobs.create({owner:'owner',csv:`${header}\nB,B,10,,50,`,kind:'sourceCreation',liveSourceCourseRecheck:'yes'});
+ assert.equal(off.liveSourceCourseRecheck.enabled,false);assert.equal(off.validationMetadata.liveSourceCourseRecheck,false);assert.equal(on.liveSourceCourseRecheck.enabled,true);assert.equal(on.validationMetadata.liveSourceCourseRecheck,true);assert.equal(inserted[1].liveSourceCourseRecheck.enabled,true);
+ const view=createCreationView(),html=view.form({locals:{}},{controls:()=>''});assert.match(html,/name="liveSourceCourseRecheck" value="yes"/);assert.doesNotMatch(html,/name="liveSourceCourseRecheck" value="yes" checked/);
+ const restored=view.form({locals:{dateForm:{liveSourceCourseRecheck:'yes'}}},{controls:()=>''});assert.match(restored,/name="liveSourceCourseRecheck" value="yes" checked/);
+ const csv=view.report({...on,rows:[{row:2,sourceCourseName:'B',sourceCourseCode:'B',status:'eligible'}],tasks:[]});assert.match(csv,/LiveSourceCourseRecheck/);assert.match(csv,/Enabled/);
+});
+
 test('planning resolves template and Department ID/code, applies duplicate lifecycle policy, and keeps partial-valid rows',async()=>{
  const fixture=resolverFixture({matches:{
   EXIST:[record('70','EXIST','SourceCourse','current'),record('71','EXIST','SourceCourse','recycled')],
@@ -39,6 +49,45 @@ test('planning resolves template and Department ID/code, applies duplicate lifec
  assert.equal(job.rows.find(row=>row.row===7).status,'eligible');assert.equal(job.rows.find(row=>row.row===8).status,'invalid');assert.equal(job.rows.find(row=>row.row===9).status,'invalid');
  assert.equal(job.templateReconciliationPlan[1].departmentIds[0],'50');assert.equal(job.templateReconciliationPlan[1].departmentCodes[0],'D1');assert.equal(job.templateReconciliationPlan.length,2);
  assert.equal(fixture.calls.lookupMatches.length,1);assert.equal(fixture.calls.lookupMatches[0].length,6);
+});
+
+test('optional live recheck replaces stale Source Course evidence while preserving current and cross-type decisions',async()=>{
+ const fixture=resolverFixture({matches:{CURRENT:[record('70','CURRENT','SourceCourse')],ARCHIVED:[{...record('71','ARCHIVED','SourceCourse'),provenance:'creation'}],DELETED:[record('72','DELETED','SourceCourse')],RESTORED:[record('73','RESTORED','SourceCourse')],MULTI:[record('74','MULTI','SourceCourse'),record('75','MULTI','SourceCourse')],CROSS:[record('76','CROSS','SourceCourse'),record('77','CROSS','Department')]}}),lookups=[];
+ const feature=makeFeature(fixture,{sourceCourseTypeId:async()=>8,recheckSourceCourseCode:async(code,typeId)=>{lookups.push([code,typeId]);return ({CURRENT:[record('70','CURRENT','SourceCourse')],ARCHIVED:[],DELETED:[],RESTORED:[record('73','RESTORED','SourceCourse')],MULTI:[record('74','MULTI','SourceCourse'),record('75','MULTI','SourceCourse')]})[code]||[];}});
+ const job={rows:parse(['Current,CURRENT,10,,50,','Archived,ARCHIVED,10,,50,','Deleted,DELETED,10,,50,','Restored,RESTORED,10,,50,','Multiple,MULTI,10,,50,','Cross type,CROSS,10,,50,']),tasks:[],status:'planning',liveSourceCourseRecheck:{enabled:true}};
+ await feature.plan(job,async()=>{});
+ assert.deepEqual(lookups.sort(([a],[b])=>a.localeCompare(b)),[['ARCHIVED',8],['CURRENT',8],['DELETED',8],['MULTI',8],['RESTORED',8]]);
+ for(const code of ['CURRENT','RESTORED','MULTI'])assert.equal(job.rows.find(row=>row.sourceCourseCode===code).status,'skipped');
+ for(const code of ['ARCHIVED','DELETED'])assert.equal(job.rows.find(row=>row.sourceCourseCode===code).status,'eligible');
+ assert.equal(job.rows.find(row=>row.sourceCourseCode==='CROSS').status,'invalid');
+ assert.deepEqual(job.tasks.map(task=>task.Code),['ARCHIVED','DELETED']);
+});
+
+test('opt-in recheck deduplicates repeated codes, rejects unsafe live failures, and is absent when disabled',async()=>{
+ const fixture=resolverFixture({matches:{OLD:[record('70','OLD','SourceCourse')],DUP:[record('71','DUP','SourceCourse')],BAD:[record('72','BAD','SourceCourse')],FORBIDDEN:[record('73','FORBIDDEN','SourceCourse')],RATE:[record('74','RATE','SourceCourse')],SERVER:[record('75','SERVER','SourceCourse')]}});let calls=0;
+ const feature=makeFeature(fixture,{sourceCourseTypeId:async()=>8,recheckSourceCourseCode:async(code)=>{calls++;if(code==='BAD')throw Error('timeout');if(code==='FORBIDDEN')throw Object.assign(Error('forbidden'),{status:403});if(code==='RATE')throw Object.assign(Error('rate limit'),{status:429});if(code==='SERVER')throw Object.assign(Error('server error'),{status:503});return code==='OLD'?[]:[record('71',code,'SourceCourse')];}});
+ const job={rows:parse(['Old,OLD,10,,50,','Old duplicate input,OLD,10,,50,','Duplicate CSV,DUP,10,,50,','Timeout,BAD,10,,50,','Forbidden,FORBIDDEN,10,,50,','Rate limit,RATE,10,,50,','Server error,SERVER,10,,50,']),tasks:[],status:'planning',liveSourceCourseRecheck:{enabled:true}};
+ await feature.plan(job,async()=>{});assert.equal(calls,5);assert.equal(job.rows[0].status,'invalid');assert.match(job.rows[0].message,/Duplicate Source Course code/);assert.equal(job.rows[1].status,'invalid');assert.equal(job.rows[2].status,'skipped');assert.equal(job.rows[3].status,'invalid');assert.match(job.rows[3].message,/verification failed/);assert.equal(job.rows[4].status,'invalid');assert.match(job.rows[4].message,/visibility/);assert.equal(job.rows[5].status,'invalid');assert.match(job.rows[5].message,/rate-limited/);assert.equal(job.rows[6].status,'invalid');assert.match(job.rows[6].message,/incomplete/);
+ const offFixture=resolverFixture({matches:{OLD:[record('70','OLD','SourceCourse')]}}),off=makeFeature(offFixture,{recheckSourceCourseCode:async()=>{throw Error('must not call');}}),offJob={rows:parse(['Old,OLD,10,,50,']),tasks:[],status:'planning'};
+ await off.plan(offJob,async()=>{});assert.equal(offFixture.calls.lookupMatches.length,1);assert.equal(offJob.rows[0].status,'skipped');assert.equal(offJob.liveSourceCourseRecheck.enabled,false);assert.equal(offJob.liveSourceCourseRecheck.status,'disabled');
+});
+
+test('unavailable Source Course type visibility fails every candidate safely',async()=>{
+ const fixture=resolverFixture({matches:{A:[record('70','A','SourceCourse')],B:[record('71','B','SourceCourse')]}}),feature=makeFeature(fixture,{sourceCourseTypeId:async()=>{throw Object.assign(Error('forbidden'),{status:403});},recheckSourceCourseCode:async()=>assert.fail('type visibility must be resolved before code lookups')}),job={rows:parse(['A,A,10,,50,','B,B,10,,50,']),tasks:[],status:'planning',liveSourceCourseRecheck:{enabled:true}};
+ await feature.plan(job,async()=>{});assert.ok(job.rows.every(row=>row.status==='invalid'));assert.ok(job.rows.every(row=>/organizations:organizationtypes:read/.test(row.message)));assert.equal(job.liveSourceCourseRecheck.status,'failed');assert.equal(job.tasks.length,0);
+});
+
+test('5,000 unique candidate codes use at most eight concurrent checks and metadata progress',async()=>{
+ const codes=Array.from({length:5000},(_,i)=>`SC${i}`),matches=Object.fromEntries(codes.map((code,i)=>[code,[record(String(10000+i),code,'SourceCourse')]])),fixture=resolverFixture({matches});let active=0,peak=0,calls=0;const progress=[];
+ const feature=makeFeature(fixture,{sourceCourseTypeId:async()=>8,recheckSourceCourseCode:async()=>{active++;peak=Math.max(peak,active);calls++;await Promise.resolve();active--;return [];}}),job={rows:parse(codes.map((code,i)=>`Course ${i},${code},10,,50,`)),tasks:[],status:'planning',liveSourceCourseRecheck:{enabled:true}};
+ await feature.plan(job,async()=>{},async()=>{},async(_job,fields)=>{progress.push(fields.liveSourceCourseRecheck.checkedCount);return true;});
+ assert.equal(calls,5000);assert.ok(peak<=8&&peak>1);assert.equal(job.tasks.length,5000);assert.equal(job.liveSourceCourseRecheck.checkedCount,5000);assert.ok(progress.length<=3);assert.equal(job.status,'ready');
+});
+
+test('cancellation during live verification leaves validation unconfirmable',async()=>{
+ const fixture=resolverFixture({matches:{A:[record('70','A','SourceCourse')],B:[record('71','B','SourceCourse')],C:[record('72','C','SourceCourse')]}});let cancelled=false;
+ const feature=makeFeature(fixture,{sourceCourseTypeId:async()=>8,recheckSourceCourseCode:async(_code,_type,check)=>{cancelled=true;await check();return [];}}),job={_id:'j',rows:parse(['A,A,10,,50,','B,B,10,,50,','C,C,10,,50,']),tasks:[],status:'planning',liveSourceCourseRecheck:{enabled:true}};
+ await assert.rejects(feature.plan(job,async()=>{},async()=>{if(cancelled)throw Object.assign(Error('cancel'),{code:'JOB_CANCELLED'});}));assert.notEqual(job.status,'ready');assert.equal(job.confirmedAt,undefined);
 });
 
 test('invalid or missing Department lists and unknown duplicate lifecycle evidence fail per row',async()=>{
@@ -137,6 +186,14 @@ test('API client uses documented parent routes, JSON-number POST, and bearer aut
  const result=await client.create({Name:'Bio',Code:'BIO',TemplateId:'10'},async()=>{});assert.deepEqual(result,{status:'created',orgUnitId:'123',submissionAttempted:true});
 });
 
+test('live exact-code client resolves a tenant type ID and sends both filters through paged transport',async()=>{
+ const urls=[],client=createCreationClient({api:{list:async(url,_raw,options)=>{urls.push([url,options]);if(url.endsWith('/outypes/'))return [{Id:8,Code:'SourceCourse',Name:'Source Course'}];return [{Identifier:'99',Code:'BIO-OLD',Name:'Bio',Type:{Id:8,Code:'SourceCourse'}}];}},http:async()=>({status:200,data:{}}),oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.63'});
+ assert.equal(await client.sourceCourseTypeId(),8);const rows=await client.recheckSourceCourseCode('BIO-OLD',8);const query=new URL(urls[1][0]).searchParams;
+ assert.equal(query.get('orgUnitType'),'8');assert.equal(query.get('exactOrgUnitCode'),'BIO-OLD');assert.equal(urls[1][1].maxPages,100);assert.equal(rows.length,1);assert.equal(rows[0].lifecycle,'current');
+ const invalid=createCreationClient({api:{list:async()=>[{Identifier:'10',Code:'BIO-OLD',Type:{Code:'SourceCourse'}}]},http:async()=>({}),oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.63'});
+ await assert.rejects(invalid.recheckSourceCourseCode('BIO-OLD',8),{code:'SOURCE_COURSE_RECHECK_INCOMPLETE'});
+});
+
 test('parent mutation classifies HTTP responses and sanitizes stored diagnostics',async()=>{
  const outcomes=[
   [{status:200,data:{}},'succeeded',200],
@@ -198,6 +255,11 @@ test('Creator validation progress shows saved counters, completion percentage, t
  assert.equal(creationProgress.step2({status:'planning',rows:[],progress:{processed:0,total:0}},15000).percent,0);assert.equal(creationProgress.step2({status:'planning',rows:[],progress:{processed:0,total:0}},15000).estimate,'Calculating ETA…');assert.equal(creationProgress.step2({status:'completed',rows:[],progress:{processed:0,total:0}},15000).percent,100);
  const cancelled=creationProgress.step2({status:'cancelled',rows:[{status:'eligible'},{status:'pending'}],progress:{processed:1,total:2},creationSummary:{eligible:1,skipped:0,invalid:0}},15000);assert.equal(cancelled.percent,50);assert.equal(cancelled.estimate,'');
  const interrupted=creationProgress.step2({status:'interrupted',rows:[],progress:{processed:1,total:2}},15000);assert.equal(interrupted.estimate,'Progress paused — ETA unavailable');
+});
+
+test('live recheck progress shows unique-code count, percentage, elapsed time and an evidence-based ETA',()=>{
+ const view=createCreationView(),html=view.render({}, {_id:'recheck',status:'planning',rows:[],progress:{phase:'Rechecking existing Source Courses',processed:5000,total:5000},creationSummary:{eligible:20,skipped:4000,invalid:10},step2StartedAt:0,step2ProgressAt:20000,liveSourceCourseRecheck:{enabled:true,status:'running',candidateCount:5000,checkedCount:1000,elapsedMs:20000,ratePerMs:.1}}, {controls:()=>'',button:()=>'',now:()=>20000});
+ assert.match(html,/Rechecking existing Source Courses/);assert.match(html,/5000 unique codes require live checks; 1000 checked/);assert.match(html,/20%/);assert.match(html,/Elapsed: 20s/);assert.match(html,/Approximate remaining time: 40s/);assert.doesNotMatch(html,/name="confirmCreation"/);
 });
 
 test('Creator creation progress separates source outcomes from template reconciliation and handles terminal edge states',()=>{

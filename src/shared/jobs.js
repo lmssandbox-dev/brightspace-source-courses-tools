@@ -328,10 +328,10 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     activeStep3Tracker.finish();
   }
   return {
-    async create({owner,createdBy,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode,scheduleMode='uniform',activityTypes=ACTIVITY_TYPES,rules}) {
+    async create({owner,createdBy,csv,dates,timeZone=DEFAULT_ZONE,kind='dates',copyMode,components,validationMode,liveSourceCourseRecheck,scheduleMode='uniform',activityTypes=ACTIVITY_TYPES,rules}) {
       if(kind==='courseCopy'){const rows=courseCopy.parse(csv),job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),rows,progress:{phase:'mappings',processed:rows.filter(row=>row.status!=='pending').length,total:rows.length},components:courseCopy.selection(copyMode,components),validationMode:'direct',courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind==='sourceDeployment'){if(!deployment)throw Error('Deployment unavailable');const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),buildSha:getBuildSha(buildSha),rows:deployment.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
-      if(kind==='sourceCreation'){if(!sourceCreation)throw Error('Source Course Creator unavailable');const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),rows:sourceCreation.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
+      if(kind==='sourceCreation'){if(!sourceCreation)throw Error('Source Course Creator unavailable');const enabled=liveSourceCourseRecheck===true||liveSourceCourseRecheck==='yes';const job={_id:randomUUID(),owner,...(createdBy?{createdBy}:{}),kind,status:'validating',createdAt:now(),updatedAt:now(),liveSourceCourseRecheck:{enabled,status:'pending',candidateCount:0,checkedCount:0,elapsedMs:0},validationMetadata:{liveSourceCourseRecheck:enabled},rows:sourceCreation.parse(csv),courses:[],tasks:[],totals:{total:0}};await store.insert(job);return job;}
       if(kind!=='dates')throw Error('Invalid job type');
       timeZone=validateZone(timeZone);
       if(!['uniform','rules'].includes(scheduleMode))throw Object.assign(Error('Select a supported scheduling mode.'),{code:'INVALID_SCHEDULING_MODE'});
@@ -367,7 +367,17 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
         job.performance ||= {};const phase=job.status==='planning'?'preparation':job.operation==='check'?'check':'submission';
         job.performance[phase+'StartedAt']=now();
         if(job.status==='planning') {
-          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else if(job.kind==='sourceCreation'){let checkedAt=-Infinity;await sourceCreation.plan(job,save,async()=>{if(now()-checkedAt>=500){checkedAt=now();if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});}});}else {activePlans.set(job._id,job);try{await plan(job);}finally{activePlans.delete(job._id);cancelledJobs.delete(job._id);}}
+          if(job.kind==='courseCopy'){let checkedAt=-Infinity,cancelCheck;await courseCopy.plan(job,save,()=>{if(now()-checkedAt>=500){checkedAt=now();cancelCheck=Promise.resolve().then(async()=>{if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});});}return cancelCheck;});}else if(job.kind==='sourceDeployment')await deployment.plan(job,save);else if(job.kind==='sourceCreation'){
+            let checkedAt=-Infinity;
+            const checkCancelled=async()=>{if(now()-checkedAt>=500){checkedAt=now();if(await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});}};
+            const saveProgress=async(_job,fields)=>{
+              if(typeof store.saveCreationProgress!=='function'){Object.assign(job,fields);await save(job);return true;}
+              const saved=await store.saveCreationProgress(job,worker,fields);
+              if(!saved&&await store.isCancelled?.(job._id,job.owner))throw Object.assign(Error('Validation cancelled'),{code:'JOB_CANCELLED'});
+              return saved;
+            };
+            await sourceCreation.plan(job,save,checkCancelled,saveProgress);
+          }else {activePlans.set(job._id,job);try{await plan(job);}finally{activePlans.delete(job._id);cancelledJobs.delete(job._id);}}
         } else {
           const involved=job.kind==='sourceDeployment'?job.tasks.flatMap(t=>[t.sourceId,...t.targets.map(r=>r.orgUnitId)]):job.courses.map(c=>c.orgUnitId);
           const blocked=false; // Deployment history and copy monitoring never reserve courses.

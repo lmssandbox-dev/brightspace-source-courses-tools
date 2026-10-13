@@ -81,8 +81,9 @@ const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.subm
  }
  return {
   parse:parseCreationCsv,
-  async plan(job,save,check=async()=>{}){
+  async plan(job,save,check=async()=>{},saveProgress=async(_job,fields)=>{Object.assign(job,fields);await save(job);return true;}){
    const started=now();job.tasks=[];job.templateReconciliationPlan=[];job.templateReconciliation={};
+   const recheckEnabled=Boolean(job.liveSourceCourseRecheck?.enabled);job.liveSourceCourseRecheck={enabled:recheckEnabled,status:'pending',candidateCount:0,checkedCount:0,startedAt:null,progressAt:null,elapsedMs:0,ratePerMs:0};
    for(const row of job.rows){row.status='pending';delete row.message;delete row.templateId;delete row.resolvedTemplateCode;delete row.resolvedDepartmentIds;delete row.resolvedDepartmentCodes;}
    const templateCodes=job.rows.map(row=>row.templateCode).filter(Boolean),departmentCodes=job.rows.flatMap(row=>{try{return parseParents(row.departmentCodes,false);}catch{return []}}),session=await orgResolver.prepare([...new Set([...templateCodes,...departmentCodes])],check);
    const codeCounts=new Map();for(const row of job.rows)if(row.sourceCourseCode)codeCounts.set(row.sourceCourseCode,(codeCounts.get(row.sourceCourseCode)||0)+1);
@@ -113,6 +114,45 @@ const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.subm
     }catch(error){if(error.code==='JOB_CANCELLED'||error.persistenceFailure)throw error;if(error.preserve){/* retain a batch-level safe failure */}else row.status='invalid';row.message=error.duplicateCsv||error.preserve?error.message:error.code==='CODE_STATUS_UNKNOWN'?'Lifecycle status for this code is unknown; refresh the Org Library before creating.':error.code==='CODE_NOT_UNIQUE'?'Template or Department code is ambiguous.':error.code==='CODE_NOT_FOUND'?'Template or Department code was not found.':error.message||'Row could not be validated.';}
     finally{job.progress={phase:'templates',processed:++processed,total:job.rows.length};job.step2ProgressAt=now();if(processed%100===0)await save(job);}
    },async()=>{await check();return true;});
+   if(recheckEnabled){
+    const candidates=[...new Set(job.rows.filter(row=>row.status==='skipped'&&row.sourceCourseCode).map(row=>row.sourceCourseCode))];
+    const state=job.liveSourceCourseRecheck;state.candidateCount=candidates.length;state.checkedCount=0;
+    if(candidates.length){
+     job.progress={phase:'Rechecking existing Source Courses',processed:job.rows.length,total:job.rows.length};state.status='running';state.startedAt=now();state.progressAt=state.startedAt;
+     let lastSavedAt=-Infinity,saveInFlight=null,lastSampleAt=state.startedAt,lastSampleCount=0;
+     const persistProgress=async(force=false)=>{
+      if(saveInFlight){await saveInFlight;if(!force&&now()-lastSavedAt<5000)return;}
+      const time=now();if(!force&&time-lastSavedAt<5000)return;
+      const sampleElapsed=time-lastSampleAt,sampleCount=state.checkedCount-lastSampleCount;
+      if(sampleElapsed>0&&sampleCount>0){const observed=sampleCount/sampleElapsed;state.ratePerMs=state.ratePerMs?state.ratePerMs*0.7+observed*0.3:observed;lastSampleAt=time;lastSampleCount=state.checkedCount;}
+      state.elapsedMs=Math.max(0,time-state.startedAt);state.progressAt=time;job.progress={phase:'Rechecking existing Source Courses',processed:job.rows.length,total:job.rows.length};job.step2ProgressAt=time;
+      job.creationSummary={eligible:job.rows.filter(row=>row.status==='eligible').length,skipped:job.rows.filter(row=>row.status==='skipped').length,invalid:job.rows.filter(row=>row.status==='invalid').length,created:0,registrationPending:0,failed:0,uncertain:0,notAttempted:0,total:job.tasks.length};
+      const fields={progress:job.progress,liveSourceCourseRecheck:state,creationSummary:job.creationSummary,step2StartedAt:job.step2StartedAt,step2ProgressAt:job.step2ProgressAt,step2ElapsedMs:job.step2ElapsedMs};
+      saveInFlight=Promise.resolve(saveProgress(job,fields)).then(saved=>{if(saved===false)throw Object.assign(Error('Validation worker no longer owns this job.'),{workerLease:true});lastSavedAt=now();}).catch(error=>{if(!error.persistenceFailure&&!error.workerLease)error.persistenceFailure=true;throw error;}).finally(()=>{saveInFlight=null;});
+      await saveInFlight;
+     };
+     try{
+      const sourceTypeId=typeof client.sourceCourseTypeId==='function'?await client.sourceCourseTypeId(check):null;
+      await pool(candidates,8,async code=>{
+       let live;
+       try{
+        await check();
+        if(typeof client.recheckSourceCourseCode!=='function')throw Object.assign(Error('Live Source Course verification is unavailable.'),{code:'SOURCE_COURSE_RECHECK_UNAVAILABLE'});
+        live=await client.recheckSourceCourseCode(code,sourceTypeId,check);
+        if(!Array.isArray(live))throw Object.assign(Error('Brightspace returned an incomplete Source Course lookup.'),{code:'SOURCE_COURSE_RECHECK_INCOMPLETE'});
+        const byId=new Map(live.map(record=>[positiveId(record?.Identifier),record]));byId.delete(null);live=[...byId.values()];
+        for(const row of job.rows)if(row.sourceCourseCode===code&&row.status==='skipped'){
+         if(live.length){row.status='skipped';row.message=`A current Source Course already uses this code (Org Unit ID${live.length===1?'':'s'}: ${live.map(record=>positiveId(record.Identifier)).join(', ')}).`;
+         }else{row.status='eligible';row.message='';job.tasks.push({row:row.row,Name:row.sourceCourseName,Code:row.sourceCourseCode,TemplateId:row.templateId,TemplateCode:row.resolvedTemplateCode,result:null});}
+        }
+       }catch(error){if(error.code==='JOB_CANCELLED'||error.persistenceFailure||error.workerLease)throw error;for(const row of job.rows)if(row.sourceCourseCode===code&&row.status==='skipped'){row.status='invalid';row.message=error.code==='SOURCE_COURSE_TYPE_UNAVAILABLE'?'Brightspace did not expose one unambiguous Source Course type. Check Source Course type visibility and organization type permissions.':error.status===403?'Brightspace could not verify this code. Check organizational structure visibility and Source Course type permissions.':error.status===429?'Brightspace rate-limited Source Course verification. Retry validation later.':error.code==='SOURCE_COURSE_RECHECK_INCOMPLETE'?'Brightspace returned an incomplete or malformed Source Course lookup. No creation was authorized for this code.':'Live Source Course verification failed or was incomplete. No creation was authorized for this code.';}}
+       finally{state.checkedCount++;job.progress={phase:'Rechecking existing Source Courses',processed:job.rows.length,total:job.rows.length};await persistProgress(false);}
+      },async()=>{await check();return true;});
+     }catch(error){if(error.code==='JOB_CANCELLED'||error.persistenceFailure||error.workerLease)throw error;state.status='failed';const message=error.code==='SOURCE_COURSE_TYPE_UNAVAILABLE'?'Brightspace did not expose one unambiguous Source Course type. Check Source Course type visibility and organization type permissions.':error.status===403?'Brightspace could not list or verify Source Course types and codes. Check organization type visibility and the organizations:organizationtypes:read permission.':error.status===429?'Brightspace rate-limited Source Course verification. Retry validation later.':'Live Source Course verification could not complete. No creation was authorized for this code.';for(const code of candidates)if(!job.rows.some(row=>row.sourceCourseCode===code&&row.status==='eligible'&&job.tasks.some(task=>task.Code===code))){for(const row of job.rows)if(row.sourceCourseCode===code&&row.status==='skipped'){row.status='invalid';row.message=message;}}}
+     if(state.status!=='failed')state.status='complete';state.elapsedMs=Math.max(0,now()-state.startedAt);state.progressAt=now();job.progress={phase:'Rechecking existing Source Courses',processed:job.rows.length,total:job.rows.length};await persistProgress(true);
+    }else state.status='complete';
+   }else job.liveSourceCourseRecheck.status='disabled';
+   job.tasks.sort((a,b)=>a.row-b.row);
    const rowGroups=new Map();for(const row of job.rows)if(row.templateId&&row.resolvedDepartmentIds!=null){const list=rowGroups.get(row.templateId)||[];list.push(row);rowGroups.set(row.templateId,list);}
    for(const [templateId,rows] of rowGroups){const signatures=new Set(rows.map(row=>row.resolvedDepartmentIds.split('|').filter(Boolean).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true})).join('|')));if(signatures.size>1){for(const row of rows){row.status='invalid';row.message='Rows for this Course Template specify conflicting Department parent sets.';}job.tasks=job.tasks.filter(task=>task.TemplateId!==templateId);}}
    const groups=new Map();for(const task of job.tasks){const group=groups.get(task.TemplateId)||[];group.push(task);groups.set(task.TemplateId,group);}

@@ -21,6 +21,10 @@ test('parent-add endpoint inventory records the numeric JSON request contract',(
   assert.match(endpoint.contractVerification.summary,/numeric parent ID body/);
   assert.ok(endpoint.docs.includes('https://docs.valence.desire2learn.com/res/orgunit.html'));
 });
+test('optional Creator live recheck type lookup has the documented permission and response contract',()=>{
+  const endpoint=endpoints.find(row=>row.id==='lp-orgunit-types-list');
+  assert.equal(endpoint.pattern,'/d2l/api/lp/{LP}/outypes/');assert.equal(endpoint.contract.scope,'organizations:organizationtypes:read');assert.equal(endpoint.contractVerification.status,'verified');
+});
 test('runtime versions preserve the existing LP fallback and environment source', () => {
   assert.deepEqual(resolveRuntimeVersions({}), { lp: { version: '1.53', source: 'application_fallback' }, le: { version: null, source: null } });
   assert.deepEqual(resolveRuntimeVersions({ D2L_LP_VERSION: '1.62', D2L_LE_VERSION: '1.99' }), { lp: { version: '1.62', source: 'environment' }, le: { version: '1.99', source: 'environment' } });

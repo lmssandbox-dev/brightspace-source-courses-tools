@@ -48,7 +48,7 @@ test('unverified endpoint contracts do not override supported version health',()
  assert.equal(rows.find(row=>row.endpoint.id==='lp-reoffered-courses').status,'healthy');
  assert.equal(rows.find(row=>row.endpoint.id==='lp-reoffered-courses').contractVerification,'not_verified');
  assert.match(html,/Contract review incomplete/);
- assert.match(html,/12 contracts Verified · 16 Not Verified · 1 Not Applicable/);
+ assert.match(html,/13 contracts Verified · 16 Not Verified · 1 Not Applicable/);
 });
 
 test('endpoint summaries use the assessment engine classifications and include external Not Applicable',()=>{
@@ -62,7 +62,7 @@ test('endpoint summaries use the assessment engine classifications and include e
  const html=view.render({state:'success',assessment:result},{inventory,minimums:trustedMinimums});
  const displayedCounts=[...html.matchAll(/class="api-health-count ([^"]+)"><strong>(\d+)<\/strong><span>([^<]+)<\/span>/g)].map(match=>[match[1],Number(match[2]),match[3]]);
  for(const key of ['healthy','update_available','at_risk','critical','unknown'])assert.ok(displayedCounts.some(([shown,count,label])=>shown===key&&count===(counts[key]||0)&&label===view.STATUS[key]),`${key} summary count`);
- assert.match(html,/29 inventoried endpoints · 1 Not Applicable/);
+ assert.match(html,/30 inventoried endpoints · 1 Not Applicable/);
 });
 
 test('critical verified application minimum risks produce a red sidebar indicator and tool warning',()=>{
@@ -80,7 +80,7 @@ test('critical verified application minimum risks produce a red sidebar indicato
 test('stale and failed checks keep last successful result visible but mark health Unknown',()=>{
  const assessment=sampleAssessment();
  const html=view.render({state:'failed_since_success',assessment:{...assessment,status:'unknown',stale:true},lastSuccessfulAt:assessment.checkedAt},{inventory,minimums:{}});
- assert.match(html,/result is marked Unknown/);assert.match(html,/result is stale because a newer check failed/);assert.match(html,/api-status unknown/);assert.doesNotMatch(html,/api-status healthy/);assert.match(html,/<strong>28<\/strong><span>Unknown<\/span>/);assert.match(html,/29 inventoried endpoints · 1 Not Applicable/);
+ assert.match(html,/result is marked Unknown/);assert.match(html,/result is stale because a newer check failed/);assert.match(html,/api-status unknown/);assert.doesNotMatch(html,/api-status healthy/);assert.match(html,/<strong>29<\/strong><span>Unknown<\/span>/);assert.match(html,/30 inventoried endpoints · 1 Not Applicable/);
  const unavailable=view.render({state:'unavailable',assessment:null},{inventory,minimums:{},versions:{lp:{version:'1.53'},le:{version:'1.97'}}});
  assert.match(unavailable,/<p class="api-configured-version">1\.53<\/p>/);assert.match(unavailable,/<p class="api-configured-version">1\.97<\/p>/);assert.match(unavailable,/No successful assessment is available yet/);
 });
