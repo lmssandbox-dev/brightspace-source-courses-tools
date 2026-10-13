@@ -18,13 +18,15 @@ test('dynamic summaries preserve IDs, counts, and whitespace across languages',(
  assert.equal(translate('Review & Confirm','unknown'),'Review & Confirm');
 });
 test('Source Course recheck guidance and update time are translated in all supported languages',()=>{
- const timestamp='13 Oct 2026, 14:05 UTC',updated=`This app's information about Source Courses was last updated on ${timestamp}.`;
- assert.equal(translate('Recently changed Source Courses?','es-419'),'¿Cambios recientes en los cursos de origen?');
- assert.equal(translate(updated,'es-419'),`La información de esta aplicación sobre los cursos de origen se actualizó por última vez el ${timestamp}.`);
- assert.equal(translate("If you've created, archived, restored, or deleted Source Courses directly in Brightspace since then, some changes may not be reflected here yet.",'pt-BR'),'Se você criou, arquivou, restaurou ou excluiu cursos de origem diretamente no Brightspace desde então, algumas alterações talvez ainda não apareçam aqui.');
- assert.equal(translate('Check for recent changes in Brightspace','pt-BR'),'Verificar alterações recentes no Brightspace');
- assert.equal(translate('Select this to check existing Source Courses directly in Brightspace before creating new ones. This may take a little longer.','es-419'),'Selecciona esta opción para comprobar directamente en Brightspace si ya existen cursos de origen antes de crear otros. Esto puede tardar un poco más.');
- assert.equal(translate('Last update time unavailable.','pt-BR'),'Horário da última atualização indisponível.');
+ const timestamp='13 Oct 2026, 14:05 UTC',updated=`Source Course information is current through ${timestamp}.`;
+ assert.equal(translate('Recent changes in Brightspace?','es-419'),'¿Cambios recientes en Brightspace?');
+ assert.equal(translate(updated,'es-419'),`La información de los cursos de origen está actualizada hasta el ${timestamp}.`);
+ assert.equal(translate('If you changed Source Courses in Brightspace after this time, select the option below.','pt-BR'),'Se você alterou cursos de origem no Brightspace depois desse horário, selecione a opção abaixo.');
+ assert.equal(translate('Check Brightspace for recent changes','pt-BR'),'Verificar alterações recentes no Brightspace');
+ assert.equal(translate('May take a little longer.','es-419'),'Puede tardar un poco más.');
+ assert.equal(translate('Brightspace information updated through','pt-BR'),'Informações do Brightspace atualizadas até');
+ assert.equal(translate('Update date unavailable','es-419'),'Fecha de actualización no disponible');
+ assert.equal(translate('This is the date of the latest Brightspace information available to the app. Changes made afterward may not appear yet.','pt-BR'),'Esta é a data das informações mais recentes do Brightspace disponíveis no app. Alterações posteriores talvez ainda não apareçam.');
 });
 test('report translation changes headings only and preserves CSV body byte for byte',()=>{
  const csv='\uFEFF"Source ID","Replica name","Copy logs"\r\n"9532","Status","Todos os dados copiados com êxito\r\n<example>"';

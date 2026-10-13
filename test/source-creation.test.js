@@ -3,7 +3,8 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const axios=require('axios');
 const {parseCreationCsv,createCreationJobs,HEADERS}=require('../src/creation/jobs');
 const {createCreationClient}=require('../src/creation/client');
-const {createCreationView,formatOrgLibraryAsOf}=require('../src/creation/view');
+const {createCreationView}=require('../src/creation/view');
+const {formatBrightspaceDate}=require('../src/ui/page');
 const creationProgress=require('../src/creation/progress');
 const {createOrgResolver}=require('../src/resolution/resolver');
 const {createBulkJobs}=require('../src/shared/jobs');
@@ -30,9 +31,9 @@ test('Creator recheck setting defaults off, persists with validation, and is inc
  const inserted=[],jobs=createBulkJobs({store:{insert:async job=>inserted.push(structuredClone(job))},sourceCreation:{parse:parseCreationCsv}});
  const off=await jobs.create({owner:'owner',csv:`${header}\nA,A,10,,50,`,kind:'sourceCreation'}),on=await jobs.create({owner:'owner',csv:`${header}\nB,B,10,,50,`,kind:'sourceCreation',liveSourceCourseRecheck:'yes'});
  assert.equal(off.liveSourceCourseRecheck.enabled,false);assert.equal(off.validationMetadata.liveSourceCourseRecheck,false);assert.equal(on.liveSourceCourseRecheck.enabled,true);assert.equal(on.validationMetadata.liveSourceCourseRecheck,true);assert.equal(inserted[1].liveSourceCourseRecheck.enabled,true);
- const view=createCreationView(),html=view.form({locals:{orgLibraryAsOf:Date.UTC(2026,9,13,14,5)}},{controls:()=>''});assert.match(html,/name="liveSourceCourseRecheck" value="yes"/);assert.doesNotMatch(html,/name="liveSourceCourseRecheck" value="yes" checked/);assert.match(html,/This app&#39;s information about Source Courses was last updated on 13 Oct 2026, 14:05 UTC\./);assert.match(html,/Recently changed Source Courses\?/);assert.match(html,/Check for recent changes in Brightspace/);
+ const view=createCreationView(),html=view.form({locals:{orgLibraryAsOf:Date.UTC(2026,9,13,14,5)}},{controls:()=>''});assert.match(html,/name="liveSourceCourseRecheck" value="yes"/);assert.doesNotMatch(html,/name="liveSourceCourseRecheck" value="yes" checked/);assert.match(html,/Source Course information is current through 13 Oct 2026, 14:05 UTC\./);assert.match(html,/Recent changes in Brightspace\?/);assert.match(html,/Check Brightspace for recent changes/);assert.match(html,/If you changed Source Courses in Brightspace after this time, select the option below\./);assert.match(html,/May take a little longer\./);
  const restored=view.form({locals:{dateForm:{liveSourceCourseRecheck:'yes'}}},{controls:()=>''});assert.match(restored,/name="liveSourceCourseRecheck" value="yes" checked/);
- const unavailable=view.form({locals:{}},{controls:()=>''});assert.match(unavailable,/Last update time unavailable\./);assert.equal(formatOrgLibraryAsOf(undefined),null);assert.equal(formatOrgLibraryAsOf('invalid'),null);
+ const unavailable=view.form({locals:{}},{controls:()=>''});assert.match(unavailable,/Update date unavailable\./);assert.equal(formatBrightspaceDate(undefined),null);assert.equal(formatBrightspaceDate('invalid'),null);
  const csv=view.report({...on,rows:[{row:2,sourceCourseName:'B',sourceCourseCode:'B',status:'eligible'}],tasks:[]});assert.match(csv,/LiveSourceCourseRecheck/);assert.match(csv,/Enabled/);
 });
 

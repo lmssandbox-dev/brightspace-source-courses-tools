@@ -18,7 +18,8 @@ function installPageShell(app){
    if(typeof body==='string'&&(!type||type.includes('text/html'))&&req.path!=='/ping'&&!req.path.startsWith('/assets/')){
     res.set('Cache-Control','no-store');res.set('Referrer-Policy','no-referrer');
     const section=req.path.endsWith('/history')?'history':req.path.startsWith('/create')?'creation':req.path.startsWith('/copy')?'copy':req.path.startsWith('/deploy')?'replication':req.path.startsWith('/api-health')?'apiHealth':'dates';
-    body=page(body.trimStart().startsWith('<')?body:`<section class="panel"><h1>Unable to continue</h1><p>${escape(body)}</p><p>Return to Workspace or relaunch from Brightspace to continue.</p></section>`,{ltik:res.locals.ltik,section,language:normalizeLanguage(req.body?.uiLanguage),syncTicket:app.locals?.orgSyncTicket?.(res)||'',launchLoading:req.path==='/',apiHealthRisk:app.locals?.apiHealthRisk||'unknown'});
+    const orgLibraryAsOf=Object.hasOwn(res.locals,'orgLibraryAsOf')?res.locals.orgLibraryAsOf:app.locals?.orgLibraryAsOf;
+    body=page(body.trimStart().startsWith('<')?body:`<section class="panel"><h1>Unable to continue</h1><p>${escape(body)}</p><p>Return to Workspace or relaunch from Brightspace to continue.</p></section>`,{ltik:res.locals.ltik,section,language:normalizeLanguage(req.body?.uiLanguage),syncTicket:app.locals?.orgSyncTicket?.(res)||'',launchLoading:req.path==='/',apiHealthRisk:app.locals?.apiHealthRisk||'unknown',orgLibraryAsOf});
    }
    return send(body);
   };

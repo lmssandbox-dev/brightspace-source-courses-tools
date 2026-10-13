@@ -14,7 +14,7 @@ function mergeMatches(code,base,overlay,byId,fullAt){
  return [...records.values()];
 }
 function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
- databaseConfig(uri);const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000,socketTimeoutMS:30000});let ready;
+ databaseConfig(uri);const client=mongoClient||new MongoClient(uri,{serverSelectionTimeoutMS:10000,socketTimeoutMS:30000});let ready,statusLoaded=false,statusReadAt=0,cachedState,cachedAsOf;
  async function db(){ready ||= (async()=>{await client.connect();const d=client.db();await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Code:1});await d.collection('org_resolution_units').createIndex({namespace:1,generation:1,Identifier:1},{unique:true});await d.collection('org_resolution_created').createIndex({namespace:1,Identifier:1},{unique:true});await d.collection('org_resolution_created').createIndex({namespace:1,Code:1});return d;})().catch(e=>{ready=null;throw e;});return ready;}
  const metaId=namespace,liveId=code=>namespace+':'+digest(code);
  return {
@@ -39,7 +39,9 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   },
   async remember(code,matches,verifiedAt){const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]},expiresAt:{$max:[{$ifNull:['$expiresAt',0]},verifiedAt+LIVE_TTL_MS]}}}],{upsert:true});},
   async registerCreated(record){const d=await db(),createdAt=Number(record.createdAt)||now(),doc={namespace,Identifier:String(record.Identifier),Name:String(record.Name),Code:String(record.Code),Type:{Code:'Source Course'},createdAt,provenance:String(record.provenance||'bulk-source-creator'),status:'ready'};await d.collection('org_resolution_created').updateOne({namespace,Identifier:doc.Identifier},{$setOnInsert:doc}, {upsert:true});return true;},
-  async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},
+  async status(){const state=await (await db()).collection('org_resolution_state').findOne({_id:metaId});cachedState=state;cachedAsOf=state?.asOf??null;statusReadAt=now();statusLoaded=true;return state;},
+  async refreshStatusIfStale(maxAge=60000){if(!statusLoaded||now()-statusReadAt>=maxAge)await this.status();return cachedState;},
+  cachedAsOf(){return statusLoaded?cachedAsOf:undefined;},
   async requestSync(){
    const state=(await db()).collection('org_resolution_state');
    try{await state.updateOne({_id:metaId},{$setOnInsert:{namespace,nextRunAt:0,leaseUntil:0}},{upsert:true});}catch(e){if(e.code!==11000)throw e;}
@@ -68,6 +70,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    if(previous?.generation&&previous.generation!==generation)update.$push={retired:{generation:previous.generation,retiredAt:now()}};
    const r=await state.updateOne({_id:metaId,token,leaseUntil:{$gt:now()},$or:[{asOf:{$lte:asOf}},{asOf:{$exists:false}}]},update);
    if(r.matchedCount!==1)throw Object.assign(Error('Snapshot not published'),{code:'RESOLUTION_PUBLISH_REJECTED'});
+   cachedState={...(cachedState||{}),generation,fullAt,asOf,...summary};cachedAsOf=asOf;statusReadAt=now();statusLoaded=true;
    const created=d.collection('org_resolution_created'),cursor=created.find({namespace,status:{$ne:'superseded'}}).batchSize(500);
    for await(const record of cursor){const authoritative=await d.collection('org_resolution_units').findOne({namespace,generation,Identifier:record.Identifier});if(authoritative&&authoritative.observedAt>record.createdAt)await created.updateOne({namespace,Identifier:record.Identifier},{$set:{status:'superseded',supersededAt:now(),supersededBy:'dataset'}});else if(!authoritative&&asOf>record.createdAt)await created.updateOne({namespace,Identifier:record.Identifier},{$set:{status:'superseded',supersededAt:now(),supersededBy:'authoritative-absence'}});}
   },

@@ -188,8 +188,10 @@ lti.app.locals.apiHealth=apiHealth;
 const apiHealthRoutes=createApiHealthRoutes({service:apiHealth,view:apiHealthView,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID,
   versions:runtimeApiVersions,inventory:apiHealthInventory,minimums:apiHealthMinimums});
 const resolution=require('./src/resolution/runtime').createResolutionRuntime({api:brightspace,http:apiHttp,downloadHttp:axios,oauth,baseUrl:BS_URL,lpVersion,uri:MONGODB_URL,clientId:D2L_OAUTH2_CLIENT_ID});
+const refreshOrgLibraryHeader=()=>{const asOf=resolution.store.cachedAsOf();if(asOf!==undefined)lti.app.locals.orgLibraryAsOf=asOf;};
+const orgLibrarySync={...resolution.sync,async tick(){const result=await resolution.sync.tick();try{await resolution.store.refreshStatusIfStale();}catch{}refreshOrgLibraryHeader();return result;}};
 const orgResolver=resolution.resolver;
-const syncControls=require('./src/resolution/routes').createSyncControls({store:resolution.store,sync:resolution.sync,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID});
+const syncControls=require('./src/resolution/routes').createSyncControls({store:resolution.store,sync:orgLibrarySync,secret:LTI_KEY,deploymentId:BS_DEPLOYMENT_ID});
 lti.app.locals.orgSyncTicket=syncControls.ticket;
 lti.app.post('/org-directory/sync',syncControls.request);
 const sourceClient = createSourceDeploymentClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion});
@@ -213,7 +215,7 @@ const diagnostics = createDiagnostics({
   activityForm: async res => {
     let health={state:'unavailable',assessment:null};try{health=await apiHealth.getLatest();}catch{}
     const selected=res.locals.uiSection||'creation';
-    try{res.locals.orgLibraryAsOf=(await resolution.store.status())?.asOf;}catch{}
+    try{let asOf=resolution.store.cachedAsOf();if(asOf===undefined)asOf=(await resolution.store.status())?.asOf??null;res.locals.orgLibraryAsOf=asOf;lti.app.locals.orgLibraryAsOf=asOf;}catch{res.locals.orgLibraryAsOf=lti.app.locals.orgLibraryAsOf??null;}
     lti.app.locals.apiHealthRisk=['critical','at_risk'].includes(health.assessment?.status)?health.assessment.status:'unknown';
     const context={inventory:apiHealthInventory,minimums:apiHealthMinimums};
     return workspace({
@@ -261,8 +263,8 @@ const start = async () => {
     await lti.deploy({ port });
     const bulkTimer = setInterval(() => { void bulkJobs.tick(); }, 2000);
     bulkTimer.unref();
-    void resolution.sync.tick();
-    const directoryTimer=setInterval(()=>{void resolution.sync.tick();},60000);directoryTimer.unref();
+    void orgLibrarySync.tick();
+    const directoryTimer=setInterval(()=>{void orgLibrarySync.tick();},60000);directoryTimer.unref();
     const copyTimer=setInterval(()=>{void copyMonitor.tick();},10000);
     copyTimer.unref();
     const refreshApiHealth=async()=>{try{await apiHealth.tick();const latest=await apiHealth.getLatest();lti.app.locals.apiHealthRisk=['critical','at_risk'].includes(latest.assessment?.status)?latest.assessment.status:'unknown';}catch{}};

@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {readFileSync}=require('node:fs');
 const {installUi}=require('../src/ui/install');
-const {page,workspace}=require('../src/ui/page');
+const {page,workspace,formatBrightspaceDate}=require('../src/ui/page');
 const {createDeploymentView}=require('../src/replication/view');
 const {createDateView}=require('../src/dates/view');
 const helpers={controls:()=>'<input type="hidden" name="ticket" value="signed">',button:(r,a,id,label,extra='')=>`<form action="/${a}" ${extra}><button>${label}</button></form>`,now:()=>100};
@@ -23,10 +23,17 @@ test('workspace renders the selected sidebar panel and omits development tools',
  assert.match(page('content'),/Brightspace Source Courses Tools/);assert.doesNotMatch(page('content'),/<footer>/);
  assert.doesNotMatch(page('content',{ltik:'secret'}),/href="[^\"]*secret/);
 });
+test('global header shows the published Brightspace date, keeps sync available, and handles unavailable metadata',()=>{
+ const asOf=Date.UTC(2026,9,13,14,5),html=page(workspace({copy:'Copy',selected:'copy'}),{ltik:'session',section:'copy',syncTicket:'signed-ticket',orgLibraryAsOf:asOf});
+ assert.match(html,/class="brightspace-info-date"/);assert.match(html,/Brightspace information updated through/);assert.match(html,/datetime="2026-10-13T14:05:00\.000Z">13 Oct 2026, 14:05 UTC/);assert.match(html,/This is the date of the latest Brightspace information available to the app\. Changes made afterward may not appear yet\./);assert.match(html,/data-org-sync data-ticket="signed-ticket"/);
+ const unavailable=page('Copy',{orgLibraryAsOf:'not-a-timestamp'});assert.match(unavailable,/Update date unavailable/);assert.equal(formatBrightspaceDate(NaN),null);assert.equal(formatBrightspaceDate(asOf).label,'13 Oct 2026, 14:05 UTC');
+ const css=readFileSync(require.resolve('../src/ui/app.css'),'utf8');assert.match(css,/@media\(max-width:900px\)\{\.app-header\{flex-wrap:wrap/);assert.match(css,/@media\(max-width:650px\)\{\.header-actions\{display:grid;grid-template-columns:minmax\(0,1fr\) auto/);assert.match(css,/--sticky-app-header-height:141px/);
+ const browser=readFileSync(require.resolve('../src/ui/app.mjs'),'utf8');assert.match(browser,/fetch\('\/org-directory\/sync'/);
+});
 test('fresh workspace selects Source Course Creator and all sidebar entries use outline SVG icons',()=>{
  const html=workspace({copy:'Copy',creation:'Create',dates:'Dates',replication:'Deploy',history:'History'});
  assert.match(html,/data-section="creation" aria-current="page"/);assert.match(html,/id="pane-creation"  aria-label="Bulk Source Courses Creator"/);
- const entry=readFileSync(require.resolve('../index.js'),'utf8');assert.match(entry,/const selected=res\.locals\.uiSection\|\|'creation'/);assert.match(entry,/try\{res\.locals\.orgLibraryAsOf=\(await resolution\.store\.status\(\)\)\?\.asOf/);assert.match(entry,/creationRoutes\.form\(res\)/);assert.match(entry,/req\.body\.section:'creation'/);
+ const entry=readFileSync(require.resolve('../index.js'),'utf8');assert.match(entry,/const selected=res\.locals\.uiSection\|\|'creation'/);assert.match(entry,/resolution\.store\.cachedAsOf\(\)/);assert.match(entry,/resolution\.store\.refreshStatusIfStale\(\)/);assert.match(entry,/creationRoutes\.form\(res\)/);assert.match(entry,/req\.body\.section:'creation'/);
  const links=[...html.matchAll(/<a href="#([^"]+)" data-section="([^"]+)"[^>]*><span><svg/g)];assert.deepEqual(links.map(match=>match[1]),['creation','copy','dates','replication','apiHealth','history']);assert.equal((html.match(/<svg /g)||[]).length,6);assert.match(html,/data-section="apiHealth"[^>]*><span><svg/);assert.doesNotMatch(html,/＋|▧|▦|▤|◷/);
 });
 test('rule editor shares one value-preserving renderer and styles matching method like Language selector',()=>{
@@ -59,12 +66,12 @@ test('rule-based date screens show numbered rule labels without exposing interna
 test('page shell wraps an LTI launch registered after serverAddon',()=>{
  const {installPageShell}=require('../src/ui/install');
  const stack=[];
- installPageShell({use:fn=>stack.push(fn)});
+ installPageShell({locals:{orgLibraryAsOf:Date.UTC(2026,9,13,14,5)},use:fn=>stack.push(fn)});
  stack.push((req,res)=>res.send(workspace({dates:'Date form',replication:'Deploy form',history:'History'})));
  let output;const headers={};
  const res={locals:{ltik:'session'},getHeader:key=>headers[key],set:(key,value)=>headers[key]=value,send:body=>{output=body;}};
  stack[0]({path:'/'},res,()=>stack[1]({path:'/'},res));
- assert.match(output,/<!doctype html>/);assert.match(output,/href="\/assets\/app.css"/);assert.match(output,/src="\/assets\/app.js"/);assert.match(output,/Brightspace Source Courses Tools/);
+ assert.match(output,/<!doctype html>/);assert.match(output,/href="\/assets\/app.css"/);assert.match(output,/src="\/assets\/app.js"/);assert.match(output,/Brightspace Source Courses Tools/);assert.match(output,/13 Oct 2026, 14:05 UTC/);
  assert.equal((output.match(/<!doctype html>/g)||[]).length,1);
 });
 test('entry point installs page shell in serverAddon before launch routes',()=>{

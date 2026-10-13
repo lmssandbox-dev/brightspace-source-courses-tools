@@ -20,7 +20,11 @@ main{max-width:1440px;padding:24px 32px 52px}.app-header{padding:18px 32px}.side
 
 .source-creation-confirmation form label.checkbox{margin:8px 0}.source-creation-confirmation .action-bar{margin:12px 0 0}
 
-.source-recheck-option{margin-top:24px;padding:18px 22px;background:#f1f7fc;border-color:#bdd5e8;border-left:4px solid #006fbf}.source-recheck-option h3{margin:0 0 6px;font-size:17px}.source-recheck-option p{margin:0 0 8px;max-width:850px}.source-recheck-option .source-recheck-updated{font-weight:600;color:#344654}.source-recheck-option label.checkbox{margin:8px 0 4px;max-width:none}.source-recheck-option .source-recheck-help{margin:0 0 0 31px}
+.source-recheck-option{margin-top:24px;padding:20px 22px;background:#f1f7fc;border-color:#bdd5e8;border-left:4px solid #006fbf}.source-recheck-option h3{margin:0 0 8px;font-size:17px}.source-recheck-option p{margin:0 0 10px;max-width:850px}.source-recheck-option .source-recheck-updated{font-weight:600;color:#344654}.source-recheck-option label.checkbox{margin:2px 0 4px;max-width:none}.source-recheck-option .source-recheck-help{margin:0 0 0 31px}
+
+.brightspace-info-date{display:flex;flex-direction:column;justify-content:center;max-width:220px;color:#59636e;font-size:11px;line-height:1.25}.brightspace-info-date time,.brightspace-info-date>span:last-child{color:#20252a;font-size:12px;font-weight:700}.brightspace-info-date[title]{cursor:help}
+@media(max-width:900px){.app-header{flex-wrap:wrap;gap:12px}.header-actions{width:100%;justify-content:flex-end;flex-wrap:wrap}.brightspace-info-date{order:3;flex:1 0 100%;max-width:none;text-align:right}:root{--sticky-app-header-height:176px}}
+@media(max-width:650px){.header-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px}.header-actions .language-picker{grid-column:2;grid-row:1;width:auto}.header-actions .org-sync-control{grid-column:2;grid-row:2;justify-self:end}.header-actions .brightspace-info-date{grid-column:1;grid-row:1/span 2;order:initial;flex:none;max-width:min(220px,100%);text-align:right}:root{--sticky-app-header-height:141px}}
 
 .warning-confirmation{background:#fff7e9;border-color:#e6c68a;border-left-color:#b87800;color:#714900}.neutral-confirmation{background:#eef2f6;border-color:#cbd4de;border-left-color:#647687;color:#344654}
 

@@ -163,6 +163,15 @@ test('Mongo publish/renew are fenced, caches treat dollar-prefixed codes literal
  await assert.rejects(store.renew('lease'),{code:'RESOLUTION_LEASE_LOST'});
  await store.remember('$code',[record('1','$code')],200);assert.deepEqual(calls.at(-1).update[0].$set.code,{$literal:'$code'});
 });
+test('published Org Library status tracks only asOf, refreshes after publication, and reuses recent metadata',async()=>{
+ const {createResolutionStore}=require('../src/resolution/store');let now=1000,reads=0,state={_id:'n',namespace:'n',token:'lease',leaseUntil:5000,generation:'g1',asOf:100};
+ const collection=name=>({createIndex:async()=>{},findOne:async filter=>{if(name==='org_resolution_state'){if(!filter?.token)reads++;return {...state};}return null;},updateOne:async(_filter,update)=>{state={...state,...update.$set};return {matchedCount:1};},find:()=>({batchSize(){return this;},async *[Symbol.asyncIterator](){}})});
+ const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'n',now:()=>now,mongoClient:{connect:async()=>{},db:()=>({collection})}});
+ assert.equal((await store.status()).asOf,100);assert.equal(store.cachedAsOf(),100);await store.refreshStatusIfStale();assert.equal(reads,1);
+ now+=10;await store.publish('lease','g2',200,300,{syncMode:'differential'});assert.equal(store.cachedAsOf(),300);
+ now+=10;await store.finish('lease',20000);assert.equal(store.cachedAsOf(),300);
+ state.asOf=400;now+=60001;await store.refreshStatusIfStale();assert.equal(store.cachedAsOf(),400);assert.equal(reads,2);
+});
 test('live Mongo evidence is reused only while fresh and newer dataset publication supersedes it',async()=>{
  const {createResolutionStore}=require('../src/resolution/store');let now=1000,fullAt=100;
  const live={_id:'n:hash',namespace:'n',code:'A',verifiedAt:500,matches:[{Identifier:'9',Code:'A',Name:'External',Type:{Id:8,Code:'SourceCourse'},lifecycle:'live-verified',provenance:'live-verified'}]};
@@ -250,9 +259,11 @@ test('lost history stops updates; a fresh full recovers without guessing the cus
 });
 test('saved baseline supports differential-only listing; signed URL changes do not replay extracts',async()=>{
  const f=incrementalFixture();await createDirectorySync({...f,root}).run();
+ const publishedAsOf=f.state.asOf;
  for(const e of f.available)e.DownloadLink+='?changed=signature';
- assert.equal((await createDirectorySync({...f,root}).run()).skipped,'already_current');
+ assert.equal((await createDirectorySync({...f,root}).run()).skipped,'already_current');assert.equal(f.state.asOf,publishedAsOf);
  f.available.splice(0,1);f.available.push(f.e('Differential',10));assert.equal((await createDirectorySync({...f,root}).run()).mode,'differential');
+ assert.equal(f.state.asOf,10*86400000);assert.ok(f.state.asOf>publishedAsOf);
 });
 test('Mongo staging clone is bounded and never writes to the published generation',async()=>{
  const {createResolutionStore}=require('../src/resolution/store');let closed=false;const writes=[];
