@@ -2,6 +2,7 @@
 
 ## Implemented locally
 
+- Shared Org Library live fallback resolves unique externally created courses before dataset sync, caches lower-assurance evidence for 15 minutes, and invalidates it on authoritative publication; Date Manager CSV includes sanitized resolution reasons.
 - Bulk Source Course Creator: exact CSV schema, partial-validity template/code checks, four-worker confirmed creation, graceful cancellation, durable outcomes, immediate Org Library registration overlay, and result CSV.
 - Org Library directory version 5 includes non-deleted Course Templates and forces a full rebuild for older directory generations.
 

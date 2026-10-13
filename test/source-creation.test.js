@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const axios=require('axios');
 const {parseCreationCsv,createCreationJobs,HEADERS}=require('../src/creation/jobs');
 const {createCreationClient}=require('../src/creation/client');
-const {createCreationView}=require('../src/creation/view');
+const {createCreationView,formatOrgLibraryAsOf}=require('../src/creation/view');
 const creationProgress=require('../src/creation/progress');
 const {createOrgResolver}=require('../src/resolution/resolver');
 const {createBulkJobs}=require('../src/shared/jobs');
@@ -30,8 +30,9 @@ test('Creator recheck setting defaults off, persists with validation, and is inc
  const inserted=[],jobs=createBulkJobs({store:{insert:async job=>inserted.push(structuredClone(job))},sourceCreation:{parse:parseCreationCsv}});
  const off=await jobs.create({owner:'owner',csv:`${header}\nA,A,10,,50,`,kind:'sourceCreation'}),on=await jobs.create({owner:'owner',csv:`${header}\nB,B,10,,50,`,kind:'sourceCreation',liveSourceCourseRecheck:'yes'});
  assert.equal(off.liveSourceCourseRecheck.enabled,false);assert.equal(off.validationMetadata.liveSourceCourseRecheck,false);assert.equal(on.liveSourceCourseRecheck.enabled,true);assert.equal(on.validationMetadata.liveSourceCourseRecheck,true);assert.equal(inserted[1].liveSourceCourseRecheck.enabled,true);
- const view=createCreationView(),html=view.form({locals:{}},{controls:()=>''});assert.match(html,/name="liveSourceCourseRecheck" value="yes"/);assert.doesNotMatch(html,/name="liveSourceCourseRecheck" value="yes" checked/);
+ const view=createCreationView(),html=view.form({locals:{orgLibraryAsOf:Date.UTC(2026,9,13,14,5)}},{controls:()=>''});assert.match(html,/name="liveSourceCourseRecheck" value="yes"/);assert.doesNotMatch(html,/name="liveSourceCourseRecheck" value="yes" checked/);assert.match(html,/This app&#39;s information about Source Courses was last updated on 13 Oct 2026, 14:05 UTC\./);assert.match(html,/Recently changed Source Courses\?/);assert.match(html,/Check for recent changes in Brightspace/);
  const restored=view.form({locals:{dateForm:{liveSourceCourseRecheck:'yes'}}},{controls:()=>''});assert.match(restored,/name="liveSourceCourseRecheck" value="yes" checked/);
+ const unavailable=view.form({locals:{}},{controls:()=>''});assert.match(unavailable,/Last update time unavailable\./);assert.equal(formatOrgLibraryAsOf(undefined),null);assert.equal(formatOrgLibraryAsOf('invalid'),null);
  const csv=view.report({...on,rows:[{row:2,sourceCourseName:'B',sourceCourseCode:'B',status:'eligible'}],tasks:[]});assert.match(csv,/LiveSourceCourseRecheck/);assert.match(csv,/Enabled/);
 });
 
@@ -95,11 +96,11 @@ test('invalid or missing Department lists and unknown duplicate lifecycle eviden
  await feature.plan(job,async()=>{});assert.equal(job.tasks.length,0);assert.ok(job.rows.every(row=>row.status==='invalid'));assert.match(job.rows[0].message,/exactly one/);assert.match(job.rows[1].message,/exactly one/);assert.match(job.rows[2].message,/unique/);assert.match(job.rows[3].message,/positive integers/);assert.match(job.rows[4].message,/Lifecycle status/);
 });
 
-test('shared duplicate-aware resolver batches unique codes and fails only codes with unknown live lifecycle',async()=>{
+test('shared duplicate-aware resolver batches unique codes and marks uncatalogued live results lower assurance',async()=>{
  let lookups=0;const cached={Identifier:'70',Code:'MIX',Name:'Old',Type:{Code:'SourceCourse'},lifecycle:'recycled'},second={Identifier:'71',Code:'MIX',Name:'Current',Type:{Code:'SourceCourse'},lifecycle:'current'};
  const store={lookup:async codes=>{lookups++;const map=new Map([['MIX',[cached,second]],['UNKNOWN',[{Identifier:'99',Code:'UNKNOWN',Type:{Code:'SourceCourse'},lifecycle:'unknown'}]]]);map.safeCodes=new Set();return map;},remember:async()=>{}};
  const apiCalls=[];const resolver=createOrgResolver({store,root:'https://tenant.example/d2l/api/lp/1.60',api:{list:async url=>{const code=new URL(url).searchParams.get('exactOrgUnitCode');apiCalls.push(code);return code==='MIX'?[{Identifier:'70',Code:'MIX',Type:{Code:'SourceCourse'}},{Identifier:'71',Code:'MIX',Type:{Code:'SourceCourse'}}]:code==='NEW'?[{Identifier:'88',Code:'NEW',Type:{Code:'CourseOffering'}}]:[{Identifier:'99',Code:'UNKNOWN',Type:{Code:'SourceCourse'}}];}}});
- const result=await resolver.lookupMatches(['MIX','MIX','NEW','UNKNOWN']);assert.equal(lookups,1);assert.deepEqual(apiCalls.sort(),['MIX','NEW','UNKNOWN']);assert.equal(result.get('MIX').length,2);assert.deepEqual(result.get('MIX').map(item=>item.lifecycle).sort(),['current','recycled']);assert.equal(result.get('NEW').error.code,'CODE_STATUS_UNKNOWN');assert.equal(result.get('UNKNOWN').error.code,'CODE_STATUS_UNKNOWN');
+ const result=await resolver.lookupMatches(['MIX','MIX','NEW','UNKNOWN']);assert.equal(lookups,1);assert.deepEqual(apiCalls.sort(),['MIX','NEW','UNKNOWN']);assert.equal(result.get('MIX').length,2);assert.deepEqual(result.get('MIX').map(item=>item.lifecycle).sort(),['current','recycled']);assert.equal(result.get('NEW')[0].lifecycle,'live-verified');assert.equal(result.get('UNKNOWN')[0].lifecycle,'live-verified');
 });
 
 test('all rows for a template are invalid when equivalent-resolved parent sets conflict',async()=>{

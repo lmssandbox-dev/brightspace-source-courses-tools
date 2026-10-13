@@ -193,6 +193,12 @@ test('invalid course, incomplete discovery and missing scopes cannot write',asyn
   assert.ok(!s.calls.includes('write'));assert.equal((await s.jobs.get(j._id,'a')).status,'failed');
  }
 });
+test('Date Manager saves allowlisted resolution diagnostics for CSV reporting but keeps the validation message generic',async()=>{
+ const s=setup({courses:{resolve:async()=>{throw Object.assign(Error('untrusted response text'),{code:'CODE_NOT_FOUND'});}}});
+ const job=await s.jobs.create({owner:'a',csv:'OrgUnitId,OrgUnitCode\n1,MISSING',dates});await s.jobs.tick();
+ const saved=await s.jobs.get(job._id,'a');assert.equal(saved.rows[0].status,'invalid');assert.equal(saved.rows[0].resolutionCode,'CODE_NOT_FOUND');assert.equal(saved.rows[0].resolutionMessage,'No live organizational unit matched this exact code.');
+ assert.match(saved.rows[0].message,/could not be resolved uniquely/);assert.doesNotMatch(saved.rows[0].resolutionMessage,/untrusted response text/);assert.equal(saved.courses.length,0);
+});
 test('Date Manager course resolution retains eight concurrent row workers',async()=>{
  let active=0,peak=0;
  const s=setup({courses:{resolve:async row=>{peak=Math.max(peak,++active);await new Promise(resolve=>setImmediate(resolve));active--;return {orgUnitId:row.orgUnitId};}}});

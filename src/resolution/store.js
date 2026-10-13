@@ -3,6 +3,7 @@ const {MongoClient}=require('mongodb');
 const {createHash,randomUUID}=require('node:crypto');
 const {databaseConfig}=require('../shared/database');
 const {pool}=require('../shared/pool');
+const LIVE_TTL_MS=15*60*1000;
 const digest=s=>createHash('sha256').update(s).digest('hex');
 function namespaceFor(baseUrl,clientId){return digest(new URL(baseUrl).origin+'|'+clientId);}
 function mergeMatches(code,base,overlay,byId,fullAt){
@@ -22,7 +23,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    await pool(parts,4,async(part,index)=>{const overlays=await d.collection('org_resolution_live').find({_id:{$in:part.map(liveId)},namespace}).toArray();
     const ids=overlays.flatMap(o=>o.matches.map(r=>r.Identifier));const records=meta?.generation?await d.collection('org_resolution_units').find({namespace,generation:meta.generation,$or:[{Code:{$in:part}},{Identifier:{$in:ids}}]}).toArray():[];
     const created=await d.collection('org_resolution_created').find({namespace,Code:{$in:part},status:{$ne:'superseded'}}).toArray();
-    const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)).map(r=>[r.code,r]));
+    const byId=new Map(records.map(r=>[r.Identifier,r])),byCode=new Map(),live=new Map(overlays.filter(r=>r.verifiedAt>(meta?.liveInvalidBefore||0)&&r.verifiedAt>(meta?.fullAt||0)&&r.verifiedAt>now()-LIVE_TTL_MS).map(r=>[r.code,r]));
     for(const r of records){if(!byCode.has(r.Code))byCode.set(r.Code,[]);byCode.get(r.Code).push(r);}
     const batch=new Map();for(const code of part){const overlay=live.get(code),matches=mergeMatches(code,byCode.get(code)||[],overlay,byId,meta?.fullAt||0),merged=new Map(matches.map(r=>[r.Identifier,r]));for(const record of created.filter(r=>r.Code===code)){const authoritative=byId.get(record.Identifier);if(authoritative&&authoritative.observedAt>record.createdAt){merged.set(record.Identifier,authoritative);continue;}if(record.status==='pending'||record.status==='ready')merged.set(record.Identifier,{Identifier:record.Identifier,Code:record.Code,Name:record.Name,Type:{Code:'Source Course'},lifecycle:'current',deleted:false,observedAt:record.createdAt,provenance:'creation'});}const values=[...merged.values()];if(values.length)batch.set(code,values);if(overlay)safeCodes.add(code);}results[index]=batch;
    });
@@ -36,7 +37,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
    const records=await d.collection('org_resolution_units').find({namespace,generation:meta.generation,Identifier:{$in:unique}}).toArray();
    return new Map(records.map(record=>[record.Identifier,record]));
   },
-  async remember(code,matches,verifiedAt){if(!matches.length)return;const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]}}}],{upsert:true});},
+  async remember(code,matches,verifiedAt){const d=await db();await d.collection('org_resolution_live').updateOne({_id:liveId(code)},[{$set:{namespace,code:{$literal:code},matches:{$cond:[{$gt:[{$ifNull:['$verifiedAt',0]},verifiedAt]},'$matches',{$literal:matches}]},verifiedAt:{$max:[{$ifNull:['$verifiedAt',0]},verifiedAt]},expiresAt:{$max:[{$ifNull:['$expiresAt',0]},verifiedAt+LIVE_TTL_MS]}}}],{upsert:true});},
   async registerCreated(record){const d=await db(),createdAt=Number(record.createdAt)||now(),doc={namespace,Identifier:String(record.Identifier),Name:String(record.Name),Code:String(record.Code),Type:{Code:'Source Course'},createdAt,provenance:String(record.provenance||'bulk-source-creator'),status:'ready'};await d.collection('org_resolution_created').updateOne({namespace,Identifier:doc.Identifier},{$setOnInsert:doc}, {upsert:true});return true;},
   async status(){return (await db()).collection('org_resolution_state').findOne({_id:metaId});},
   async requestSync(){
@@ -63,7 +64,7 @@ function createResolutionStore({uri,namespace,mongoClient,now=Date.now}){
   },
   async publish(token,generation,fullAt,asOf,summary){
    const d=await db(),state=d.collection('org_resolution_state'),previous=await state.findOne({_id:metaId,token});
-   const update={$set:{generation,fullAt,asOf,...summary}};
+   const update={$set:{generation,fullAt,asOf,liveInvalidBefore:asOf,...summary}};
    if(previous?.generation&&previous.generation!==generation)update.$push={retired:{generation:previous.generation,retiredAt:now()}};
    const r=await state.updateOne({_id:metaId,token,leaseUntil:{$gt:now()},$or:[{asOf:{$lte:asOf}},{asOf:{$exists:false}}]},update);
    if(r.matchedCount!==1)throw Object.assign(Error('Snapshot not published'),{code:'RESOLUTION_PUBLISH_REJECTED'});

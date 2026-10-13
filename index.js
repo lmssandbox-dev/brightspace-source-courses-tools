@@ -212,6 +212,8 @@ const diagnostics = createDiagnostics({
   workspace: true,
   activityForm: async res => {
     let health={state:'unavailable',assessment:null};try{health=await apiHealth.getLatest();}catch{}
+    const selected=res.locals.uiSection||'creation';
+    try{res.locals.orgLibraryAsOf=(await resolution.store.status())?.asOf;}catch{}
     lti.app.locals.apiHealthRisk=['critical','at_risk'].includes(health.assessment?.status)?health.assessment.status:'unknown';
     const context={inventory:apiHealthInventory,minimums:apiHealthMinimums};
     return workspace({
@@ -219,7 +221,7 @@ const diagnostics = createDiagnostics({
     dates:apiHealthView.toolWarning(health,context,'Date Manager')+bulkDates.form(res),
     replication:apiHealthView.toolWarning(health,context,'Source Course Deployer')+deploymentRoutes.form(res),
     apiHealth:apiHealthRoutes.render(res,health),apiHealthRisk:health.assessment?.status||'unknown',
-    selected:res.locals.uiSection||'creation',creation:apiHealthView.toolWarning(health,context,'Bulk Source Course Creator')+creationRoutes.form(res),
+    selected,creation:apiHealthView.toolWarning(health,context,'Bulk Source Course Creator')+creationRoutes.form(res),
     history:`<div class="history-grid"><section class="panel"><span class="eyebrow">Bulk Source Course Creator</span><h3>Source Course Creation Jobs</h3><p>Review validated rows, creation outcomes and Org Library registration.</p>${creationRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">Bulk Course Copy to Source Courses</span><h3>Course Copy Jobs</h3><p>Review course mappings, selected components, and copy results.</p>${copyRoutes.historyButton(res)}</section><section class="panel"><span class="eyebrow">ACTIVITY DATES MANAGER</span><h3>Date Update Jobs</h3><p>See course validation, applied dates and read-back results.</p>${bulkDates.historyButton(res)}</section><section class="panel"><span class="eyebrow">SOURCE COURSES DEPLOYER</span><h3>Deployment Jobs</h3><p>Review deployment, automatic reactivation, and background copy-log results.</p>${deploymentRoutes.historyButton(res)}</section></div>`,
     tools:diagnosticForm(res.locals.ltik)+activityDates.form(res)
   });},

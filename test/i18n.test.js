@@ -17,6 +17,15 @@ test('dynamic summaries preserve IDs, counts, and whitespace across languages',(
  assert.equal(translate('Tenant course name 9532','pt-BR'),'Tenant course name 9532');
  assert.equal(translate('Review & Confirm','unknown'),'Review & Confirm');
 });
+test('Source Course recheck guidance and update time are translated in all supported languages',()=>{
+ const timestamp='13 Oct 2026, 14:05 UTC',updated=`This app's information about Source Courses was last updated on ${timestamp}.`;
+ assert.equal(translate('Recently changed Source Courses?','es-419'),'¿Cambios recientes en los cursos de origen?');
+ assert.equal(translate(updated,'es-419'),`La información de esta aplicación sobre los cursos de origen se actualizó por última vez el ${timestamp}.`);
+ assert.equal(translate("If you've created, archived, restored, or deleted Source Courses directly in Brightspace since then, some changes may not be reflected here yet.",'pt-BR'),'Se você criou, arquivou, restaurou ou excluiu cursos de origem diretamente no Brightspace desde então, algumas alterações talvez ainda não apareçam aqui.');
+ assert.equal(translate('Check for recent changes in Brightspace','pt-BR'),'Verificar alterações recentes no Brightspace');
+ assert.equal(translate('Select this to check existing Source Courses directly in Brightspace before creating new ones. This may take a little longer.','es-419'),'Selecciona esta opción para comprobar directamente en Brightspace si ya existen cursos de origen antes de crear otros. Esto puede tardar un poco más.');
+ assert.equal(translate('Last update time unavailable.','pt-BR'),'Horário da última atualização indisponível.');
+});
 test('report translation changes headings only and preserves CSV body byte for byte',()=>{
  const csv='\uFEFF"Source ID","Replica name","Copy logs"\r\n"9532","Status","Todos os dados copiados com êxito\r\n<example>"';
  const result=translateReport(csv,'es-419');

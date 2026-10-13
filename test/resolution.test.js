@@ -21,19 +21,40 @@ test('shared warm cache resolves codes once and IDs-only preparation does not to
  let reads=0;const resolver=createOrgResolver({store:{async lookup(codes){reads++;assert.deepEqual(codes,['A']);return cached([['A',[record('1','A')]],],['A']);}},api:noApi,root});
  await resolver.prepare([]);assert.equal(reads,0);const session=await resolver.prepare(['A','A']);assert.equal((await session.resolve('A')).Identifier,'1');await session.resolve('A');assert.equal(reads,1);
 });
-test('live API matches without lifecycle evidence remain unknown and are not cached',async()=>{
- let calls=0,writes=0;
- const resolver=createOrgResolver({root,store:{lookup:async()=>cached(new Map()),async remember(){writes++;}},api:{async list(url,raw,options){calls++;assert.equal(new URL(url).searchParams.get('exactOrgUnitCode'),'a/b ?');assert.equal(options.maxPages,100);return [record('1','a/b ?')];}}});
- const session=await resolver.prepare(['a/b ?']);await Promise.all(Array.from({length:8},()=>assert.rejects(session.resolve('a/b ?'),{code:'CODE_STATUS_UNKNOWN'})));assert.equal(calls,1);assert.equal(writes,0);
- await assert.rejects((await resolver.prepare(['a/b ?'])).resolve('a/b ?'),{code:'CODE_STATUS_UNKNOWN'});assert.equal(calls,2);
+test('externally created Source Course resolves by code from one complete live result and caches lower-assurance evidence',async()=>{
+ let calls=0,writes=0,saved;
+ const resolver=createOrgResolver({root,store:{lookup:async()=>cached(new Map()),async remember(code,matches,verifiedAt){writes++;saved={code,matches,verifiedAt};}},api:{async list(url,raw,options){calls++;assert.equal(new URL(url).searchParams.get('exactOrgUnitCode'),'source_date_manager_test');assert.equal(options.maxPages,100);return [{Identifier:'71286',Code:'source_date_manager_test',Name:'Test Source',Type:{Id:8,Code:'SourceCourse'}}];}}});
+ const session=await resolver.prepare(['source_date_manager_test']);const result=await Promise.all(Array.from({length:8},()=>session.resolve('source_date_manager_test')));
+ assert.ok(result.every(row=>row.Identifier==='71286'&&row.lifecycle==='live-verified'));assert.equal(calls,1);assert.equal(writes,1);assert.equal(saved.code,'source_date_manager_test');assert.equal(saved.matches[0].provenance,'live-verified');assert.ok(Number.isFinite(saved.verifiedAt));
 });
 test('ambiguous cache is checked live; missing and genuinely ambiguous API results remain errors',async()=>{
  let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>cached([['A',[record('1','A'),record('2','A')]]]),remember:async()=>{}},api:{list:async url=>{calls++;return new URL(url).searchParams.get('exactOrgUnitCode')==='A'?[record('1','A'),record('2','A')]:[];}}});
  const session=await resolver.prepare(['A','missing']);await assert.rejects(session.resolve('A'),{code:'CODE_NOT_UNIQUE'});await assert.rejects(session.resolve('missing'),{code:'CODE_NOT_FOUND'});assert.equal(calls,2);
 });
-test('unique filtered cache treats an unclassified live competing ID as unknown',async()=>{
+test('unique filtered cache sees a competing organizational-unit type and rejects the duplicate code',async()=>{
  let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>new Map([['A',[record('1','A')]]]),remember:async()=>{}},api:{list:async()=>{calls++;return [record('1','A'),{Identifier:'99',Code:'A',Name:'Template',Type:{Code:'Course Template'}}];}}});
- await assert.rejects((await resolver.prepare(['A'])).resolve('A'),{code:'CODE_STATUS_UNKNOWN'});assert.equal(calls,1);
+ await assert.rejects((await resolver.prepare(['A'])).resolve('A'),{code:'CODE_NOT_UNIQUE'});assert.equal(calls,1);
+});
+test('live code and ID pair checks identity while ID-only resolution bypasses the code service',async()=>{
+ let calls=0;const resolver=createOrgResolver({root,store:{lookup:async()=>cached(new Map()),remember:async()=>{}},api:{list:async()=>{calls++;return [{Identifier:'71286',Code:'EXT',Name:'External',Type:{Id:8}}];}}});
+ const client=createCoursesClient({baseUrl:'https://tenant.example',lpVersion:'1.63',orgResolver:resolver,api:noApi}),session=await client.prepare([{orgUnitCode:'EXT'}]);
+ assert.equal((await client.resolve({orgUnitId:'71286',orgUnitCode:'EXT'},{resolver:session})).orgUnitId,'71286');
+ await assert.rejects(client.resolve({orgUnitId:'71287',orgUnitCode:'EXT'},{resolver:session}),{code:'ID_CODE_MISMATCH'});
+ assert.equal((await client.resolve({orgUnitId:'71286',orgUnitCode:''})).orgUnitId,'71286');assert.equal(calls,1);
+});
+test('empty archived results, known recycled evidence, malformed pages, and API failures fail safely',async()=>{
+ const make=async(list,known=[])=>{const resolver=createOrgResolver({root,store:{lookup:async()=>cached(known.length?[['A',known]]:new Map()),remember:async()=>{}},api:{list}});return resolver.prepare(['A']);};
+ await assert.rejects((await make(async()=>[])).resolve('A'),{code:'CODE_NOT_FOUND'});
+ await assert.rejects((await make(async()=>[record('1','A')],[{...record('1','A',1,true),lifecycle:'recycled'}])).resolve('A'),{code:'CODE_STATUS_UNKNOWN'});
+ await assert.rejects((await make(async()=>[{Identifier:'1',Code:'A',Name:'A'}])).resolve('A'),{code:'LIVE_LOOKUP_INCOMPLETE'});
+ await assert.rejects((await make(async()=>{throw Object.assign(Error('secret'),{status:403});})).resolve('A'),{code:'LIVE_LOOKUP_FAILED',status:403});
+ await assert.rejects((await make(async()=>{throw Error('Missing pagination bookmark');})).resolve('A'),{code:'LIVE_LOOKUP_INCOMPLETE'});
+});
+test('unique live evidence may resolve an unknown dataset lifecycle, but deleted evidence remains blocked',async()=>{
+ const unknown={...record('1','A'),lifecycle:'unknown'};
+ const resolveWith=async evidence=>{const resolver=createOrgResolver({root,store:{lookup:async()=>cached([['A',[evidence]]]),remember:async()=>{}},api:{list:async()=>[{Identifier:'1',Code:'A',Name:'Current',Type:{Id:3,Code:'CourseOffering'}}]}});return (await resolver.prepare(['A'])).resolve('A');};
+ const verified=await resolveWith(unknown);assert.equal(verified.Identifier,'1');assert.equal(verified.lifecycle,'live-verified');
+ await assert.rejects(resolveWith({...unknown,lifecycle:'deleted',deleted:true}),{code:'CODE_STATUS_UNKNOWN'});
 });
 test('unique live answer replaces ambiguous cache and concurrent rows share the lookup',async()=>{
  let calls=0,saved,verified=false;const cache=new Map([['A',[record('1','A'),record('2','A')]]]);
@@ -141,6 +162,15 @@ test('Mongo publish/renew are fenced, caches treat dollar-prefixed codes literal
  assert.equal(calls[0].filter.token,'lease');assert.equal(calls[0].filter.leaseUntil.$gt,100);
  await assert.rejects(store.renew('lease'),{code:'RESOLUTION_LEASE_LOST'});
  await store.remember('$code',[record('1','$code')],200);assert.deepEqual(calls.at(-1).update[0].$set.code,{$literal:'$code'});
+});
+test('live Mongo evidence is reused only while fresh and newer dataset publication supersedes it',async()=>{
+ const {createResolutionStore}=require('../src/resolution/store');let now=1000,fullAt=100;
+ const live={_id:'n:hash',namespace:'n',code:'A',verifiedAt:500,matches:[{Identifier:'9',Code:'A',Name:'External',Type:{Id:8,Code:'SourceCourse'},lifecycle:'live-verified',provenance:'live-verified'}]};
+ const collection=name=>({createIndex:async()=>{},findOne:async()=>({generation:'g',fullAt}),find:filter=>({toArray:async()=>name==='org_resolution_live'?[live]:[]})});
+ const store=createResolutionStore({uri:'mongodb://localhost/app',namespace:'n',now:()=>now,mongoClient:{connect:async()=>{},db:()=>({collection})}});
+ const fresh=await store.lookup(['A']);assert.equal(fresh.safeCodes.has('A'),true);assert.equal(fresh.get('A')[0].provenance,'live-verified');
+ now=500+15*60*1000+1;const expired=await store.lookup(['A']);assert.equal(expired.safeCodes.has('A'),false);
+ now=1000;fullAt=600;const superseded=await store.lookup(['A']);assert.equal(superseded.safeCodes.has('A'),false);assert.equal(superseded.has('A'),false);
 });
 test('Mongo ID lookup returns the persisted Department Type.Id and Type.Name without rewriting the record',async()=>{
  const department={Identifier:'71238',Code:'dept',Name:'Department Name',Type:{Id:170,Name:'A renamed type'}};
@@ -298,7 +328,7 @@ test('all four Org Library types resolve from Mongo evidence and mixed-type code
  const session=await resolver.prepare(codes);
  for(const code of ['offer','source','template','department'])assert.equal((await session.resolve(code)).Identifier,types.find(record=>record.Code===code).Identifier);
  await assert.rejects(session.resolve('offering-source'),{code:'CODE_NOT_UNIQUE'});await assert.rejects(session.resolve('department-template'),{code:'CODE_NOT_UNIQUE'});
- assert.equal((await session.resolve('source-history')).Identifier,'12');await assert.rejects(session.resolve('source-duplicates'),{code:'CODE_NOT_UNIQUE'});
+ await assert.rejects(session.resolve('source-history'),{code:'CODE_STATUS_UNKNOWN'});await assert.rejects(session.resolve('source-duplicates'),{code:'CODE_NOT_UNIQUE'});
  const evidence=await resolver.discover(['offering-source','offering-source']);assert.deepEqual(discovered,['offering-source']);assert.equal(evidence.get('offering-source').length,2);
  assert.equal((await resolver.lookupById('14')).Type.Id,170);
 });

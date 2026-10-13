@@ -53,6 +53,12 @@ test('Date Manager CSV appends creator identity on every row and protects formul
  assert.deepEqual(lines[0].slice(-3),['Full Name','User Org Code','User ID']);assert.deepEqual(lines[1].slice(-3),["'=2+2",'ORG-1','42']);
  const legacy=report({dates:{},rows:[{row:3,status:'invalid'}],courses:[],tasks:[]});assert.deepEqual(legacy.replace(/^\uFEFF/,'').split('\r\n')[1].match(/"((?:[^"]|"")*)"/g).slice(-3),['""','""','""']);
 });
+test('Date Manager CSV includes specific sanitized resolution failures while the page stays concise',()=>{
+ const job={dates:{},rows:[{row:2,status:'invalid',orgUnitCode:'missing',message:'Course could not be resolved uniquely as an accessible Course Offering or Source Course.',resolutionCode:'CODE_NOT_FOUND',resolutionMessage:'No live organizational unit matched this exact code.'},{row:3,status:'invalid',orgUnitCode:'broken',resolutionCode:'LIVE_LOOKUP_FAILED',resolutionMessage:'Brightspace live code verification failed (HTTP 403).'}],courses:[],tasks:[]};
+ const csv=report(job);assert.match(csv,/No live organizational unit matched this exact code/);assert.match(csv,/Brightspace live code verification failed \(HTTP 403\)/);assert.doesNotMatch(csv,/authorization|Bearer|response body/i);
+ const {createDateView}=require('../src/dates/view'),html=createDateView({writeEnabled:()=>true}).render({},job,{button:()=>'',now:()=>1000,page:1});
+ assert.doesNotMatch(html,/No live organizational unit matched|HTTP 403|CODE_NOT_FOUND|LIVE_LOOKUP_FAILED/);
+});
 test('Creator reconciliation action is signed, permission-gated, owner-bound, and targets only saved uncertain operations',async()=>{
  const secret='secret',time=1000,job={_id:'creator-job',kind:'sourceCreation',status:'completedWithErrors',templateReconciliationRootOrgUnitId:'1',templateReconciliationPlan:[{templateId:'10',departmentIds:['50']}],templateReconciliation:{'10':{status:'Uncertain',operations:{'add:50':{kind:'add',parentId:'50',status:'uncertain'},'remove:1':{kind:'remove',parentId:'1',status:'succeeded'}}}},tasks:[{TemplateId:'10',result:{status:'created',CreatedOrgUnitId:'100'}}],rows:[]};
  const operations=[];let gets=0;const jobs={get:async(id,owner)=>{gets++;assert.equal(id,'creator-job');assert.ok(owner);return job;},queueTemplateReconciliation:async(id,owner,requested)=>{operations.push({id,owner,requested});job.status='queued';return true;}};
