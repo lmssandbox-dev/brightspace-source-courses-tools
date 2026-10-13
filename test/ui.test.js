@@ -47,6 +47,14 @@ test('date review retains course-level blocking errors and does not offer Apply 
  assert.match(html,/Discovery incomplete/);assert.match(html,/Needs Attention/);assert.doesNotMatch(html,/Course validation/);assert.doesNotMatch(html,/action="\/apply"/);
 });
 
+test('rule-based date screens show numbered rule labels without exposing internal rule IDs',()=>{
+ const job={_id:'j',status:'ready',scheduleMode:'rules',timeZone:'America/Sao_Paulo',activityTypes:['assignment'],rules:[{id:'rule-3a44b366-6b2d-4066-9f07-0e551fa7e5d9',label:'WEEK 1',method:'startsWith',pattern:'WEEK 1',dates:{}}],rows:[],courses:[],tasks:[]};
+ for(const status of ['ready','running']){
+  job.status=status;const html=createDateView({writeEnabled:()=>true}).render({},job,helpers);
+  assert.match(html,/<span>Rule 1: <\/span>WEEK 1 · Starts with “WEEK 1”/);assert.doesNotMatch(html,/rule-3a44b366-6b2d-4066-9f07-0e551fa7e5d9/);
+ }
+});
+
 // ltijs registers its launch route during setup, before later app middleware.
 test('page shell wraps an LTI launch registered after serverAddon',()=>{
  const {installPageShell}=require('../src/ui/install');

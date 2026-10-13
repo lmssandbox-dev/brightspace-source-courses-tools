@@ -510,6 +510,7 @@
   "{0}: {1} · {2}: {3} · {4}: {5}": "{0}: {1} · {2}: {3} · {4}: {5}",
   "Rule ID": "Rule ID",
   "Rule {0}": "Rule {0}",
+  "Rule {0}:": "Rule {0}:",
   "Bulk Source Courses Creator": "Bulk Source Courses Creator",
   "Source Course list": "Source Course list",
   "Validate & Confirm": "Validate & Confirm",
