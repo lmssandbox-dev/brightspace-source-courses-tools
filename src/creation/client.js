@@ -1,6 +1,8 @@
 'use strict';
 const {id}=require('../shared/id');
 const {atLeast}=require('../shared/client');
+const safeText=value=>typeof value==='string'?value.replace(/<[^>]*>/g,' ').replace(/Bearer\s+\S+/gi,'Bearer [redacted]').replace(/\b(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret)\b\s*[:=]\s*["']?[^&\s"',;]+/gi,'$1=[redacted]').replace(/https?:\/\/\S+/gi,'[url]').replace(/[\r\n\t\0-\x1f]/g,' ').trim().slice(0,180):undefined;
+const safeCode=value=>typeof value==='string'||typeof value==='number'?String(value).replace(/[^a-z0-9_.-]/gi,'').slice(0,80)||undefined:undefined;
 function createCreationClient({api,http,oauth,baseUrl,lpVersion}){
  const root=new URL(baseUrl).origin+`/d2l/api/lp/${lpVersion}`;
  let rootIdPromise;
@@ -10,12 +12,24 @@ function createCreationClient({api,http,oauth,baseUrl,lpVersion}){
   async exactCode(code){configured();const url=new URL(`${root}/orgstructure/`);url.searchParams.set('exactOrgUnitCode',code);const rows=await api.list(url.href,undefined,{maxPages:100,maxItems:5000});return rows.filter(r=>r.Code===code).map(r=>({Identifier:id(r.Identifier),Code:r.Code,Name:r.Name,Type:r.Type}));},
   async parents(templateId){configured();return api.read(`${root}/orgstructure/${id(templateId)}/parents/`);},
   async rootOrgUnitId(){configured();rootIdPromise ||= api.read(`${root}/organization/info`).then(record=>id(record?.Identifier)).catch(error=>{rootIdPromise=undefined;throw error;});return rootIdPromise;},
-  async addParent(templateId,parentId,beforeSend=async()=>{}){return this.mutateParent('POST',`${root}/orgstructure/${id(templateId)}/parents/`,Number(id(parentId)),beforeSend);},
-  async removeParent(templateId,parentId,beforeSend=async()=>{}){return this.mutateParent('DELETE',`${root}/orgstructure/${id(templateId)}/parents/${id(parentId)}`,undefined,beforeSend);},
-  async mutateParent(method,url,data,beforeSend){
-   configured();let token;try{token=await oauth.getAccessToken();}catch{return {status:'failed',message:'Authentication failed; parent relationship was not changed.'};}
-   await beforeSend();try{const response=await http({method,url,timeout:30000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},...(method==='POST'?{data}:{})});if(response.status!==200)throw Error('Unexpected parent relationship response');return {status:'succeeded'};}
-   catch(error){const status=error.response?.status??error.status;const failed=[400,401,403,404].includes(status);return {status:failed?'failed':'uncertain',message:failed?'Brightspace rejected the parent relationship change.':'Parent update outcome is uncertain; a read-only parent lookup is required before retrying.',httpStatus:Number.isInteger(status)?status:null};}
+  async addParent(templateId,parentId,beforeSend=async()=>{}){const template=id(templateId),parent=id(parentId);return this.mutateParent('addParent','POST',`${root}/orgstructure/${template}/parents/`,Number(parent),template,parent,beforeSend);},
+  async removeParent(templateId,parentId,beforeSend=async()=>{}){const template=id(templateId),parent=id(parentId);return this.mutateParent('removeParent','DELETE',`${root}/orgstructure/${template}/parents/${parent}`,undefined,template,parent,beforeSend);},
+  async mutateParent(operation,method,url,data,templateId,parentId,beforeSend){
+   configured();const endpointPattern=method==='POST'?'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/':'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/{parentOrgUnitId}';
+   const diagnostic=(values={})=>({operation,httpMethod:method,endpointPattern,templateId,parentOrgUnitId:parentId,requestDispatched:false,responseReceived:false,responseConfirmedSuccess:false,...values});
+   let token;try{token=await oauth.getAccessToken();}catch{return {status:'failed',message:'Authentication failed; parent relationship was not changed.',diagnostics:diagnostic({failureClassification:'authentication',transportCode:'OAUTH_TOKEN_FAILED'})};}
+   await beforeSend();
+   try{
+    const response=await http({method,url,timeout:30000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{data}:{})});
+    const status=response.status,confirmed=status===200;
+    return {status:confirmed?'succeeded':Number.isInteger(status)&&status>=400&&status<500&&status!==408?'failed':'uncertain',...(confirmed?{}:{message:status>=400&&status<500&&status!==408?'Brightspace rejected the parent relationship change.':'Parent update outcome is uncertain; a read-only parent lookup is required before retrying.'}),diagnostics:diagnostic({requestDispatched:true,responseReceived:true,responseConfirmedSuccess:confirmed,httpStatus:Number.isInteger(status)?status:undefined,...(!confirmed?{failureClassification:status>=400&&status<500&&status!==408?'http_rejection':'unconfirmed_response',apiErrorCode:safeCode(response.data?.ErrorCode??response.data?.errorCode??response.data?.code),apiMessage:safeText(response.data?.Message??response.data?.message)}:{})})};
+   }catch(error){
+    const response=error.response,status=response?.status??error.httpStatus??error.status,requestDispatched=Boolean(response||error.request||error.requestDispatched||error.responseReceived),responseReceived=Boolean(response||error.responseReceived),responseConfirmedSuccess=response?.status===200||error.responseConfirmedSuccess===true;
+    if(responseConfirmedSuccess)return {status:'succeeded',diagnostics:diagnostic({requestDispatched:true,responseReceived:true,responseConfirmedSuccess:true,httpStatus:200})};
+    const definitiveRejection=Number.isInteger(status)&&status>=400&&status<500&&status!==408,preDispatchFailure=!requestDispatched&&!responseReceived;
+    const timedOut=['ECONNABORTED','ETIMEDOUT'].includes(error.code)||/timeout/i.test(String(error.message||''));
+    return {status:definitiveRejection||preDispatchFailure?'failed':'uncertain',message:definitiveRejection?'Brightspace rejected the parent relationship change.':preDispatchFailure?'Parent relationship request was not dispatched.':'Parent update outcome is uncertain; a read-only parent lookup is required before retrying.',diagnostics:diagnostic({requestDispatched,responseReceived,responseConfirmedSuccess:false,httpStatus:Number.isInteger(status)?status:undefined,failureClassification:definitiveRejection?'http_rejection':preDispatchFailure?'pre_dispatch_failure':timedOut?'timeout':'transport',transportCode:safeCode(error.code),apiErrorCode:safeCode(response?.data?.ErrorCode??response?.data?.errorCode??response?.data?.code),apiMessage:safeText(response?.data?.Message??response?.data?.message)})};
+   }
   },
   async create(task,beforeSend){configured();let token;try{token=await oauth.getAccessToken();}catch{return {status:'failed',submissionAttempted:false,systemic:true,message:'Authentication failed; creation was not sent.'};}await beforeSend();
    try{const response=await http({method:'POST',url:`${root}/sourceCourses/`,timeout:30000,maxRedirects:0,headers:{Authorization:`Bearer ${token}`},data:{Name:task.Name,Code:task.Code,TemplateId:Number(id(task.TemplateId))}});if(response.status!==200)throw Error('Unexpected Source Course creation response');const value=response.data?.OrgUnitId??response.data?.orgUnitId??response.data?.Identifier;const orgUnitId=id(value);if(!Number.isSafeInteger(Number(orgUnitId)))throw Error('Invalid returned Source Course ID');return {status:'created',orgUnitId,submissionAttempted:true};}

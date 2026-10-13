@@ -1060,7 +1060,7 @@
       "documentedMinimum": "1.49",
       "applicationMinimum": "1.60 for Source Course Creator",
       "contract": {
-        "request": "A single JSON number containing the parent Org Unit ID",
+        "request": "Content-Type: application/json; body is a single JSON number containing the parent Org Unit ID",
         "response": "HTTP 200 indicates the relationship was added"
       },
       "versionBehavior": "POST each distinct intended Department relationship once per affected template after creation workers finish; tenant testing on LP 1.63 confirmed HTTP 200 when the relationship already exists. Mutation intent is saved before dispatch.",

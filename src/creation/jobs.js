@@ -47,9 +47,10 @@ function createCreationJobs({client,orgResolver,store:directoryStore,now=Date.no
   const output=new Map();await pool(codes,8,async code=>output.set(code,await client.exactCode(code)),async()=>{await check();return true;});return output;
  }
 const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.submissionIntent||task.result?.status==='created'||task.result?.status==='uncertain');
- async function reconcile(job,save,renew){
+ async function reconcile(job,save,renew,templateIds){
   const plans=job.templateReconciliationPlan||[],map=job.templateReconciliation||(job.templateReconciliation={});
-  const active=plans.filter(plan=>(job.tasks||[]).some(task=>task.TemplateId===plan.templateId&&affected(task)));
+  const selected=Array.isArray(templateIds)?new Set(templateIds):null;
+  const active=plans.filter(plan=>(!selected||selected.has(plan.templateId))&&(job.tasks||[]).some(task=>task.TemplateId===plan.templateId&&affected(task)));
   if(!active.length)return;
   let rootId=positiveId(job.templateReconciliationRootOrgUnitId);
   if(!rootId){
@@ -67,11 +68,11 @@ const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.subm
      for(const operation of Object.values(entry.operations||{})){if(!['intent','uncertain'].includes(operation.status))continue;const present=parents.includes(operation.parentId);operation.status=operation.kind==='add'?(present?'succeeded':'pending'):(present?'pending':'succeeded');operation.message=operation.status==='succeeded'?'Confirmed by a read-only parent lookup.':'Safe to retry after a read-only parent lookup.';}await saveEntry();
     }
     for(const departmentId of plan.departmentIds){const opKey=`add:${departmentId}`,operation=entry.operations[opKey]||(entry.operations[opKey]={kind:'add',parentId:departmentId,status:'pending'});if(operation.status==='succeeded')continue;if(operation.status==='failed')throw Error('A prior Department parent addition failed.');
-     operation.status='intent';operation.message='Department parent addition will be submitted.';await saveEntry();await renew();
-     const result=await client.addParent(key,departmentId,()=>renew());operation.status=result.status;operation.message=result.message||'';await saveEntry();if(result.status==='uncertain')throw Object.assign(Error('Parent addition outcome is uncertain.'),{uncertain:true});if(result.status!=='succeeded')throw Error('Parent addition failed.');
+     operation.status='intent';operation.message='Department parent addition will be submitted.';operation.diagnostics={operation:'addParent',httpMethod:'POST',endpointPattern:'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/',templateId:key,parentOrgUnitId:departmentId,requestDispatched:null,responseReceived:false,responseConfirmedSuccess:false};await saveEntry();await renew();
+     const result=await client.addParent(key,departmentId,()=>renew());operation.status=result.status;operation.message=result.message||'';if(result.diagnostics)operation.diagnostics=result.diagnostics;await saveEntry();if(result.status==='uncertain')throw Object.assign(Error('Parent addition outcome is uncertain.'),{uncertain:true});if(result.status!=='succeeded')throw Error('Parent addition failed.');
     }
     const opKey=`remove:${rootId}`,operation=entry.operations[opKey]||(entry.operations[opKey]={kind:'remove',parentId:rootId,status:'pending'});if(operation.status==='failed')throw Error('A prior Root Organization parent removal failed.');if(operation.status!=='succeeded'){
-     operation.status='intent';operation.message='Root parent removal will be submitted after Department additions.';await saveEntry();await renew();const result=await client.removeParent(key,rootId,()=>renew());operation.status=result.status;operation.message=result.message||'';await saveEntry();if(result.status==='uncertain')throw Object.assign(Error('Root parent removal outcome is uncertain.'),{uncertain:true});if(result.status!=='succeeded')throw Error('Root parent removal failed.');
+     operation.status='intent';operation.message='Root parent removal will be submitted after Department additions.';operation.diagnostics={operation:'removeParent',httpMethod:'DELETE',endpointPattern:'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/{parentOrgUnitId}',templateId:key,parentOrgUnitId:rootId,requestDispatched:null,responseReceived:false,responseConfirmedSuccess:false};await saveEntry();await renew();const result=await client.removeParent(key,rootId,()=>renew());operation.status=result.status;operation.message=result.message||'';if(result.diagnostics)operation.diagnostics=result.diagnostics;await saveEntry();if(result.status==='uncertain')throw Object.assign(Error('Root parent removal outcome is uncertain.'),{uncertain:true});if(result.status!=='succeeded')throw Error('Root parent removal failed.');
     }
     entry.status='Updated';entry.message='Parent relationship updates completed successfully.';
    }catch(error){if(error.persistenceFailure||error.workerLease)throw error;entry.status=error.uncertain?'Uncertain':'Failed';entry.message=error.uncertain?'Parent update outcome is uncertain.':'Unable to restore the intended Department relationships.';entry.errorCode=String(error.code||'').slice(0,80);}
@@ -120,9 +121,9 @@ const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.subm
    if(!job.tasks.length)job.message='Validation finished with no eligible rows. Download the results report for skipped and invalid rows.';
   },
   async execute(job,save,renew,isCancelled=async()=>false){
-   const start=now();job.step3ElapsedMs=Number(job.step3ElapsedMs)||0;job.step3StartedAt=start;job.step3ProgressAt=start;let stop=false;
-   for(let i=0;i<job.tasks.length;i++){const task=job.tasks[i];if(task.result?.status==='created'&&task.result.registration!=='ready'){try{await renew();await this.register(task,job,save,i);}catch(error){if(error.persistenceFailure||error.workerLease)throw error;}}}
-   let cursor=0,fatalError=null;const workers=Array.from({length:Math.min(8,job.tasks.length)},async()=>{while(true){const index=cursor++;if(index>=job.tasks.length)return;const task=job.tasks[index];if(task.result)continue;
+   const start=now(),reconciliationOnly=job.operation==='templateReconciliation';job.step3ElapsedMs=Number(job.step3ElapsedMs)||0;job.step3StartedAt=start;job.step3ProgressAt=start;let stop=false;
+   if(!reconciliationOnly)for(let i=0;i<job.tasks.length;i++){const task=job.tasks[i];if(task.result?.status==='created'&&task.result.registration!=='ready'){try{await renew();await this.register(task,job,save,i);}catch(error){if(error.persistenceFailure||error.workerLease)throw error;}}}
+   let cursor=0,fatalError=null;const workers=reconciliationOnly?[]:Array.from({length:Math.min(8,job.tasks.length)},async()=>{while(true){const index=cursor++;if(index>=job.tasks.length)return;const task=job.tasks[index];if(task.result)continue;
     try{
      if(stop||job.cancelRequestedAt||await isCancelled(job._id,job.owner)){task.result={status:'notAttempted',message:'Not started because processing was stopped.'};job.step3ProgressAt=now();await save(job,{tasks:[index]});continue;}
      await renew();task.result={status:'uncertain',submissionIntent:true,message:'Creation outcome unconfirmed. Check Brightspace before retrying.'};job.step3ProgressAt=now();await save(job,{tasks:[index]});
@@ -133,10 +134,10 @@ const affected=task=>Boolean(task.result?.submissionAttempted||task.result?.subm
    }});
    const settled=await Promise.allSettled(workers);if(fatalError)throw fatalError;const rejected=settled.find(result=>result.status==='rejected');if(rejected)throw rejected.reason;
    // Reconcile every template that could have received a POST, including uncertain outcomes after cancellation.
-   await reconcile(job,save,renew);
-   const cancelled=Boolean(job.cancelRequestedAt||await isCancelled(job._id,job.owner));
+   await reconcile(job,save,renew,reconciliationOnly?job.templateReconciliationTemplateIds:undefined);
+   const cancelled=reconciliationOnly?false:Boolean(job.cancelRequestedAt||await isCancelled(job._id,job.owner));
    if(cancelled){for(let i=0;i<job.tasks.length;i++)if(!job.tasks[i].result){job.tasks[i].result={status:'notAttempted',message:'Not started because the job was cancelled.'};await save(job,{tasks:[i]});}job.status='cancelled';job.message='Cancelled. Confirmed creations, registration, and template parenting outcomes are retained.';}
-   else if(job.tasks.some(task=>task.result?.registration==='pending')){job.status='queued';job.resuming=true;job.message='Confirmed Source Courses are awaiting Org Library registration. Brightspace creation requests will not be repeated.';}
+   else if(!reconciliationOnly&&job.tasks.some(task=>task.result?.registration==='pending')){job.status='queued';job.resuming=true;job.message='Confirmed Source Courses are awaiting Org Library registration. Brightspace creation requests will not be repeated.';}
    else {const errors=job.tasks.some(task=>['failed','uncertain'].includes(task.result?.status))||Object.values(job.templateReconciliation||{}).some(entry=>['Failed','Uncertain'].includes(entry.status));job.status=errors?'completedWithErrors':'completed';}
    job.step3ElapsedMs+=Math.max(0,now()-start);job.step3StartedAt=null;job.step3ProgressAt=now();
   },

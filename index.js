@@ -244,7 +244,7 @@ for (const action of ['preview','apply','status','cancel','history','report','re
 }
 
 for(const action of ['preview','apply','status','cancel','history','report','checkCopies'])lti.app.post(`/copy/${action}`,copyRoutes[action]);
-for(const action of ['preview','apply','status','cancel','history','report'])lti.app.post(`/create/${action}`,creationRoutes[action]);
+for(const action of ['preview','apply','status','cancel','history','report','reconcile'])lti.app.post(`/create/${action}`,creationRoutes[action]);
 
 // Health-check
 lti.app.get('/ping', (req, res) => {

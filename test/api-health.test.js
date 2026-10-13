@@ -14,6 +14,13 @@ test('inventory covers registered source call sites and has unique documented ID
   assert.ok(endpoints.some(row => row.method === 'PUT'));
   assert.ok(endpoints.some(row => row.component === 'external'));
 });
+test('parent-add endpoint inventory records the numeric JSON request contract',()=>{
+  const endpoint=endpoints.find(row=>row.id==='lp-orgstructure-parent-add');
+  assert.equal(endpoint.method,'POST');
+  assert.equal(endpoint.contract.request,'Content-Type: application/json; body is a single JSON number containing the parent Org Unit ID');
+  assert.match(endpoint.contractVerification.summary,/numeric parent ID body/);
+  assert.ok(endpoint.docs.includes('https://docs.valence.desire2learn.com/res/orgunit.html'));
+});
 test('runtime versions preserve the existing LP fallback and environment source', () => {
   assert.deepEqual(resolveRuntimeVersions({}), { lp: { version: '1.53', source: 'application_fallback' }, le: { version: null, source: null } });
   assert.deepEqual(resolveRuntimeVersions({ D2L_LP_VERSION: '1.62', D2L_LE_VERSION: '1.99' }), { lp: { version: '1.62', source: 'environment' }, le: { version: '1.99', source: 'environment' } });

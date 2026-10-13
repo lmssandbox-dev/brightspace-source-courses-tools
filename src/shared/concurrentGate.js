@@ -170,7 +170,7 @@ function createConcurrentHttp({http,gate,baseUrl,now=Date.now,monotonicNow=()=>p
    const status=error?.response?.status??response?.status,reset=Math.max(seconds(read('retry-after'),now())||0,seconds(read('x-rate-limit-reset'),now())||0);
    const cost=Number(read('x-request-cost')??NaN),remaining=Number(read('x-rate-limit-remaining')??NaN),known=Number.isFinite(cost)&&cost>=0;
    const pauseMs=status===429||Number.isFinite(remaining)&&remaining<=Math.max(10000,known?cost:125)?Math.max(60000,reset):0;
-   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,gateTimings,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;throw e;}finally{tracker?.changePermit(-1);}
+   try{await gate.complete(permit,{route,status,cost:known?cost:null,remaining:Number.isFinite(remaining)?remaining:null,resetMs:reset,pauseMs,latencyMs:now()-startedAt,gateWaitMs:startedAt-waitingAt,gateTimings,adaptiveSpacing:known&&remaining>10000&&reset>0?Math.ceil(cost*reset/(remaining-10000)):0});}catch(e){poisoned=true;Object.assign(e,{requestDispatched:Boolean(response||error?.request||error?.response),responseReceived:Boolean(response||error?.response),httpStatus:Number.isInteger(status)?status:undefined,responseConfirmedSuccess:Boolean(response&&response.status===200&&!error)});throw e;}finally{tracker?.changePermit(-1);}
    if(!error)return response;
    if(status!==429||attempt>=maxRetries)throw error;
   }

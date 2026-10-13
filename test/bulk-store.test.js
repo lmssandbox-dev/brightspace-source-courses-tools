@@ -26,12 +26,22 @@ test('Mongo confirmation is a single owner/status/expiry-guarded mutation',async
  assert.equal(s.calls[0].update.$set.status,'queued');
  await s.store.get('j','other');assert.equal(s.calls[1].filter.owner,'other');
 });
+test('template-parent reconciliation queues only an owner-scoped terminal Creator job with unresolved saved operations',async()=>{
+ const s=setup();assert.equal(await s.store.queueTemplateReconciliation('j','owner',[{templateId:'44803',operationKey:'add:71238'},{templateId:'44803',operationKey:'remove:37129'}],100),true);
+ const call=s.calls[0];assert.equal(call.name,'bulk_date_jobs');assert.equal(call.op,'updateOne');assert.deepEqual(call.filter,{_id:'j',owner:'owner',namespace:'n',kind:'sourceCreation',status:'completedWithErrors',cancelRequestedAt:{$exists:false},$or:[
+  {'templateReconciliation.44803.status':'Uncertain','templateReconciliation.44803.operations.add:71238.status':{$in:['intent','uncertain']}},
+  {'templateReconciliation.44803.status':'Uncertain','templateReconciliation.44803.operations.remove:37129.status':{$in:['intent','uncertain']}}
+ ]});
+ assert.equal(call.update.$set.status,'queued');assert.equal(call.update.$set.operation,'templateReconciliation');assert.deepEqual(call.update.$set.templateReconciliationTemplateIds,['44803']);assert.equal(call.update.$set.templateReconciliationRecoveryRequestedAt,100);assert.deepEqual(call.update.$unset,{expiresAt:''});
+ s.calls.length=0;assert.equal(await s.store.queueTemplateReconciliation('j','owner',[],100),false);assert.equal(s.calls.length,0);
+});
 test('Date Manager status reads select aggregate metadata without decoding chunks',async()=>{
  const s=setup();await s.store.getStatus('j','owner');const call=s.calls.at(-1);
  assert.equal(call.name,'bulk_date_jobs');assert.equal(call.op,'get');assert.deepEqual(call.filter,{_id:'j',owner:'owner',namespace:'n'});
  assert.equal(call.projection.dateChunks,undefined);assert.equal(call.projection.totals,1);assert.equal(call.projection.progress,1);
  assert.equal(call.projection.step2ElapsedMs,1);assert.equal(call.projection.step2StartedAt,1);assert.equal(call.projection.step2ProgressAt,1);assert.equal(call.projection.step2CourseProgressAt,1);assert.equal(call.projection.step2SampleCount,1);
  assert.equal(call.projection.step3StartedAt,1);assert.equal(call.projection.step3ElapsedMs,1);assert.equal(call.projection.step3ProgressAt,1);
+ assert.equal(call.projection.creationSummary,1);assert.equal(call.projection.operation,1);assert.equal(call.projection.templateReconciliationPlan,1);
 });
 test('planning progress is metadata-only, worker-fenced, and does not publish chunks',async()=>{
  const s=setup();const fields={progress:{phase:'Discovering activities',processed:7,total:12},step2StartedAt:10,step2ProgressAt:80,step2RatePerMs:0.1,step2SampleAt:80,step2SampleProcessed:7,step2SamplePhase:'Discovering activities',step2SampleCount:3};

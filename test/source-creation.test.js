@@ -1,8 +1,10 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
+const axios=require('axios');
 const {parseCreationCsv,createCreationJobs,HEADERS}=require('../src/creation/jobs');
 const {createCreationClient}=require('../src/creation/client');
 const {createCreationView}=require('../src/creation/view');
+const creationProgress=require('../src/creation/progress');
 const {createOrgResolver}=require('../src/resolution/resolver');
 const header=HEADERS.join(',');
 const record=(Identifier,Code,Type='CourseTemplate',lifecycle='current',typeId)=>({Identifier,Code,Name:Code,Type:{Code:Type,...(typeId?{Id:typeId,Name:'Renamed department type'}:{})},lifecycle});
@@ -127,15 +129,84 @@ test('a submitted rejected creation still triggers write-first template reconcil
  await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.equal(reads,0);assert.equal(adds,1);assert.equal(deletes,1);assert.equal(job.templateReconciliation['10'].status,'Updated');assert.equal(job.status,'completedWithErrors');
 });
 
-test('API client uses documented parent list/add/remove routes and numeric add payload',async()=>{
- const calls=[],client=createCreationClient({api:{read:async url=>{calls.push(['GET',url]);return url.endsWith('/parents/')?[]:{Identifier:7};},list:async()=>[]},http:async config=>{calls.push([config.method,config.url,config.data]);return {status:200,data:{OrgUnitId:123}};},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.60'});
- assert.deepEqual(await client.parents('10'),[]);assert.equal(await client.rootOrgUnitId(),'7');assert.deepEqual(await client.addParent('10','50'),{status:'succeeded'});assert.deepEqual(await client.removeParent('10','50'),{status:'succeeded'});
- assert.deepEqual(calls[2],['POST','https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/',50]);assert.equal(calls[3][1],'https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/50');
+test('API client uses documented parent routes, JSON-number POST, and bearer authorization',async()=>{
+ const calls=[],client=createCreationClient({api:{read:async url=>{calls.push(['GET',url]);return url.endsWith('/parents/')?[]:{Identifier:7};},list:async()=>[]},http:async config=>{calls.push([config.method,config.url,config.data,config.headers]);return {status:200,data:{OrgUnitId:123}};},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.60'});
+ assert.deepEqual(await client.parents('10'),[]);assert.equal(await client.rootOrgUnitId(),'7');assert.equal((await client.addParent('10','50')).status,'succeeded');assert.equal((await client.removeParent('10','50')).status,'succeeded');
+ assert.deepEqual(calls[2].slice(0,3),['POST','https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/',50]);assert.equal(calls[2][3].Authorization,'Bearer token');assert.equal(calls[2][3]['Content-Type'],'application/json');
+ const serialized=axios.defaults.transformRequest[0](calls[2][2],new axios.AxiosHeaders(calls[2][3]));assert.equal(serialized,'50');assert.equal(calls[3][1],'https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/50');
  const result=await client.create({Name:'Bio',Code:'BIO',TemplateId:'10'},async()=>{});assert.deepEqual(result,{status:'created',orgUnitId:'123',submissionAttempted:true});
+});
+
+test('parent mutation classifies HTTP responses and sanitizes stored diagnostics',async()=>{
+ const outcomes=[
+  [{status:200,data:{}},'succeeded',200],
+  [{status:400,data:{ErrorCode:'InvalidParent',Message:'<b>Rejected</b> https://tenant.example/?token=secret'}},'failed',400],
+  [{status:403,data:{Message:'No permission'}},'failed',403],
+  [{status:429,data:{ErrorCode:'RateLimit'}},'failed',429],
+  [{status:503,data:{Message:'Unavailable'}},'uncertain',503]
+ ];
+ for(const [response,status,httpStatus] of outcomes){
+  let config;const client=createCreationClient({api:{},http:async value=>{config=value;return response;},oauth:{getAccessToken:async()=>'secret-token'},baseUrl:'https://tenant.example',lpVersion:'1.63'});
+  const result=await client.addParent('44803','71238');assert.equal(result.status,status);assert.equal(result.diagnostics.httpStatus,httpStatus);assert.equal(result.diagnostics.operation,'addParent');assert.equal(result.diagnostics.httpMethod,'POST');assert.equal(result.diagnostics.endpointPattern,'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/');assert.equal(result.diagnostics.templateId,'44803');assert.equal(result.diagnostics.parentOrgUnitId,'71238');assert.equal(result.diagnostics.requestDispatched,true);assert.equal(result.diagnostics.responseReceived,true);assert.equal(result.diagnostics.responseConfirmedSuccess,status==='succeeded');assert.equal(config.headers.Authorization,'Bearer secret-token');assert.equal(JSON.stringify(result).includes('secret-token'),false);
+  if(httpStatus===400){assert.equal(result.diagnostics.apiErrorCode,'InvalidParent');assert.doesNotMatch(result.diagnostics.apiMessage,/https|secret/);}
+ }
+});
+
+test('parent mutation treats timeouts and transport failures as uncertain, but pre-dispatch failures as failed',async()=>{
+ for(const [error,classification,dispatched] of [[Object.assign(Error('timeout'),{code:'ETIMEDOUT',request:{}}),'timeout',true],[Object.assign(Error('socket closed'),{code:'ECONNRESET',request:{}}),'transport',true],[Object.assign(Error('adapter rejected data'),{code:'ERR_BAD_REQUEST'}),'pre_dispatch_failure',false]]){
+  const client=createCreationClient({api:{},http:async()=>{throw error;},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.63'}),result=await client.addParent('10','50');
+  assert.equal(result.status,dispatched?'uncertain':'failed');assert.equal(result.diagnostics.failureClassification,classification);assert.equal(result.diagnostics.requestDispatched,dispatched);assert.equal(result.diagnostics.responseReceived,false);assert.equal(result.diagnostics.responseConfirmedSuccess,false);
+ }
+ const client=createCreationClient({api:{},http:async()=>{throw Object.assign(Error('API gate completion failed'),{requestDispatched:true,responseReceived:true,httpStatus:200,responseConfirmedSuccess:true});},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.63'}),confirmed=await client.addParent('10','50');
+ assert.equal(confirmed.status,'succeeded');assert.equal(confirmed.diagnostics.responseConfirmedSuccess,true);assert.equal(confirmed.diagnostics.httpStatus,200);
+});
+
+test('parenting-only recovery reads saved parents and never creates or registers Source Courses',async()=>{
+ for(const [name,initialParents,initialOps,expectedCalls] of [
+  ['Department absent',[{Identifier:'1'}],{'add:50':{kind:'add',parentId:'50',status:'uncertain'}},['GET','POST:50','DELETE:1']],
+  ['Department present',[{Identifier:'1'},{Identifier:'50'}],{'add:50':{kind:'add',parentId:'50',status:'uncertain'}},['GET','DELETE:1']],
+  ['Root delete already applied',[{Identifier:'50'}],{'add:50':{kind:'add',parentId:'50',status:'succeeded'},'remove:1':{kind:'remove',parentId:'1',status:'uncertain'}},['GET']]
+ ]){
+  let parents=initialParents.map(parent=>({...parent})),creates=0,registrations=0;const calls=[],fixture=resolverFixture(),feature=makeFeature(fixture,{
+   parents:async()=>{calls.push('GET');return parents;},addParent:async(_template,parent)=>{calls.push(`POST:${parent}`);parents.push({Identifier:parent});return {status:'succeeded'};},removeParent:async(_template,parent)=>{calls.push(`DELETE:${parent}`);parents=parents.filter(item=>item.Identifier!==parent);return {status:'succeeded'};},create:async()=>{creates++;return {status:'created',orgUnitId:'999'};}
+  });
+  feature.register=async()=>{registrations++;};
+  const job={_id:'j',owner:'owner',kind:'sourceCreation',status:'running',operation:'templateReconciliation',templateReconciliationTemplateIds:['10'],templateReconciliationRootOrgUnitId:'1',tasks:[{row:2,Name:'Bio',Code:'BIO',TemplateId:'10',result:{status:'created',CreatedOrgUnitId:'100',submissionAttempted:true,registration:'ready'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],templateReconciliation:{'10':{templateId:'10',status:'Uncertain',operations:structuredClone(initialOps)}}};
+  await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.deepEqual(calls,expectedCalls,name);assert.equal(creates,0,name);assert.equal(registrations,0,name);assert.equal(job.tasks[0].result.CreatedOrgUnitId,'100',name);assert.equal(job.templateReconciliation['10'].status,'Updated',name);assert.equal(job.status,'completed',name);
+ }
+});
+
+test('parent operation checkpoints carry compact diagnostics before and after HTTP dispatch',async()=>{
+ const snapshots=[],fixture=resolverFixture(),feature=makeFeature(fixture,{rootOrgUnitId:async()=>1,addParent:async(template,parent)=>({status:'succeeded',diagnostics:{operation:'addParent',httpMethod:'POST',endpointPattern:'/d2l/api/lp/{LP}/orgstructure/{templateId}/parents/',templateId:template,parentOrgUnitId:parent,requestDispatched:true,responseReceived:true,responseConfirmedSuccess:true,httpStatus:200}}),removeParent:async()=>({status:'succeeded'})});
+ const job={_id:'j',owner:'owner',status:'running',templateReconciliationRootOrgUnitId:'1',tasks:[{row:2,TemplateId:'10',result:{status:'created',CreatedOrgUnitId:'100',submissionAttempted:true}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}]};
+ await feature.execute(job,async value=>{const operation=value.templateReconciliation?.['10']?.operations?.['add:50'];if(operation)snapshots.push(structuredClone(operation));},async()=>{},async()=>false);
+ assert.equal(snapshots[0].status,'intent');assert.equal(snapshots[0].diagnostics.requestDispatched,null);assert.equal(snapshots.at(-1).status,'succeeded');assert.equal(snapshots.at(-1).diagnostics.responseConfirmedSuccess,true);assert.equal(snapshots.at(-1).diagnostics.httpStatus,200);
 });
 
 test('lightweight status projection without rows or tasks renders, and report includes parenting fields',()=>{
  const view=createCreationView(),html=view.render({},{_id:'j',status:'completed',creationSummary:{eligible:2,skipped:1,invalid:0,created:2,total:2},totals:{created:2}}, {controls:()=>'',button:()=>'',now:()=>1});
  assert.match(html,/CSV rows/);const csv=view.report({rows:[{row:2,sourceCourseName:'A',sourceCourseCode:'A',templateId:'10',resolvedDepartmentIds:'50',resolvedDepartmentCodes:'D1'}],tasks:[{row:2,TemplateId:'10',TemplateCode:'T1',result:{status:'created',CreatedOrgUnitId:'100'}}],templateReconciliation:{'10':{status:'Updated',message:'Parent relationship updates completed successfully.'}}});
  assert.match(csv,/DepartmentIds/);assert.match(csv,/Parent relationship updates completed successfully/);assert.match(csv,/\"50\"/);
+});
+
+test('Creator validation progress shows saved counters, completion percentage, timing, and confirmation controls',()=>{
+ const view=createCreationView(),helpers={controls:()=>'<input name="ticket">',button:(_res,action,_job,label,attrs='')=>`<button ${attrs}>${label}</button>`,now:()=>15000};
+ const active=view.render({}, {_id:'validating',status:'planning',rows:[],progress:{phase:'templates',processed:40,total:100},creationSummary:{eligible:15,skipped:5,invalid:20},step2StartedAt:0,step2ProgressAt:15000},{...helpers,now:()=>15000});
+ assert.match(active,/Source Course Validation Progress/);assert.match(active,/Validating Source Courses and Course Templates/);assert.match(active,/40%/);assert.match(active,/40<\/strong> \/ 100/);assert.match(active,/<progress max="100" value="40"/);for(const label of ['Eligible','Skipped','Invalid','Pending'])assert.match(active,new RegExp(label));assert.match(active,/Calculating ETA…/);assert.match(active,/id="create-refresh"/);assert.match(active,/setTimeout\(\(\)=>document\.getElementById\("create-refresh"\)\.requestSubmit\(\),10000\)/);
+ const ready=view.render({}, {_id:'ready',status:'ready',rows:[],progress:{phase:'validated',processed:8,total:8},creationSummary:{eligible:3,skipped:2,invalid:3},step2ElapsedMs:42000,expiresAt:50000},{...helpers,now:()=>15000});
+ assert.match(ready,/100%/);assert.match(ready,/Final elapsed: 42s/);assert.match(ready,/name="confirmCreation"/);assert.match(ready,/Download results CSV/);
+ assert.equal(creationProgress.step2({status:'planning',rows:[],progress:{processed:0,total:0}},15000).percent,0);assert.equal(creationProgress.step2({status:'planning',rows:[],progress:{processed:0,total:0}},15000).estimate,'Calculating ETA…');assert.equal(creationProgress.step2({status:'completed',rows:[],progress:{processed:0,total:0}},15000).percent,100);
+ const cancelled=creationProgress.step2({status:'cancelled',rows:[{status:'eligible'},{status:'pending'}],progress:{processed:1,total:2},creationSummary:{eligible:1,skipped:0,invalid:0}},15000);assert.equal(cancelled.percent,50);assert.equal(cancelled.estimate,'');
+ const interrupted=creationProgress.step2({status:'interrupted',rows:[],progress:{processed:1,total:2}},15000);assert.equal(interrupted.estimate,'Progress paused — ETA unavailable');
+});
+
+test('Creator creation progress separates source outcomes from template reconciliation and handles terminal edge states',()=>{
+ const view=createCreationView(),helpers={controls:()=>'',button:(_res,action)=>`<button>${action}</button>`,now:()=>30000};
+ const base={_id:'creating',status:'running',confirmedAt:1,creationSummary:{total:10,created:3,registrationPending:1,skipped:1,failed:0,uncertain:0,notAttempted:0},totals:{created:3,skipped:1},tasks:[],step3StartedAt:0,step3ProgressAt:30000};
+ const active=view.render({},base,helpers);assert.match(active,/Source Course Creation Progress/);assert.match(active,/Creating Source Courses/);assert.match(active,/40%/);assert.match(active,/4<\/strong> \/ 10/);assert.match(active,/Registration pending/);assert.match(active,/Approximate remaining time: 45s/);
+ const recon=view.render({}, {...base,creationSummary:{...base.creationSummary,created:9},totals:{created:9,skipped:1},templateReconciliationPlan:[{templateId:'10'}]},{...helpers,now:()=>60000});assert.match(recon,/Reconciling template parents/);assert.match(recon,/100%/);assert.match(recon,/Source Course creation is complete\. Template parent reconciliation is still in progress\./);assert.doesNotMatch(recon,/Approximate remaining time:|ETA: \d/);
+ const completed=view.render({}, {...base,status:'completed',creationSummary:{total:2,created:2},totals:{created:2},step3StartedAt:null,step3ElapsedMs:5000},{...helpers,now:()=>60000});assert.match(completed,/100%/);assert.match(completed,/Final elapsed: 5s/);assert.match(completed,/Creation and template reconciliation complete/);
+ const cancelled=view.render({}, {...base,status:'cancelled',creationSummary:{total:2,created:1,notAttempted:1},totals:{created:1,notAttempted:1},step3StartedAt:null,step3ElapsedMs:5000},{...helpers,now:()=>60000});assert.match(cancelled,/50%/);assert.match(cancelled,/Creation cancelled/);assert.match(cancelled,/Not attempted/);
+ const interrupted=creationProgress.step3({...base,status:'interrupted',step3StartedAt:null,step3ElapsedMs:9000},60000);assert.equal(interrupted.percent,40);assert.equal(interrupted.estimate,'Progress paused — ETA unavailable');
+ assert.equal(creationProgress.step3({status:'queued',tasks:[],creationSummary:{total:0}},1000).percent,0);assert.equal(creationProgress.step3({status:'completed',tasks:[],creationSummary:{total:0}},1000).percent,100);
 });

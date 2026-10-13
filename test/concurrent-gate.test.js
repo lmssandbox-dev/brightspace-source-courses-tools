@@ -147,7 +147,7 @@ test('production transport allows eight overlapping requests and drains 5,000 su
 test('production transport never repeats ambiguous writes and poisons scheduling on lost persistence',async()=>{
  for(const fail of ['timeout','reserve','complete']){
   let calls=0;const request=createRateLimitedHttp({baseUrl:'https://tenant.example',gate:{reserve:async()=>{if(fail==='reserve')throw Error('db');return {token:'t',reservedCost:10};},complete:async()=>{if(fail==='complete')throw Error('db');}},http:async()=>{calls++;if(fail==='timeout')throw Error('timeout');return {status:202,headers:{}};}});
-  await assert.rejects(()=>request(config));assert.equal(calls,fail==='reserve'?0:1);
+  await assert.rejects(()=>request(config),error=>fail!=='complete'||(error.requestDispatched===true&&error.responseReceived===true&&error.httpStatus===202&&error.responseConfirmedSuccess===false));assert.equal(calls,fail==='reserve'?0:1);
   if(fail!=='timeout'){await assert.rejects(()=>request(config));assert.equal(calls,fail==='reserve'?0:1);}
  }
 });

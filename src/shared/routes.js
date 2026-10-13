@@ -36,7 +36,7 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
     return true;
   }
   const handlers={form,historyButton:res=>button(res,'history','',kind==='courseCopy'?'View Copy Jobs':kind==='dates'?'View Date Jobs':kind==='sourceCreation'?'View Source Creation Jobs':'View Deployment Jobs')};
-  for(const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies'])handlers[action]=async(req,res)=>{
+  for(const action of ['preview','apply','status','cancel','history','report','review','activate','checkCopies','reconcile'])handlers[action]=async(req,res)=>{
     const timing=action==='status'&&kind==='dates'?markBulkStatusHandler(req):null;
     let diagnosticStage='authorization';
     const authStarted=timing?startBulkStatusPhase(req,'authorization'):null;
@@ -64,6 +64,21 @@ function createBulkDates({jobs,deploymentId,secret,writeEnabled,now=Date.now,vie
       finally {if(timing)recordBulkStatusPhase(req,initialReadPhase,readStarted);}
       if(!job||(job.kind||'dates')!==kind)return res.status(404).send('Job not found.');
       if(action==='checkCopies'){if(!['sourceDeployment','courseCopy'].includes(kind)||!await jobs.requestCopyCheck(job._id,owner(res)))return res.status(409).send('No submitted replicas are available to check, or deployment is still processing.');}
+      if(action==='reconcile'){
+        if(kind!=='sourceCreation'||!view?.canApply?.())return res.status(403).send('Required Source Course Creator permissions are unavailable.');
+        if(job.status!=='completedWithErrors')return res.status(409).send('Only a completed job with unresolved template parenting can be reconciled.');
+        const operations=[];
+        for(const plan of job.templateReconciliationPlan||[]){
+          const entry=job.templateReconciliation?.[plan.templateId];if(entry?.status!=='Uncertain')continue;
+          for(const [operationKey,operation] of Object.entries(entry.operations||{})){
+            const expected=operation.kind==='add'?`add:${operation.parentId}`:operation.kind==='remove'?`remove:${operation.parentId}`:'';
+            const planned=operation.kind==='add'?(plan.departmentIds||[]).includes(String(operation.parentId)):operation.kind==='remove'&&String(operation.parentId)===String(job.templateReconciliationRootOrgUnitId);
+            if(operationKey===expected&&planned&&['intent','uncertain'].includes(operation.status))operations.push({templateId:String(plan.templateId),operationKey});
+          }
+        }
+        if(!operations.length)return res.status(409).send('No unresolved saved template-parent operation is eligible for reconciliation.');
+        if(!await jobs.queueTemplateReconciliation(job._id,owner(res),operations))return res.status(409).send('Template parenting was already queued or is no longer eligible.');
+      }
       if(action==='apply') {
         if(kind==='courseCopy'&&req.body.confirmCopy!=='yes')return res.status(400).send('Confirm copying the selected components before continuing.');
         if(kind==='sourceCreation'&&req.body.confirmCreation!=='yes')return res.status(400).send('Confirm creation of the eligible Source Courses before continuing.');

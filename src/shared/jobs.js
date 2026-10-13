@@ -351,6 +351,7 @@ function createBulkJobs({store,courses,discovery,writers,writeEnabled,deployment
     activate:(id,owner)=>store.activate(id,owner,now()),
     review:(id,owner)=>store.review(id,owner,now()),
     async confirm(id,owner) {return store.confirm(id,owner,now());},
+    async queueTemplateReconciliation(id,owner,operations) {return store.queueTemplateReconciliation?.(id,owner,operations,now())||false;},
     async cancel(id,owner) {
       const cancelled=await store.cancel(id,owner);
       if(cancelled){const job=activePlans.get(id);if(job){cancelledJobs.add(id);job.status='cancelled';job.message='Planning was cancelled. Saved course and activity results are retained; no activity date updates were started.';}if(activeStep3Job===id)step3CancelJobs.add(id);if(activeDeploymentStep3Job===id)deploymentCancelJobs.add(id);}

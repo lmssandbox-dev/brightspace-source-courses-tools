@@ -53,6 +53,15 @@ test('Date Manager CSV appends creator identity on every row and protects formul
  assert.deepEqual(lines[0].slice(-3),['Full Name','User Org Code','User ID']);assert.deepEqual(lines[1].slice(-3),["'=2+2",'ORG-1','42']);
  const legacy=report({dates:{},rows:[{row:3,status:'invalid'}],courses:[],tasks:[]});assert.deepEqual(legacy.replace(/^\uFEFF/,'').split('\r\n')[1].match(/"((?:[^"]|"")*)"/g).slice(-3),['""','""','""']);
 });
+test('Creator reconciliation action is signed, permission-gated, owner-bound, and targets only saved uncertain operations',async()=>{
+ const secret='secret',time=1000,job={_id:'creator-job',kind:'sourceCreation',status:'completedWithErrors',templateReconciliationRootOrgUnitId:'1',templateReconciliationPlan:[{templateId:'10',departmentIds:['50']}],templateReconciliation:{'10':{status:'Uncertain',operations:{'add:50':{kind:'add',parentId:'50',status:'uncertain'},'remove:1':{kind:'remove',parentId:'1',status:'succeeded'}}}},tasks:[{TemplateId:'10',result:{status:'created',CreatedOrgUnitId:'100'}}],rows:[]};
+ const operations=[];let gets=0;const jobs={get:async(id,owner)=>{gets++;assert.equal(id,'creator-job');assert.ok(owner);return job;},queueTemplateReconciliation:async(id,owner,requested)=>{operations.push({id,owner,requested});job.status='queued';return true;}};
+ const routes=createBulkDates({jobs,deploymentId:'d',secret,kind:'sourceCreation',now:()=>time,view:{canApply:()=>true,render:()=>'<section>queued</section>'}});
+ const ticketFor=(action,id)=>{const payload=Buffer.from(JSON.stringify({kind:'sourceCreation',action,id,session:createHash('sha256').update('s').digest('hex'),expires:time+10000})).toString('base64url');return `${payload}.${createHmac('sha256',secret).update(payload).digest('hex')}`;};
+ const res=response();await routes.reconcile({body:{ticket:ticketFor('reconcile','creator-job'),jobId:'creator-job'}},res);
+ assert.equal(res.code,200);assert.match(res.body,/queued/);assert.equal(gets,2);assert.equal(operations.length,1);assert.equal(operations[0].id,'creator-job');assert.deepEqual(operations[0].requested,[{templateId:'10',operationKey:'add:50'}]);
+ const noScopeRoutes=createBulkDates({jobs,deploymentId:'d',secret,kind:'sourceCreation',now:()=>time,view:{canApply:()=>false,render:()=>''}}),denied=response();job.status='completedWithErrors';await noScopeRoutes.reconcile({body:{ticket:ticketFor('reconcile','creator-job'),jobId:'creator-job'}},denied);assert.equal(denied.code,403);assert.equal(operations.length,1);
+});
 test('rule CSV reports effective dates, rule label, and unmatched counts by course',()=>{
  const csv=report({scheduleMode:'rules',rules:[{id:'week1',label:'Week One'}],rows:[],courses:[{orgUnitId:'9',row:3,code:'BIO',coverage:{unmatched:4}}],tasks:[{orgUnitId:'9',ruleId:'week1',dates:{start:'s',due:'d',end:'e'},activity:{type:'assignment',id:'2'},name:'W01 Task',preview:{status:'ready'}}]});
  assert.match(csv,/"Activity","3","9","BIO","assignment","2","W01 Task","ready","week1","Week One","s","d","e"/);
