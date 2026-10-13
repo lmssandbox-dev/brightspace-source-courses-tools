@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "inventoryVerifiedAt": "2026-10-11",
+  "inventoryVerifiedAt": "2026-10-12",
   "sources": {
     "versioning": "https://docs.valence.desire2learn.com/res/apiprop.html",
     "general": "https://docs.valence.desire2learn.com/reference.html"
@@ -54,7 +54,7 @@
           "code": "route_deprecated",
           "min": "1.46",
           "max": "1.48",
-          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
           "verifiedAt": "2026-10-11",
           "sources": [
             "https://docs.valence.desire2learn.com/res/orgunit.html"
@@ -115,7 +115,7 @@
           "code": "route_deprecated",
           "min": "1.46",
           "max": "1.48",
-          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
           "verifiedAt": "2026-10-11",
           "sources": [
             "https://docs.valence.desire2learn.com/res/orgunit.html"
@@ -174,7 +174,7 @@
           "code": "route_deprecated",
           "min": "1.46",
           "max": "1.48",
-          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
           "verifiedAt": "2026-10-11",
           "sources": [
             "https://docs.valence.desire2learn.com/res/course.html"
@@ -262,7 +262,7 @@
           "code": "route_deprecated",
           "min": "1.46",
           "max": "1.48",
-          "message": "D2L documents this route as deprecated in API versions 1.46–1.48.",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
           "verifiedAt": "2026-10-11",
           "sources": [
             "https://docs.valence.desire2learn.com/res/course.html"
@@ -325,24 +325,26 @@
         "src/creation/client.js"
       ],
       "versionSource": "D2L_LP_VERSION; application fallback 1.53",
-      "documentedMinimum": null,
+      "documentedMinimum": "1.60",
       "applicationMinimum": "1.60",
       "contract": {
-        "request": "Name, Code, TemplateId",
-        "response": "created org-unit identifier"
+        "request": "CreateSourceCourseParams with Name, Code, TemplateId",
+        "response": "JSON object containing the created source course Org Unit ID"
       },
-      "versionBehavior": "Feature execution is gated at LP 1.60.",
+      "versionBehavior": "Source Course creation is subject to its documented subOrganizationOrgUnitId behavior; this application does not send that optional parameter and is gated at LP 1.60.",
       "docs": [
         "https://docs.valence.desire2learn.com/res/course.html#source-courses"
       ],
-      "minimumVersion": null,
-      "verifiedAt": "2026-10-11",
-      "contractEvidence": "Source-derived usage summary; exact endpoint contract was not independently verified in the official D2L reference.",
+      "minimumVersion": "1.60",
+      "verifiedAt": "2026-10-12",
+      "contractEvidence": "Official D2L Source Course request/response, OAuth scope, and route lifecycle reviewed 2026-10-12.",
       "contractVerification": {
-        "status": "not_verified",
-        "verifiedAt": null,
-        "summary": "Route-specific request and response contract has not been fully reviewed against the linked D2L reference.",
-        "sources": []
+        "status": "verified",
+        "verifiedAt": "2026-10-12",
+        "summary": "POST route, CreateSourceCourseParams fields, Org Unit ID response, orgunits:sourcecourses:write scope, and route lifecycle reviewed against official D2L docs.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/course.html#source-courses"
+        ]
       },
       "versionRisks": []
     },
@@ -930,6 +932,231 @@
       },
       "minimumVersion": null,
       "versionRisks": []
+    },
+    {
+      "id": "lp-organization-info",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/organization/info",
+      "features": [
+        "Bulk Source Course Creator"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": "1.49",
+      "applicationMinimum": "1.60 for Source Course Creator",
+      "contract": {
+        "response": "Organization object with root Org Unit Identifier, Name, and TimeZone"
+      },
+      "versionBehavior": "Resolved once per creation job and persisted before that job removes Root parent relationships.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-12",
+      "contractEvidence": "Official D2L organization info contract, response fields, and route lifecycle reviewed 2026-10-12.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-12",
+        "summary": "GET route and root organization Identifier response reviewed against the official D2L reference.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lp-orgstructure-parents",
+      "component": "lp",
+      "method": "GET",
+      "pattern": "/d2l/api/lp/{LP}/orgstructure/{orgUnitId}/parents/",
+      "features": [
+        "Bulk Source Course Creator"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": "1.49",
+      "applicationMinimum": "1.60 for Source Course Creator",
+      "contract": {
+        "response": "JSON array of direct parent OrgUnit records; consumed field Identifier"
+      },
+      "versionBehavior": "Used only during recovery when a durable parent mutation intent or uncertain response requires read-only reconciliation; never on the normal path or for final verification.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-12",
+      "contractEvidence": "Official D2L direct-parent response, scope, and route lifecycle reviewed 2026-10-12.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-12",
+        "summary": "GET route, direct-parent array response, organizations:organization:read scope, and route lifecycle reviewed against the official D2L reference.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lp-orgstructure-parent-add",
+      "component": "lp",
+      "method": "POST",
+      "pattern": "/d2l/api/lp/{LP}/orgstructure/{orgUnitId}/parents/",
+      "features": [
+        "Bulk Source Course Creator"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": "1.49",
+      "applicationMinimum": "1.60 for Source Course Creator",
+      "contract": {
+        "request": "A single JSON number containing the parent Org Unit ID",
+        "response": "HTTP 200 indicates the relationship was added"
+      },
+      "versionBehavior": "POST each distinct intended Department relationship once per affected template after creation workers finish; tenant testing on LP 1.63 confirmed HTTP 200 when the relationship already exists. Mutation intent is saved before dispatch.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-12",
+      "contractEvidence": "Official D2L parent-add request body, scope, response status, and route lifecycle reviewed 2026-10-12.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-12",
+        "summary": "POST route, numeric parent ID body, organizations:organization:create scope, HTTP 200 success, and route lifecycle reviewed against the official D2L reference.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lp-orgstructure-parent-remove",
+      "component": "lp",
+      "method": "DELETE",
+      "pattern": "/d2l/api/lp/{LP}/orgstructure/{orgUnitId}/parents/{parentOrgUnitId}",
+      "features": [
+        "Bulk Source Course Creator"
+      ],
+      "sourceFiles": [
+        "src/creation/client.js"
+      ],
+      "versionSource": "D2L_LP_VERSION; application fallback 1.53",
+      "documentedMinimum": "1.49",
+      "applicationMinimum": "1.60 for Source Course Creator",
+      "contract": {
+        "response": "HTTP 200 indicates the specified parent relationship was removed"
+      },
+      "versionBehavior": "Only the positively identified Root Organization relationship is removed, after intended Department additions succeed.",
+      "docs": [
+        "https://docs.valence.desire2learn.com/res/orgunit.html"
+      ],
+      "verifiedAt": "2026-10-12",
+      "contractEvidence": "Official D2L specific-parent deletion route, scope, response status, and route lifecycle reviewed 2026-10-12.",
+      "contractVerification": {
+        "status": "verified",
+        "verifiedAt": "2026-10-12",
+        "summary": "DELETE route, organizations:organization:delete scope, HTTP 200 success, and route lifecycle reviewed against the official D2L reference.",
+        "sources": [
+          "https://docs.valence.desire2learn.com/res/orgunit.html"
+        ]
+      },
+      "minimumVersion": "1.49",
+      "versionRisks": [
+        {
+          "status": "at_risk",
+          "code": "route_deprecated",
+          "min": "1.46",
+          "max": "1.48",
+          "message": "D2L documents this route as deprecated in API versions 1.46\u20131.48.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        },
+        {
+          "status": "critical",
+          "code": "route_obsolete",
+          "max": "1.45",
+          "message": "D2L documents this route as obsolete in API version 1.45 and earlier.",
+          "verifiedAt": "2026-10-12",
+          "sources": [
+            "https://docs.valence.desire2learn.com/res/orgunit.html"
+          ]
+        }
+      ]
     }
   ]
 }

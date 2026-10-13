@@ -33,10 +33,11 @@ test('health page renders a two-card dashboard with versions together and collap
  assert.match(html,/action="\/api-health\/check"/);assert.match(html,/name="ticket" value="signed"/);assert.match(html,/data-api-health-content/);
  assert.doesNotMatch(html,/<span class="eyebrow">/);assert.match(html,/<section class="api-dashboard" aria-label="API health dashboard">/);
  assert.match(html,/<article class="panel api-dashboard-card api-version-dashboard"><h2>LP\/LE versions<\/h2>/);assert.equal((html.match(/class="api-version-component"/g)||[]).length,2);
+ assert.doesNotMatch(html,/Additional version information|Tenant API support|Configured version source|D2L lifecycle status/);
  assert.match(html,/<details class="panel api-endpoint-disclosure"><summary>Endpoint details<\/summary>/);assert.doesNotMatch(html,/<details class="panel api-endpoint-disclosure" open/);
+ assert.doesNotMatch(html,/About this assessment|api-about/);
  assert.match(html,/<span class="api-endpoint-warning critical">Critical risk<\/span>/);assert.match(html,/A critical API version risk needs attention\./);
  assert.match(html,/11 Oct 2026.*10:00 UTC/);assert.doesNotMatch(html,/>2026-10-11T10:00:00/);
- assert.match(html,/<details class="panel api-about"><summary>About this assessment<\/summary>/);
  assert.match(html,/<span class="api-status critical">Critical<\/span>/);
 });
 
@@ -47,7 +48,7 @@ test('unverified endpoint contracts do not override supported version health',()
  assert.equal(rows.find(row=>row.endpoint.id==='lp-reoffered-courses').status,'healthy');
  assert.equal(rows.find(row=>row.endpoint.id==='lp-reoffered-courses').contractVerification,'not_verified');
  assert.match(html,/Contract review incomplete/);
- assert.match(html,/7 contracts Verified · 17 Not Verified · 1 Not Applicable/);
+ assert.match(html,/12 contracts Verified · 16 Not Verified · 1 Not Applicable/);
 });
 
 test('endpoint summaries use the assessment engine classifications and include external Not Applicable',()=>{
@@ -61,7 +62,7 @@ test('endpoint summaries use the assessment engine classifications and include e
  const html=view.render({state:'success',assessment:result},{inventory,minimums:trustedMinimums});
  const displayedCounts=[...html.matchAll(/class="api-health-count ([^"]+)"><strong>(\d+)<\/strong><span>([^<]+)<\/span>/g)].map(match=>[match[1],Number(match[2]),match[3]]);
  for(const key of ['healthy','update_available','at_risk','critical','unknown'])assert.ok(displayedCounts.some(([shown,count,label])=>shown===key&&count===(counts[key]||0)&&label===view.STATUS[key]),`${key} summary count`);
- assert.match(html,/25 inventoried endpoints · 1 Not Applicable/);
+ assert.match(html,/29 inventoried endpoints · 1 Not Applicable/);
 });
 
 test('critical verified application minimum risks produce a red sidebar indicator and tool warning',()=>{
@@ -79,7 +80,7 @@ test('critical verified application minimum risks produce a red sidebar indicato
 test('stale and failed checks keep last successful result visible but mark health Unknown',()=>{
  const assessment=sampleAssessment();
  const html=view.render({state:'failed_since_success',assessment:{...assessment,status:'unknown',stale:true},lastSuccessfulAt:assessment.checkedAt},{inventory,minimums:{}});
- assert.match(html,/result is marked Unknown/);assert.match(html,/result is stale because a newer check failed/);assert.match(html,/api-status unknown/);assert.doesNotMatch(html,/api-status healthy/);assert.match(html,/<strong>24<\/strong><span>Unknown<\/span>/);assert.match(html,/25 inventoried endpoints · 1 Not Applicable/);
+ assert.match(html,/result is marked Unknown/);assert.match(html,/result is stale because a newer check failed/);assert.match(html,/api-status unknown/);assert.doesNotMatch(html,/api-status healthy/);assert.match(html,/<strong>28<\/strong><span>Unknown<\/span>/);assert.match(html,/29 inventoried endpoints · 1 Not Applicable/);
  const unavailable=view.render({state:'unavailable',assessment:null},{inventory,minimums:{},versions:{lp:{version:'1.53'},le:{version:'1.97'}}});
  assert.match(unavailable,/<p class="api-configured-version">1\.53<\/p>/);assert.match(unavailable,/<p class="api-configured-version">1\.97<\/p>/);assert.match(unavailable,/No successful assessment is available yet/);
 });
@@ -99,7 +100,6 @@ test('health labels and summary classifications translate in all supported langu
  assert.equal(translate('25 inventoried endpoints · 7 contracts Verified · 17 Not Verified · 1 Not Applicable','es-419'),'25 endpoints inventariados · 7 contratos verificados · 17 sin verificar · 1 no aplican');
  assert.equal(translate('Monitor Brightspace API compatibility.','pt-BR'),'Monitorar a compatibilidade da API Brightspace.');
  assert.equal(translate('Assignment list','es-419'),'Lista de tareas');
- assert.equal(translate('About this assessment','pt-BR'),'Sobre esta avaliação');
  assert.equal(translate('LP/LE versions','es-419'),'Versiones LP/LE');
  assert.equal(translate('Last successful check','pt-BR'),'Última verificação bem-sucedida');
  assert.equal(translate('25 inventoried endpoints · 1 Not Applicable','pt-BR'),'25 endpoints inventariados · 1 não aplicáveis');

@@ -3,7 +3,10 @@ const {randomUUID,createHash}=require('node:crypto');
 const {normalize,fail}=require('./extract');
 const {logFailure}=require('../shared/diagnostics');
 function nextNight(now,hour){const date=new Date(now);date.setUTCHours(hour,0,0,0);if(date.getTime()<=now)date.setUTCDate(date.getUTCDate()+1);return date.getTime();}
-function eligible(record){const type=record.Type.Code.trim().toLowerCase();return !record.deleted&&['course offering','source course','course template'].includes(type);}
+function eligible(record,departmentTypeId=null){
+ const type=String(record.Type?.Code||'').trim().toLowerCase();
+ return ['course offering','source course','course template'].includes(type)||Number.isSafeInteger(departmentTypeId)&&record.Type?.Id===departmentTypeId;
+}
 function extractList(rows,schemaId){
  const seen=new Set();
  return rows.filter(r=>r.SchemaId===schemaId&&['Full','Differential'].includes(r.BdsType)).map(r=>{
@@ -19,10 +22,10 @@ function selectExtracts(rows,schemaId){
  if(!full)throw fail('DATASET_FULL_MISSING');
  return [full,...usable.filter(r=>r.BdsType==='Differential'&&r.at>full.at)];
 }
-function planSync(rows,schemaId,state){
+function planSync(rows,schemaId,state,departmentTypeId=null){
  const available=extractList(rows,schemaId),full=available.filter(r=>r.BdsType==='Full').at(-1);
  const hasLedger=state?.generation&&state.schemaId===schemaId&&Array.isArray(state.appliedExtracts);
- const tracked=hasLedger&&state.syncVersion===5;
+ const tracked=hasLedger&&state.syncVersion===7&&Object.hasOwn(state,'departmentTypeId')&&state.departmentTypeId===departmentTypeId;
  const rebuild=!tracked||full&&(full.at>state.fullAt||full.at===state.fullAt&&full.key!==state.fullKey);
  if(rebuild){
   if(!full)throw fail('DATASET_FULL_MISSING');
@@ -56,7 +59,7 @@ function selectSchema(schemas,schemaId=''){
  if(!matches[0].ExtractsLink)throw fail('DATASET_EXTRACT_LINK_MISSING');
  return matches[0];
 }
-function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=Date.now,enabled=true}){
+function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=Date.now,enabled=true,departmentTypeId=null}){
  let busy=false;
  async function run({force=false}={}){
   if(busy)return {skipped:'running'};busy=true;
@@ -67,7 +70,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
    const check=async()=>{if(leaseError)throw leaseError;};
    const schemas=await api.list(root+'/datasets/bds',undefined,{check,maxPages:100,maxItems:10000});
    const schema=selectSchema(schemas,schemaId),state=await store.status();
-   const plan=planSync(await api.list(schema.ExtractsLink,undefined,{check,maxPages:100,maxItems:10000}),schema.SchemaId,state);
+   const plan=planSync(await api.list(schema.ExtractsLink,undefined,{check,maxPages:100,maxItems:10000}),schema.SchemaId,state,departmentTypeId);
    const {extracts,fullAt}=plan;
    if(plan.mode==='current'){await store.finish(token,nextNight(now(),hour));return {skipped:'already_current',asOf:state.asOf};}
    if(plan.applied.length+extracts.length>10000)throw fail('DATASET_HISTORY_LIMIT');
@@ -84,7 +87,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
      try{record=normalize(row,extract.at);}catch(error){error.datasetRecord=count+1;error.datasetExtract=extract.BdsType;throw error;}
      if(seen.has(record.Identifier))throw fail('DATASET_DUPLICATE_ID');seen.add(record.Identifier);
      count++;rows++;
-     if(eligible(record))batch.push(record);
+     if(eligible(record,departmentTypeId))batch.push(record);
      else if(extract.BdsType==='Differential')removed.push(record.Identifier);
      if(batch.length+removed.length>=500)await flush();
     });
@@ -92,7 +95,7 @@ function createDirectorySync({store,api,root,readExtract,schemaId='',hour=6,now=
     if(extract.BdsType==='Full'){fullRows=count;if(!count)throw fail('DATASET_EMPTY_FULL');}
    }
    await check();await store.renew(token);
-   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:5,liveInvalidBefore:now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
+   await store.publish(token,generation,fullAt,asOf,{schemaId:schema.SchemaId,syncVersion:7,departmentTypeId,liveInvalidBefore:now(),syncMode:plan.mode,fullKey:plan.fullKey,datasetVersion:plan.version,appliedExtracts:[...plan.applied,...extracts.map(r=>({key:r.key,at:r.at}))],fullRows,importedRows:rows,extracts:extracts.length});published=true;
    await store.finish(token,nextNight(now(),hour));
    await store.cleanup(generation,fullAt);
    return {status:'ready',mode:plan.mode,fullRows,importedRows:rows,extracts:extracts.length,asOf};

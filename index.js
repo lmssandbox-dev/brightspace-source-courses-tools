@@ -199,7 +199,7 @@ const {createCopyClient}=require('./src/copy/client');
 const {createCopyJobs}=require('./src/copy/jobs');
 const {createCopyView}=require('./src/copy/view');
 const courseCopy=createCopyJobs({client:createCopyClient({api:brightspace,http:apiHttp,oauth,leRoot,sourceClient,lpVersion,orgResolver})});
-const creationEnabled=()=>hasScope(D2L_OAUTH2_SCOPES,'orgunits:sourcecourses:write')&&hasScope(D2L_OAUTH2_SCOPES,'organizations:organization:read')&&atLeast(lpVersion,'1.60');
+const creationEnabled=()=>hasScope(D2L_OAUTH2_SCOPES,'orgunits:sourcecourses:write')&&hasScope(D2L_OAUTH2_SCOPES,'organizations:organization:read')&&hasScope(D2L_OAUTH2_SCOPES,'organizations:organization:create')&&hasScope(D2L_OAUTH2_SCOPES,'organizations:organization:delete')&&atLeast(lpVersion,'1.60');
 const sourceCreation=createCreationJobs({client:createCreationClient({api:brightspace,http:apiHttp,oauth,baseUrl:BS_URL,lpVersion}),orgResolver,store:resolution.store});
 const deployment = createDeploymentJobs({client:sourceClient,enabled:deployEnabled,orgResolver,resolveCode:code=>sourceClient.resolveCode(code)});
 const bulkJobs = createBulkJobs({store:bulkStore,discovery,writers,writeEnabled,deployment,courseCopy,sourceCreation,

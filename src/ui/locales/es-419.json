@@ -704,5 +704,6 @@
   "External dataset download": "Descarga externa del conjunto de datos",
   "LP/LE versions": "Versiones LP/LE",
   "Last successful check": "Última verificación exitosa",
-  "{0} inventoried endpoints · {1} Not Applicable": "{0} endpoints inventariados · {1} no aplican"
+  "{0} inventoried endpoints · {1} Not Applicable": "{0} endpoints inventariados · {1} no aplican",
+  "Provide one Course Template ID or code and one or more Department IDs or codes separated by |. Department values identify the intended parents of the existing template.": "Indica un ID o código de plantilla y uno o más ID o códigos de departamento separados por |. Los departamentos serán los padres previstos de la plantilla existente."
 }

@@ -10,6 +10,7 @@ const yauzl=require('yauzl');
 const {parse}=require('csv-parse');
 const {id}=require('../shared/id');
 const fail=code=>Object.assign(Error('Organizational Units extract could not be imported'),{code});
+const SYSTEM_TYPES=new Set(['course offering','source course','course template']);
 const MAX_ZIP=256*1024*1024,MAX_CSV=512*1024*1024;
 function limitBytes(max){let size=0;return new Transform({transform(chunk,enc,done){size+=chunk.length;done(size>max?fail('DATASET_TOO_LARGE'):null,chunk);}});}
 function safeDownload(value,baseUrl,initial=false){
@@ -54,7 +55,7 @@ async function readZip(file,consume,signal){
   let checksum=0,bytes=0;
   const verify=new Transform({transform(chunk,enc,done){checksum=crc32(chunk,checksum);bytes+=chunk.length;done(bytes>MAX_CSV?fail('DATASET_TOO_LARGE'):null,chunk);},flush(done){done(checksum!==entry.crc32||bytes!==entry.uncompressedSize?fail('DATASET_ZIP_CHECKSUM'):null);}});
   const parser=parse({bom:true,skip_empty_lines:true,max_record_size:65536,columns:headers=>{
-   if(new Set(headers).size!==headers.length||!['OrgUnitId','Code','Name','Type','IsDeleted'].every(h=>headers.includes(h)))throw fail('DATASET_HEADERS');return headers;
+   if(new Set(headers).size!==headers.length||!['OrgUnitId','OrgUnitTypeId','Code','Name','Type','IsDeleted'].every(h=>headers.includes(h)))throw fail('DATASET_HEADERS');return headers;
   }});
   let count=0;
   await pipeline(stream,verify,parser,async source=>{for await(const row of source){if(++count>1000000)throw fail('DATASET_ROW_LIMIT');await consume(row);}},{signal});
@@ -73,11 +74,21 @@ function normalize(row,observedAt){
  };
  const code=text('Code',512,true),name=text('Name',1024,true),type=text('Type',512);
  // Type is descriptive metadata, not authorization. Empty labels do not change ID/code identity.
- // Recycled rows can have IsDeleted=FALSE. Either deletion timestamp excludes the row.
- // IsActive is unrelated: inactive courses remain valid mapping candidates.
- const deleted=flag==='1'||flag==='true'||Boolean(String(row.DeletedDate??'').trim()||String(row.RecycledDate??'').trim());
+ // Lifecycle is independent of IsActive. Missing fields stay unknown; IsDeleted=false
+ // alone cannot establish that an organizational unit is current.
+ const deletedDate=String(row.DeletedDate??'').trim(),recycledDate=String(row.RecycledDate??'').trim();
+ const lifecycle=recycledDate?'recycled':deletedDate||flag==='1'||flag==='true'?'deleted':flag==='0'||flag==='false'?
+  (row.DeletedDate!=null&&row.RecycledDate!=null?'current':'unknown'):'unknown';
+ const deleted=lifecycle!=='current';
  let identifier;try{identifier=id(row.OrgUnitId);}catch{invalid('OrgUnitId','invalid_id');}
- return {Identifier:identifier,Code:code,Name:name,Type:{Code:type},deleted,observedAt};
+ const rawTypeId=String(row.OrgUnitTypeId??'').trim();
+ if(!/^\d+$/.test(rawTypeId)||!Number.isSafeInteger(Number(rawTypeId))||Number(rawTypeId)<=0)invalid('OrgUnitTypeId','invalid_id');
+ const normalizedSystemType=SYSTEM_TYPES.has(type.trim().toLowerCase());
+ const normalizedType={Id:Number(rawTypeId),Name:type};
+ // System org-unit consumers still use Type.Code. Dataset Department identity is its type ID;
+ // never manufacture a Department Type.Code from the customizable Type name.
+ if(normalizedSystemType)normalizedType.Code=type;
+ return {Identifier:identifier,Code:code,Name:name,Type:normalizedType,lifecycle,deleted,DeletedDate:deletedDate||null,RecycledDate:recycledDate||null,observedAt};
 }
 
 module.exports={createExtractReader,readZip,normalize,safeDownload,fail};

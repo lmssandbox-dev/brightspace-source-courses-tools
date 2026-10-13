@@ -704,5 +704,6 @@
   "External dataset download": "External dataset download",
   "LP/LE versions": "LP/LE versions",
   "Last successful check": "Last successful check",
-  "{0} inventoried endpoints · {1} Not Applicable": "{0} inventoried endpoints · {1} Not Applicable"
+  "{0} inventoried endpoints · {1} Not Applicable": "{0} inventoried endpoints · {1} Not Applicable",
+  "Provide one Course Template ID or code and one or more Department IDs or codes separated by |. Department values identify the intended parents of the existing template.": "Provide one Course Template ID or code and one or more Department IDs or codes separated by |. Department values identify the intended parents of the existing template."
 }

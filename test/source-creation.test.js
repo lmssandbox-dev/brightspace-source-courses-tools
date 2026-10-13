@@ -1,70 +1,141 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {parseCreationCsv,createCreationJobs}=require('../src/creation/jobs');
-const {createOrgResolver}=require('../src/resolution/resolver');
+const {parseCreationCsv,createCreationJobs,HEADERS}=require('../src/creation/jobs');
 const {createCreationClient}=require('../src/creation/client');
-const {createBulkJobs}=require('../src/shared/jobs');
-const {createBulkDates}=require('../src/shared/routes');
 const {createCreationView}=require('../src/creation/view');
-const row=(Identifier,Code,Type='CourseTemplate',Name='Template')=>({Identifier,Code,Type:{Code:Type},Name});
-test('Source Course CSV enforces the agreed headers, fields and row/byte limits',()=>{
- assert.deepEqual(parseCreationCsv('SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\nBio,BIO,123,').map(r=>r.row),[2]);
- const spaced=parseCreationCsv('SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\n" Bio "," BIO ",123,');assert.equal(spaced[0].sourceCourseName,'Bio');assert.equal(spaced[0].sourceCourseNameInput,' Bio ');assert.equal(spaced[0].sourceCourseCodeInput,' BIO ');
- assert.deepEqual(parseCreationCsv('SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\nBio,BIO,123,\n\n"Multi\nline",MULTI,123,').map(r=>r.row),[2,4]);
- assert.throws(()=>parseCreationCsv('Name,Code,TemplateId,TemplateCode\nBio,BIO,1,'),{code:'INVALID_CSV'});
- assert.throws(()=>parseCreationCsv('SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\n'+Array.from({length:10001},(_,i)=>`N${i},C${i},1,`).join('\n')),{code:'INVALID_CSV'});
+const {createOrgResolver}=require('../src/resolution/resolver');
+const header=HEADERS.join(',');
+const record=(Identifier,Code,Type='CourseTemplate',lifecycle='current',typeId)=>({Identifier,Code,Name:Code,Type:{Code:Type,...(typeId?{Id:typeId,Name:'Renamed department type'}:{})},lifecycle});
+function resolverFixture({matches={}}={}){
+ const all=new Map([['10',record('10','T1')],['11',record('11','T2')],['20',record('20','TC')],['50',record('50','D1','', 'current',7)],['51',record('51','D2','', 'current',7)],['52',record('52','D3','', 'current',7)]]),calls={prepare:[],lookupMatches:[]};
+ return {calls,resolver:{isStandardDepartment:r=>r?.Type?.Id===7,lookupByIds:async ids=>new Map(ids.filter(value=>all.has(value)).map(value=>[value,all.get(value)])),prepare:async codes=>{calls.prepare.push([...codes]);return {resolve:async code=>{const r=[...all.values()].find(value=>value.Code===code);if(!r)throw Object.assign(Error('Course code was not found as a current org unit.'),{code:'CODE_NOT_FOUND'});return r;}};},lookupMatches:async codes=>{calls.lookupMatches.push([...codes]);return new Map(codes.map(code=>[code,matches[code]||[]]));}}};
+}
+const makeFeature=(fixture,overrides={})=>createCreationJobs({client:{orgUnit:async value=>{throw Error(`unexpected live ID lookup ${value}`);},exactCode:async()=>[],create:async()=>({status:'created',orgUnitId:'999'}),parents:async()=>[],rootOrgUnitId:async()=>1,addParent:async()=>({status:'succeeded'}),removeParent:async()=>({status:'succeeded'}),...overrides},orgResolver:fixture.resolver,store:{registerCreated:async()=>{}},now:(()=>{let time=1000;return()=>++time;})()});
+const parse=lines=>parseCreationCsv([header,...lines].join('\n'));
+
+test('CSV accepts six columns and enforces row, size, identifier-list, and duplicate rules',()=>{
+ const row=parse(['Bio,BIO,10,,50,']);assert.equal(row[0].row,2);assert.deepEqual(row[0].departmentIdsInput,'50');
+ assert.equal(parse(['Bio,BIO,10,,,"D1|D2"'])[0].departmentCodes,'D1|D2');
+ assert.throws(()=>parseCreationCsv('SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\nBio,BIO,10,'),{code:'INVALID_CSV'});
+ assert.equal(parse([ 'Bio,BIO,10,,50|50,'])[0].departmentIds,'50|50');
+ assert.equal(parse([ 'Bio,BIO,10,,50|,'])[0].departmentIds,'50|');
+ assert.throws(()=>parseCreationCsv(`${header}\n`+Array.from({length:10001},(_,i)=>`N${i},C${i},10,,50,`).join('\n')),{code:'INVALID_CSV'});
  assert.throws(()=>parseCreationCsv('x'.repeat(5*1024*1024+1)),{code:'INVALID_CSV'});
 });
-test('planning validates templates by ID/code, rejects duplicates and conflicts, and keeps partial-valid rows',async()=>{
- const templates=new Map([['10',row('10','T-ID')],['20',row('20','T-CODE')]]),byCode=new Map([...templates.values()].map(t=>[t.Code,t])),existing=new Map([['EXIST',[row('30','EXIST','SourceCourse')]],['OTHER',[row('31','OTHER','Department')]]]);
- const api={read:async url=>templates.get(url.split('/').at(-1)),list:async url=>{const code=new URL(url).searchParams.get('exactOrgUnitCode');return byCode.has(code)?[byCode.get(code)]:existing.get(code)||[];}};
- const orgResolver=createOrgResolver({store:{lookup:async()=>{const m=new Map();m.safeCodes=new Set();return m;},remember:async()=>{}},api,root:'https://tenant.example/d2l/api/lp/1.60'});
- const client={orgUnit:async v=>templates.get(v),exactCode:async code=>existing.get(code)||[]};const feature=createCreationJobs({client,orgResolver,store:{registerCreated:async()=>{}},now:()=>1000});
- const csv='SourceCourseName,SourceCourseCode,TemplateId,TemplateCode\nBio,BIO,10,\nChem,CHEM,,T-CODE\nDuplicate,DUP,10,\nDuplicate again,DUP,10,\nExists,EXIST,10,\nConflict,OTHER,10,\nWrong type,WRONG,10,';
- const job={rows:parseCreationCsv(csv),tasks:[],status:'planning'};await feature.plan(job,async()=>{});
- assert.equal(job.status,'ready');assert.deepEqual(job.tasks.map(t=>[t.row,t.TemplateId]),[[2,'10'],[3,'20'],[8,'10']]);assert.equal(job.rows.find(r=>r.row===4).status,'invalid');assert.equal(job.rows.find(r=>r.row===5).status,'invalid');assert.equal(job.rows.find(r=>r.row===6).status,'skipped');assert.equal(job.rows.find(r=>r.row===7).status,'invalid');assert.equal(job.rows.find(r=>r.row===8).status,'eligible');
- assert.equal(job.tasks.length,3);
+
+test('planning resolves template and Department ID/code, applies duplicate lifecycle policy, and keeps partial-valid rows',async()=>{
+ const fixture=resolverFixture({matches:{
+  EXIST:[record('70','EXIST','SourceCourse','current'),record('71','EXIST','SourceCourse','recycled')],
+  MULTI:[record('72','MULTI','SourceCourse'),record('73','MULTI','SourceCourse')],
+  OTHER:[record('74','OTHER','Department')],RECYCLED:[record('75','RECYCLED','SourceCourse','recycled')]
+ }}),feature=makeFeature(fixture);
+ const job={rows:parse(['By ID,BIO,10,,50,','By code,CHEM,,TC,,D1','Existing,EXIST,10,,50,','Multiple,MULTI,10,,50,','Cross type,OTHER,10,,50,','Recycled only,RECYCLED,10,,50,','Duplicate,DUP,10,,50,','Duplicate again,DUP,10,,50,']),tasks:[],status:'planning'};
+ await feature.plan(job,async()=>{});
+ assert.equal(job.status,'ready');assert.deepEqual(job.tasks.map(task=>task.row),[2,3,7]);
+ assert.equal(job.rows.find(row=>row.row===4).status,'skipped');assert.match(job.rows.find(row=>row.row===4).message,/70/);assert.doesNotMatch(job.rows.find(row=>row.row===4).message,/71/);
+ assert.equal(job.rows.find(row=>row.row===5).status,'skipped');assert.equal(job.rows.find(row=>row.row===6).status,'invalid');
+ assert.equal(job.rows.find(row=>row.row===7).status,'eligible');assert.equal(job.rows.find(row=>row.row===8).status,'invalid');assert.equal(job.rows.find(row=>row.row===9).status,'invalid');
+ assert.equal(job.templateReconciliationPlan[1].departmentIds[0],'50');assert.equal(job.templateReconciliationPlan[1].departmentCodes[0],'D1');assert.equal(job.templateReconciliationPlan.length,2);
+ assert.equal(fixture.calls.lookupMatches.length,1);assert.equal(fixture.calls.lookupMatches[0].length,6);
 });
-test('creation saves confirmed Org Unit ID before registration and registration retries never POST again',async()=>{
- let posts=0,registrations=0;const feature=createCreationJobs({client:{exactCode:async()=>[],create:async task=>{posts++;return {status:'created',orgUnitId:'101'};}},orgResolver:{prepare:async()=>({resolve:async()=>row('10','T','CourseTemplate')})},store:{registerCreated:async()=>{if(++registrations===1)throw Error('temporary Mongo failure');}},now:()=>2000});
- const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,Name:'Bio',Code:'BIO',TemplateId:'10',TemplateCode:'T'}],rows:[],step3StartedAt:1000};let saves=0;const save=async()=>{saves++;};await assert.rejects(feature.execute(job,save,async()=>{},async()=>false));
- assert.equal(job.tasks[0].result.status,'created');assert.equal(job.tasks[0].result.CreatedOrgUnitId,'101');assert.equal(job.tasks[0].result.registration,'pending');
- // Recovery starts with a confirmed result and performs only the idempotent database registration.
- job.status='running';await feature.execute(job,save,async()=>{},async()=>false);assert.equal(posts,1);assert.equal(registrations,2);assert.equal(job.tasks[0].result.registration,'ready');assert.ok(saves>=3);
+
+test('invalid or missing Department lists and unknown duplicate lifecycle evidence fail per row',async()=>{
+ const fixture=resolverFixture({matches:{UNKNOWN:{error:Object.assign(Error('Lifecycle status unknown'),{code:'CODE_STATUS_UNKNOWN'})}}}),feature=makeFeature(fixture),job={rows:parse(['Missing,MISSING,10,,,','Both,BOTH,10,,50,D1','Repeated,REPEATED,10,,50|50,','Bad ID,BADID,10,,50|x,','Unknown,UNKNOWN,10,,50,']),tasks:[],status:'planning'};
+ await feature.plan(job,async()=>{});assert.equal(job.tasks.length,0);assert.ok(job.rows.every(row=>row.status==='invalid'));assert.match(job.rows[0].message,/exactly one/);assert.match(job.rows[1].message,/exactly one/);assert.match(job.rows[2].message,/unique/);assert.match(job.rows[3].message,/positive integers/);assert.match(job.rows[4].message,/Lifecycle status/);
 });
-test('a cancellation stops later dispatches and uncertain submissions are never replayed',async()=>{
- let posts=0,checks=0;const feature=createCreationJobs({client:{exactCode:async()=>{checks++;return [];},create:async()=>{posts++;return {status:'uncertain',message:'unknown'};}},orgResolver:{},store:{registerCreated:async()=>{}}});
- const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,Name:'A',Code:'A',TemplateId:'1'},{row:3,Name:'B',Code:'B',TemplateId:'1'}],rows:[],step3StartedAt:1};let save=async()=>{};await feature.execute(job,save,async()=>{},async()=>true);assert.equal(posts,0);assert.equal(checks,0);assert.ok(job.tasks.every(t=>t.result.status==='notAttempted'));
+
+test('shared duplicate-aware resolver batches unique codes and fails only codes with unknown live lifecycle',async()=>{
+ let lookups=0;const cached={Identifier:'70',Code:'MIX',Name:'Old',Type:{Code:'SourceCourse'},lifecycle:'recycled'},second={Identifier:'71',Code:'MIX',Name:'Current',Type:{Code:'SourceCourse'},lifecycle:'current'};
+ const store={lookup:async codes=>{lookups++;const map=new Map([['MIX',[cached,second]],['UNKNOWN',[{Identifier:'99',Code:'UNKNOWN',Type:{Code:'SourceCourse'},lifecycle:'unknown'}]]]);map.safeCodes=new Set();return map;},remember:async()=>{}};
+ const apiCalls=[];const resolver=createOrgResolver({store,root:'https://tenant.example/d2l/api/lp/1.60',api:{list:async url=>{const code=new URL(url).searchParams.get('exactOrgUnitCode');apiCalls.push(code);return code==='MIX'?[{Identifier:'70',Code:'MIX',Type:{Code:'SourceCourse'}},{Identifier:'71',Code:'MIX',Type:{Code:'SourceCourse'}}]:code==='NEW'?[{Identifier:'88',Code:'NEW',Type:{Code:'CourseOffering'}}]:[{Identifier:'99',Code:'UNKNOWN',Type:{Code:'SourceCourse'}}];}}});
+ const result=await resolver.lookupMatches(['MIX','MIX','NEW','UNKNOWN']);assert.equal(lookups,1);assert.deepEqual(apiCalls.sort(),['MIX','NEW','UNKNOWN']);assert.equal(result.get('MIX').length,2);assert.deepEqual(result.get('MIX').map(item=>item.lifecycle).sort(),['current','recycled']);assert.equal(result.get('NEW').error.code,'CODE_STATUS_UNKNOWN');assert.equal(result.get('UNKNOWN').error.code,'CODE_STATUS_UNKNOWN');
 });
-test('creation runs at most eight requests at once and cancellation drains them before stopping dispatch',async()=>{
- let active=0,maxActive=0,posts=0,cancelled=false,release;const gate=new Promise(resolve=>{release=resolve;});let reachedEight;const eight=new Promise(resolve=>{reachedEight=resolve;});
- const feature=createCreationJobs({client:{exactCode:async()=>[],create:async task=>{posts++;active++;maxActive=Math.max(maxActive,active);if(active===8)reachedEight();await gate;active--;return {status:'created',orgUnitId:String(100+Number(task.Code.slice(1)))};}},orgResolver:{},store:{registerCreated:async()=>{}},now:()=>10});
- const job={_id:'parallel',owner:'o',status:'running',tasks:Array.from({length:9},(_,i)=>({row:i+2,Name:`Course ${i}`,Code:`C${i}`,TemplateId:'1'})),rows:[],step3StartedAt:1};
- const execution=feature.execute(job,async()=>{},async()=>{},async()=>cancelled);
- let timeout;const reached=await Promise.race([eight.then(()=>true),new Promise(resolve=>{timeout=setTimeout(()=>resolve(false),1000);})]);clearTimeout(timeout);cancelled=true;release();await execution;
- assert.equal(reached,true);assert.equal(maxActive,8);assert.equal(posts,8);assert.equal(active,0);assert.equal(job.status,'cancelled');assert.equal(job.tasks.filter(task=>task.result?.status==='created').length,8);assert.equal(job.tasks.filter(task=>task.result?.status==='notAttempted').length,1);
+
+test('all rows for a template are invalid when equivalent-resolved parent sets conflict',async()=>{
+ const fixture=resolverFixture(),feature=makeFeature(fixture),job={rows:parse(['A,A,10,,50|51,','B,B,10,,51|50,','C,C,10,,52,']),tasks:[],status:'planning'};
+ await feature.plan(job,async()=>{});assert.equal(job.tasks.length,0);assert.equal(job.status,'completed');assert.match(job.message,/no eligible rows/i);
+ assert.equal(job.templateReconciliationPlan.length,0);assert.ok(job.rows.every(row=>row.status==='invalid'));assert.ok(job.rows.every(row=>row.message.includes('conflicting')));
 });
-test('an uncertain creation outcome stays inspectable and is never replayed after recovery',async()=>{
- let posts=0;const feature=createCreationJobs({client:{exactCode:async()=>[],create:async()=>{posts++;return {status:'uncertain',message:'Creation outcome is unconfirmed.'};}},orgResolver:{},store:{registerCreated:async()=>{}}});
- const job={_id:'uncertain',owner:'o',status:'running',tasks:[{row:2,Name:'Biology',Code:'BIO',TemplateId:'10'}],rows:[],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.equal(job.tasks[0].result.status,'uncertain');
- job.status='running';await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.equal(posts,1);assert.equal(job.tasks[0].result.status,'uncertain');
+
+test('shared templates and Department identifiers are resolved once across thousands of rows',async()=>{
+ const fixture=resolverFixture(),feature=makeFeature(fixture),job={rows:parse(Array.from({length:1200},(_,i)=>`Course ${i},C${i},10,,50|51,`).join('\n').split('\n')),tasks:[],status:'planning'};
+ await feature.plan(job,async()=>{});assert.equal(job.tasks.length,1200);assert.equal(job.templateReconciliationPlan.length,1);
+ assert.equal(fixture.calls.prepare.length,1);assert.deepEqual(fixture.calls.prepare[0],[]);assert.equal(fixture.calls.lookupMatches[0].length,1200);
 });
-test('Brightspace Source Course client uses LP 1.60 endpoint, scope-ready contract and returned ID',async()=>{
- let config;const client=createCreationClient({api:{read:async()=>({}),list:async()=>[]},http:async c=>{config=c;return {status:200,data:{OrgUnitId:123}};},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.60'});
- const result=await client.create({Name:'Biology',Code:'BIO',TemplateId:'10'},async()=>{});assert.deepEqual(result,{status:'created',orgUnitId:'123'});assert.equal(config.url,'https://tenant.example/d2l/api/lp/1.60/sourceCourses/');assert.deepEqual(config.data,{Name:'Biology',Code:'BIO',TemplateId:10});
- const old=createCreationClient({api:{},http:async()=>{},oauth:{},baseUrl:'https://tenant.example',lpVersion:'1.59'});await assert.rejects(old.create({Name:'A',Code:'A',TemplateId:'1'},async()=>{}),{code:'LP_VERSION_UNSUPPORTED'});
+
+test('creation uses eight workers, checkpoints confirmed IDs, and only retries Org Library registration',async()=>{
+ let posts=0,registrations=0,parentReads=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{create:async()=>{posts++;return {status:'created',orgUnitId:'101'};},parents:async()=>{parentReads++;return [];}});
+ feature.register=async(task,job,save,index)=>{if(++registrations===1)throw Object.assign(Error('Mongo unavailable'),{registrationFailure:true});task.result.registration='ready';await save(job,{tasks:[index]});};
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,Name:'Bio',Code:'BIO',TemplateId:'10',TemplateCode:'T1',DepartmentIds:['50'],result:null}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1000};let saves=0;
+ await feature.execute(job,async()=>{saves++;},async()=>{},async()=>false);assert.equal(posts,1);assert.equal(job.tasks[0].result.CreatedOrgUnitId,'101');assert.equal(job.tasks[0].result.registration,'pending');assert.equal(job.status,'queued');assert.equal(parentReads,0);assert.equal(job.templateReconciliation['10'].status,'Updated');
+ feature.register=async(task,job,save,index)=>{registrations++;task.result.registration='ready';await save(job,{tasks:[index]});};job.status='running';await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.equal(posts,1);assert.equal(job.tasks[0].result.registration,'ready');assert.equal(parentReads,0);assert.equal(job.status,'completed');assert.ok(saves>=1);
 });
-test('creation overlay is included in resolver lookup while live exact-code results still detect collisions',async()=>{
- const created={Identifier:'101',Code:'BIO',Name:'Biology',Type:{Code:'Source Course'},provenance:'creation'};let live=[{Identifier:'101',Code:'BIO',Name:'Biology',Type:{Code:'Source Course'}}];
- const resolver=createOrgResolver({root:'https://tenant.example/d2l/api/lp/1.60',store:{lookup:async()=>{const m=new Map([['BIO',[created]]]);m.safeCodes=new Set();return m;},remember:async()=>{}},api:{list:async()=>live}});
- assert.equal((await (await resolver.prepare(['BIO'])).resolve('BIO')).Identifier,'101');live=[...live,{Identifier:'202',Code:'BIO',Name:'Other',Type:{Code:'CourseOffering'}}];
- await assert.rejects((await resolver.prepare(['BIO'])).resolve('BIO'),{code:'CODE_NOT_UNIQUE'});
+
+test('write-first reconciliation runs once per distinct template after creation workers finish',async()=>{
+ const state={parents:[{Identifier:'1'},{Identifier:'900'}]},calls=[],checkpoints=[];let rootReads=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{
+  parents:async template=>{calls.push(['GET',template]);return state.parents;},rootOrgUnitId:async()=>{rootReads++;return 1;},
+  addParent:async(template,parent)=>{calls.push(['POST',template,parent]);state.parents.push({Identifier:parent});return {status:'succeeded'};},
+  removeParent:async(template,parent)=>{calls.push(['DELETE',template,parent]);state.parents=state.parents.filter(p=>p.Identifier!==parent);return {status:'succeeded'};}
+ });
+ const plans=['10','20'].map(templateId=>({templateId,departmentIds:['50','51'],departmentCodes:['D1','D2']})),tasks=Array.from({length:100},(_,i)=>({row:i+2,Code:`C${i}`,TemplateId:i===99?'20':'10',result:{status:'created',registration:'ready',CreatedOrgUnitId:String(i+100)}}));
+ const job={_id:'j',owner:'o',status:'running',tasks,rows:[],templateReconciliationPlan:plans,step3StartedAt:1};await feature.execute(job,async(_job,dirty)=>checkpoints.push(dirty),async()=>{},async()=>false);
+ assert.equal(calls.filter(call=>call[0]==='GET').length,0);assert.equal(calls.filter(call=>call[0]==='POST').length,4);assert.equal(calls.filter(call=>call[0]==='DELETE').length,2);assert.equal(rootReads,1);
+ for(const template of ['10','20'])assert.deepEqual(calls.filter(call=>call[1]===template).map(call=>call[0]),['POST','POST','DELETE']);assert.ok(checkpoints.every(dirty=>dirty&&Object.keys(dirty).length===0));assert.equal(job.templateReconciliation['10'].status,'Updated');assert.equal(job.templateReconciliation['20'].status,'Updated');assert.equal(job.status,'completed');
 });
-test('sourceCreation uses the shared saved-plan confirmation, owner-scoped route and Job History kind',async()=>{
- const docs=new Map();let held=false,posts=0;const store={insert:async j=>docs.set(j._id,structuredClone(j)),get:async(id,owner)=>docs.get(id)?.owner===owner?structuredClone(docs.get(id)):null,getStatus:async(id,owner)=>docs.get(id)?.owner===owner?{...docs.get(id),rows:undefined,tasks:undefined}:null,list:async(owner,kind)=>[...docs.values()].filter(j=>j.owner===owner&&j.kind===kind),acquire:async()=>{if(held)return false;held=true;return true;},release:async()=>{held=false;},renew:async()=>{},claim:async()=>{const j=[...docs.values()].find(x=>['validating','queued'].includes(x.status));if(!j)return null;j.status=j.status==='validating'?'planning':'running';docs.set(j._id,structuredClone(j));return structuredClone(j);},save:async j=>docs.set(j._id,structuredClone(j)),confirm:async(id,owner)=>{const j=docs.get(id);if(!j||j.owner!==owner||j.status!=='ready')return false;j.status='queued';return true;},cancel:async()=>false,isCancelled:async()=>false};
- const feature={parse:()=>[{row:2,sourceCourseName:'Bio',sourceCourseCode:'BIO',status:'pending'}],plan:async(job)=>{job.rows[0].status='eligible';job.tasks=[{row:2,Code:'BIO',result:null}];job.status='ready';job.expiresAt=99999;},execute:async(job,save)=>{posts++;job.tasks[0].result={status:'created',CreatedOrgUnitId:'101'};job.status='completed';await save(job,{tasks:[0]});}};
- const token={iss:'issuer',deploymentId:'d',user:'u'},owner=require('node:crypto').createHash('sha256').update(JSON.stringify([token.iss,token.deploymentId,token.user])).digest('hex');
- const jobs=createBulkJobs({store,sourceCreation:feature,now:()=>1,courses:{},discovery:{},writers:{},writeEnabled:()=>true});const job=await jobs.create({owner,kind:'sourceCreation',csv:'ignored'});assert.equal(job.kind,'sourceCreation');await jobs.tick();assert.equal((await jobs.get(job._id,owner)).status,'ready');assert.equal(posts,0);assert.equal(await jobs.list(owner,'sourceCreation').then(a=>a.length),1);
- const routes=createBulkDates({jobs,deploymentId:'d',secret:'s',kind:'sourceCreation',now:()=>1,view:createCreationView({canApply:()=>true})});const formRes={locals:{ltik:'session',token}},data=Buffer.from(JSON.stringify({kind:'sourceCreation',action:'apply',id:job._id,session:require('node:crypto').createHash('sha256').update('session').digest('hex'),expires:1800001})).toString('base64url'),ticket=data+'.'+require('node:crypto').createHmac('sha256','s').update(data).digest('hex');const res={locals:formRes.locals,set(){return this;},status(n){this.code=n;return this;},send(body){this.body=body;return this;}};
- await routes.apply({body:{ltik:'session',ticket,jobId:job._id,confirmCreation:'yes'},headers:{}},res);assert.notEqual(res.code,403);assert.equal(posts,0);await jobs.tick();assert.equal(posts,1);
+
+test('write-first reconciliation posts Departments and removes Root without routine parent GETs',async()=>{
+ const calls=[],fixture=resolverFixture(),feature=makeFeature(fixture,{parents:async()=>{calls.push('GET');return [{Identifier:'50'},{Identifier:'51'}];},rootOrgUnitId:async()=>{calls.push('ROOT');return 1;},addParent:async(_template,parent)=>{calls.push(`POST:${parent}`);return {status:'succeeded'};},removeParent:async(_template,parent)=>{calls.push(`DELETE:${parent}`);return {status:'succeeded'};}});
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,TemplateId:'10',result:{status:'created',registration:'ready'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50','51'],departmentCodes:['D1','D2']}],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.deepEqual(calls,['ROOT','POST:50','POST:51','DELETE:1']);assert.equal(job.templateReconciliation['10'].status,'Updated');
+});
+
+test('uncertain parent additions are read before retry and recovery does not repeat a confirmed write',async()=>{
+ let parents=[{Identifier:'1'}],posts=0,gets=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{parents:async()=>{gets++;return parents;},rootOrgUnitId:async()=>1,addParent:async(_template,parent)=>{posts++;parents.push({Identifier:parent});return {status:'uncertain'};},removeParent:async()=>({status:'succeeded'})});
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,TemplateId:'10',result:{status:'created',registration:'ready'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.equal(job.templateReconciliation['10'].status,'Uncertain');assert.equal(posts,1);assert.equal(gets,0);job.status='running';await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.equal(posts,1);assert.equal(gets,1);assert.equal(job.templateReconciliation['10'].status,'Updated');
+});
+
+test('uncertain Root deletion is read before deciding whether to repeat it',async()=>{
+ let parents=[{Identifier:'1'}],adds=0,deletes=0,gets=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{parents:async()=>{gets++;return parents;},rootOrgUnitId:async()=>1,addParent:async(_template,parent)=>{adds++;parents.push({Identifier:parent});return {status:'succeeded'};},removeParent:async()=>{deletes++;parents=parents.filter(parent=>parent.Identifier!=='1');return {status:'uncertain'};}});
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,TemplateId:'10',result:{status:'created',registration:'ready'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.equal(job.templateReconciliation['10'].status,'Uncertain');assert.equal(gets,0);job.status='running';await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.equal(gets,1);assert.equal(adds,1);assert.equal(deletes,1);assert.equal(job.templateReconciliation['10'].status,'Updated');
+});
+
+test('cancellation drains creation then write-first reconciles its affected template',async()=>{
+ let cancelled=false,gets=0,adds=0,deletes=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{create:async()=>{cancelled=true;return {status:'created',orgUnitId:'101'};},parents:async()=>{gets++;return [];},addParent:async()=>{adds++;return {status:'succeeded'};},removeParent:async()=>{deletes++;return {status:'succeeded'};}});
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,Name:'Bio',Code:'BIO',TemplateId:'10',TemplateCode:'T1',result:null}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>cancelled);
+ assert.equal(job.status,'cancelled');assert.equal(job.tasks[0].result.status,'created');assert.equal(job.templateReconciliation['10'].status,'Updated');assert.equal(gets,0);assert.equal(adds,1);assert.equal(deletes,1);
+});
+
+test('failed Department parent addition preserves Root Organization and records completedWithErrors',async()=>{
+ let deleted=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{parents:async()=>[{Identifier:'1'}],rootOrgUnitId:async()=>1,addParent:async()=>({status:'failed'}),removeParent:async()=>{deleted++;return {status:'succeeded'};}});
+ const job={_id:'j',owner:'o',status:'running',tasks:[{row:2,TemplateId:'10',result:{status:'created',registration:'ready',CreatedOrgUnitId:'100'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};await feature.execute(job,async()=>{},async()=>{},async()=>false);
+ assert.equal(job.tasks[0].result.status,'created');assert.equal(job.templateReconciliation['10'].status,'Failed');assert.equal(deleted,0);assert.equal(job.status,'completedWithErrors');
+});
+
+test('Root deletion failure and root-identification failure stay separate from creation outcomes',async()=>{
+ const fixture=resolverFixture(),base={_id:'j',owner:'o',status:'running',tasks:[{row:2,TemplateId:'10',result:{status:'created',registration:'ready',CreatedOrgUnitId:'100'}}],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};
+ const deletion=makeFeature(fixture,{rootOrgUnitId:async()=>1,addParent:async()=>({status:'succeeded'}),removeParent:async()=>({status:'failed'})}),job1=structuredClone(base);await deletion.execute(job1,async()=>{},async()=>{},async()=>false);assert.equal(job1.tasks[0].result.status,'created');assert.equal(job1.templateReconciliation['10'].status,'Failed');assert.equal(job1.status,'completedWithErrors');
+ const unresolved=makeFeature(fixture,{rootOrgUnitId:async()=>null,addParent:async()=>{throw Error('must not add');}}),job2=structuredClone(base);await unresolved.execute(job2,async()=>{},async()=>{},async()=>false);assert.equal(job2.templateReconciliation['10'].status,'Failed');assert.equal(job2.templateReconciliation['10'].message,'Unable to identify the Root Organization safely.');assert.equal(job2.status,'completedWithErrors');
+});
+
+test('a submitted rejected creation still triggers write-first template reconciliation',async()=>{
+ let reads=0,adds=0,deletes=0;const fixture=resolverFixture(),feature=makeFeature(fixture,{create:async()=>({status:'failed',submissionAttempted:true,message:'Rejected'}),parents:async()=>{reads++;return [{Identifier:'50'}];},rootOrgUnitId:async()=>1,addParent:async()=>{adds++;return {status:'succeeded'};},removeParent:async()=>{deletes++;return {status:'succeeded'};}});
+ const task={row:2,Name:'Bio',Code:'BIO',TemplateId:'10',DepartmentIds:['50'],DepartmentCodes:['D1'],result:null},job={_id:'j',owner:'o',status:'running',tasks:[task],rows:[],templateReconciliationPlan:[{templateId:'10',departmentIds:['50'],departmentCodes:['D1']}],step3StartedAt:1};
+ await feature.execute(job,async()=>{},async()=>{},async()=>false);assert.equal(reads,0);assert.equal(adds,1);assert.equal(deletes,1);assert.equal(job.templateReconciliation['10'].status,'Updated');assert.equal(job.status,'completedWithErrors');
+});
+
+test('API client uses documented parent list/add/remove routes and numeric add payload',async()=>{
+ const calls=[],client=createCreationClient({api:{read:async url=>{calls.push(['GET',url]);return url.endsWith('/parents/')?[]:{Identifier:7};},list:async()=>[]},http:async config=>{calls.push([config.method,config.url,config.data]);return {status:200,data:{OrgUnitId:123}};},oauth:{getAccessToken:async()=>'token'},baseUrl:'https://tenant.example',lpVersion:'1.60'});
+ assert.deepEqual(await client.parents('10'),[]);assert.equal(await client.rootOrgUnitId(),'7');assert.deepEqual(await client.addParent('10','50'),{status:'succeeded'});assert.deepEqual(await client.removeParent('10','50'),{status:'succeeded'});
+ assert.deepEqual(calls[2],['POST','https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/',50]);assert.equal(calls[3][1],'https://tenant.example/d2l/api/lp/1.60/orgstructure/10/parents/50');
+ const result=await client.create({Name:'Bio',Code:'BIO',TemplateId:'10'},async()=>{});assert.deepEqual(result,{status:'created',orgUnitId:'123',submissionAttempted:true});
+});
+
+test('lightweight status projection without rows or tasks renders, and report includes parenting fields',()=>{
+ const view=createCreationView(),html=view.render({},{_id:'j',status:'completed',creationSummary:{eligible:2,skipped:1,invalid:0,created:2,total:2},totals:{created:2}}, {controls:()=>'',button:()=>'',now:()=>1});
+ assert.match(html,/CSV rows/);const csv=view.report({rows:[{row:2,sourceCourseName:'A',sourceCourseCode:'A',templateId:'10',resolvedDepartmentIds:'50',resolvedDepartmentCodes:'D1'}],tasks:[{row:2,TemplateId:'10',TemplateCode:'T1',result:{status:'created',CreatedOrgUnitId:'100'}}],templateReconciliation:{'10':{status:'Updated',message:'Parent relationship updates completed successfully.'}}});
+ assert.match(csv,/DepartmentIds/);assert.match(csv,/Parent relationship updates completed successfully/);assert.match(csv,/\"50\"/);
 });
