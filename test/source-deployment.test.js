@@ -265,7 +265,7 @@ test('parallel deployment preview caches repeated codes and course reads and bat
  const codeReads=new Map();let sourceReads=0,targetReads=0,saves=0;
  const engine=createDeploymentJobs({enabled:()=>true,resolveCode:async code=>{codeReads.set(code,(codeReads.get(code)||0)+1);return code==='SOURCE'?'1':code.slice(1);},client:{source:async()=>{sourceReads++;return {name:'Source'};},target:async orgUnitId=>{targetReads++;return {orgUnitId,name:'Replica'};}}});
  const job={rows:parseDeploymentCsv('SourceOrgUnitId,SourceOrgUnitCode,ReplicaOrgUnitId,ReplicaOrgUnitCode\n'+Array.from({length:100},(_,i)=>`,SOURCE,,R${i%50+101}`).join('\n')),tasks:[]};
- await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,0);assert.equal(targetReads,0);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,4);assert.equal(job.tasks[0].targets.length,50);
+ await engine.plan(job,async()=>{saves++;});assert.equal(job.status,'ready');assert.equal(sourceReads,0);assert.equal(targetReads,0);assert.equal(codeReads.get('SOURCE'),1);assert.equal(saves,6);assert.equal(job.tasks[0].targets.length,50);
 });
 
 test('activation retry uses only the affected task checkpoint and preserves saved deployment results',async()=>{

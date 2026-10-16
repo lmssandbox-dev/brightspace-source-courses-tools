@@ -1,6 +1,6 @@
 # Server environment setup
 
-In the Brightspace LTI deployment, enable sharing of Full Name (including first, middle, and last name), User ID, Org Defined ID, Username, and Email under user information sharing. The application records Full Name from the validated LTI name claim when ltijs exposes it (otherwise from available name parts). The installed ltijs token projection does not currently expose verified Brightspace User ID or Org Defined ID claim paths, so the corresponding CSV fields remain blank until those mappings are verified and made available. Username and email are not substituted for these identifiers.
+In the Brightspace LTI deployment, enable sharing of Full Name and Email under user information sharing. The application records full name from the validated LTI name claim when ltijs exposes it (otherwise from available name parts), and email from the validated email claim when present. Although Brightspace can share Org Defined ID, the installed ltijs token projection does not currently expose a verified claim path for it, so the report field remains blank. The LTI subject, Username, email, and Brightspace numeric User ID are not substituted for Org Defined ID. Missing optional user claims do not prevent job creation.
 
 This guide covers the core variables and optional shared-directory settings used by the app. Start with `.env.example`. Use one server instance per Brightspace tenant, with its own configuration and database. No real credentials are included in the template.
 

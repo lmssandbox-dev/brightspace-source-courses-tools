@@ -40,8 +40,8 @@ function createCopyView(){return {
   <div class="toolbar">${!active&&job.tasks.some(t=>t.result?.jobToken&&!terminalCopy.has(t.result.status))?button(res,'checkCopies',job._id,'Check copy results now'):''}${button(res,'report',job._id,'Download copy report')}${['validating','planning','ready'].includes(job.status)?button(res,'cancel',job._id,'Cancel'):''}${active?button(res,'status',job._id,'Refresh status','id="copy-refresh"'):''}</div>${active?'<script>setTimeout(()=>document.getElementById("copy-refresh").requestSubmit(),10000);</script>':''}`;
  },
  report(job){
-  const rows=[['CSV row',...HEADERS,'Origin name','Destination name','Validation','Copy status','Job token','Components','Copy last checked UTC','Details']];
-  for(const row of job.rows){const r=job.tasks.find(t=>t.row===row.row)?.result;rows.push([row.row,row.originId,row.originCode,row.destinationId,row.destinationCode,row.originName,row.destinationName,row.status,r?.status||'notAttempted',r?.jobToken,job.components?.join(';')||'ALL',r?.checkedAt?new Date(r.checkedAt).toISOString():'',[row.message,r?.message].filter(Boolean).join(' ')]);}
+  const rows=[['CSV row','Origin ID','Origin Code','Origin Name','Destination ID','Destination Code','Destination Name','Validation','Copy status','Job token','Components','Copy last checked UTC','Details']];
+  for(const row of job.rows){const r=job.tasks.find(t=>t.row===row.row)?.result;rows.push([row.row,row.originId,row.originCode,row.originName,row.destinationId,row.destinationCode,row.destinationName,row.status,r?.status||'notAttempted',r?.jobToken,job.components?.join(';')||'ALL',r?.checkedAt?new Date(r.checkedAt).toISOString():'',[row.message,r?.message].filter(Boolean).join(' ')]);}
   appendReportIdentity(rows,job);
   return '\uFEFF'+rows.map(row=>row.map(v=>{let s=String(v??'');if(/^\s*[=+\-@]|^[\t\r\n]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',')).join('\r\n');
  }

@@ -1,9 +1,9 @@
 'use strict';
 
-const HEADERS=['Full Name','User Org Code','User ID'];
+const HEADERS=['User Full Name','User Org Defined ID','User Email'];
 function values(job) {
   const creator=job?.createdBy||{};
-  return [creator.fullName,creator.orgDefinedId,creator.userId];
+  return [creator.fullName,creator.orgDefinedId,creator.email];
 }
 function append(rows,job) {
   if(!rows.length)return rows;

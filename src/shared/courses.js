@@ -4,7 +4,12 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient, orgResolve
   const root = /^\d+\.\d+$/.test(lpVersion || '') ? `${baseUrl.replace(/\/$/,'')}/d2l/api/lp/${lpVersion}` : null;
   function configured() { if (!root) throw new Error('Configure D2L_LP_VERSION for Course Offering validation.'); }
   return {
-    prepare:(rows,check)=>orgResolver?.prepare(rows.map(r=>r.orgUnitCode),check),
+    async prepare(rows,check){
+      if(!orgResolver)return undefined;
+      const codes=await orgResolver.prepare(rows.map(r=>r.orgUnitCode),check);
+      const byId=await orgResolver.lookupByIds(rows.map(r=>r.orgUnitId).filter(Boolean));
+      return {resolve:(...args)=>codes.resolve(...args),byId};
+    },
     async get(orgUnitId) {
       configured();orgUnitId=id(orgUnitId);
       // This endpoint returns 404 for non-Course-Offering org units.
@@ -17,7 +22,7 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient, orgResolve
       const cached=(key,load)=>{if(!cache.has(key))cache.set(key,Promise.resolve().then(load));return cache.get(key);};
       
       configured();
-      if (row.orgUnitId && !row.orgUnitCode) return {orgUnitId:id(row.orgUnitId),name:'',code:null};
+      if (row.orgUnitId && !row.orgUnitCode) {const orgUnitId=id(row.orgUnitId),record=resolver?.byId?.get(orgUnitId);return {orgUnitId,name:typeof record?.Name==='string'?record.Name:'',code:typeof record?.Code==='string'?record.Code:null};}
       const url = new URL(`${root}/orgstructure/`);
       url.searchParams.set('exactOrgUnitCode',row.orgUnitCode);
       await check?.();

@@ -12,9 +12,9 @@ function extractLtiIdentity(token) {
   const fullName=explicit||[userInfo.given_name,userInfo.family_name]
     .map(safeString).filter(Boolean).join(' ').slice(0,MAX_IDENTITY_LENGTH);
 
-  // ltijs does not expose a verified Brightspace Org Defined ID or numeric
-  // Brightspace User ID claim in its validated platform token projection.
-  // In particular, token.user is the LTI subject and is not treated as either.
-  return {fullName,orgDefinedId:'',userId:''};
+  // Email is an optional validated standard LTI userInfo claim. ltijs does
+  // not expose a verified Brightspace Org Defined ID in this projection.
+  // In particular, token.user is the LTI subject and is not treated as one.
+  return {fullName,orgDefinedId:'',email:safeString(userInfo.email)};
 }
 module.exports={extractLtiIdentity,safeString};

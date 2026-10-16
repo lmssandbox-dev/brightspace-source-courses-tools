@@ -20,6 +20,7 @@ function createCopyResolver({api,root,sourceClient,orgResolver}){
   const originalCheck=check;check=async()=>{try{await originalCheck();}catch(e){e.persistenceFailure=true;throw e;}};
   const originalProgress=progress;progress=async(...args)=>{try{await originalProgress(...args);}catch(e){e.persistenceFailure=true;throw e;}};
   const session=orgResolver?await orgResolver.prepare(rows.flatMap(r=>[r.originCode,r.destinationCode]),check):null;
+  const byId=orgResolver?.lookupByIds?await orgResolver.lookupByIds(rows.flatMap(row=>[row.originId,row.destinationId]).filter(Boolean)):new Map();
   const codeCache=new Map(),idCache=new Map(),validated=new Map();
   const readCode=code=>{
    if(session)return session.resolve(code).then(record=>[record]);
@@ -35,12 +36,12 @@ function createCopyResolver({api,root,sourceClient,orgResolver}){
     if(value&&value!==resolved)throw Error('ID and code identify different org units.');value=resolved;
     idCache.set(value,Promise.resolve(record));
    }else{
-    if(direct){if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');return {orgUnitId:id(value),name:''};}
+    if(direct){if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');record=byId.get(id(value));return {orgUnitId:id(value),name:typeof record?.Name==='string'?record.Name:'',code:typeof record?.Code==='string'?record.Code:''};}
     if(!idCache.has(value))idCache.set(value,api.read(`${root}/orgstructure/${id(value)}`));
     record=await idCache.get(value);
    }
    if(!Number.isSafeInteger(Number(value)))throw Error('Org-unit ID exceeds supported numeric precision');
-   if(direct)return {orgUnitId:value,name:typeof record.Name==='string'?record.Name:''};
+   if(direct)return {orgUnitId:value,name:typeof record?.Name==='string'?record.Name:'',code:typeof record?.Code==='string'?record.Code:''};
    if(id(record.Identifier)!==value||typeof record.Name!=='string')throw Error('Invalid org-unit metadata');
    // Standard type codes only; custom or unrecognized types retain authoritative validation.
    const type=String(record.Type?.Code||'').replace(/[^a-z]/gi,'').toLowerCase();
@@ -54,7 +55,7 @@ function createCopyResolver({api,root,sourceClient,orgResolver}){
     })());
     await validated.get(key);
    }
-   return {orgUnitId:value,name:record.Name};
+   return {orgUnitId:value,name:record.Name,code:typeof record.Code==='string'?record.Code:''};
   };
  };
 }

@@ -48,7 +48,7 @@ function createCopyJobs({client,now=Date.now}){
    const resolveMetadata=client.prepareResolution?await client.prepareResolution(job.rows,checkCancelled,async()=>{},{direct:true}):null;
    const resolveRow=async(row,side)=>{
     if(!resolveMetadata)return resolve(row,side);
-    const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;return course.orgUnitId;
+    const course=await resolveMetadata(row,side);row[side+'Id']=course.orgUnitId;row[side+'Name']=course.name;row[side+'Code']=course.code??course.Code??row[side+'Code']??'';return course.orgUnitId;
    };
    let processed=job.rows.filter(r=>r.status!=='pending').length;
    job.progress={phase:'mappings',processed,total:job.rows.length};job.copyStep2SampleAt=now();job.copyStep2SampleProcessed=processed;job.copyStep2ProgressAt=job.copyStep2SampleAt;await save(job);

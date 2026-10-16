@@ -51,12 +51,14 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     try{
      for(const [idField,codeField] of [['sourceId','sourceCode'],['targetId','targetCode']])if(row[codeField]){
       if(!resolveCode&&!session)throw Error('Code lookup unavailable');
-      const value=await cached(codes,row[codeField],()=>session?session.resolve(row[codeField]).then(r=>r.Identifier):resolveCode(row[codeField]));
+      const record=await cached(codes,row[codeField],()=>session?session.resolve(row[codeField]):resolveCode(row[codeField]));
+      const value=typeof record==='object'?id(record.Identifier):record;
       if(row[idField]&&row[idField]!==value)throw Error('ID/code mismatch');row[idField]=value;
+      if(typeof record==='object'){const prefix=idField==='sourceId'?'source':'target';row[prefix+'Code']=record.Code||row[codeField];row[prefix+'Name']=record.Name||'';}
      }
      if(row.sourceId===row.targetId)throw Error('Source and replica must differ');
-     const source={orgUnitId:row.sourceId,name:''};
-     const target={orgUnitId:row.targetId,name:''};
+     const source={orgUnitId:row.sourceId,name:row.sourceName||'',code:row.sourceCode||''};
+     const target={orgUnitId:row.targetId,name:row.targetName||'',code:row.targetCode||''};
      row.sourceName=source.name;row.targetName=target.name;row.status='valid';if(source.warning)row.message=source.warning;
      resolved.set(row,{source,target});
     }catch(error){row.status='invalid';row.message=error.code==='REPLICATION_VALIDATION'?error.message:'Source or replica lookup failed. Check IDs and codes match, codes are unique, and API access is permitted.';}
@@ -67,6 +69,13 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
      job.deploymentStep2SampleAt=sampledAt;job.deploymentStep2SampleProcessed=processed;job.deploymentStep2ProgressAt=sampledAt;await save(job);
     }
    });
+   if(orgResolver?.lookupByIds){
+    const records=await orgResolver.lookupByIds(job.rows.flatMap(row=>[row.sourceId,row.targetId]).filter(Boolean));
+    for(const row of job.rows)for(const [side,identifier] of [['source',row.sourceId],['target',row.targetId]]){
+     const record=records.get(identifier);if(!record)continue;
+     row[side+'Code']=row[side+'Code']||record.Code||'';row[side+'Name']=row[side+'Name']||record.Name||'';
+    }
+   }
    const targets=new Map(),batches=new Map();
    for(const row of job.rows){
     if(row.status!=='valid')continue;
@@ -79,7 +88,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     targets.set(row.targetId,row);
     const {source,target}=resolved.get(row);
     let task=batches.get(row.sourceId);
-    if(!task||task.targets.length>=100){task={sourceId:row.sourceId,sourceName:source.name,targets:[],preview:{status:'ready'}};batches.set(row.sourceId,task);job.tasks.push(task);}
+    if(!task||task.targets.length>=100){task={sourceId:row.sourceId,sourceCode:source.code,sourceName:source.name,targets:[],preview:{status:'ready'}};batches.set(row.sourceId,task);job.tasks.push(task);}
     task.targets.push({...target});
    }
    const resolvedSources=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.sourceId)),resolvedTargets=new Set(job.rows.filter(r=>r.status==='valid').map(r=>r.targetId));

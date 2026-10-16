@@ -20,12 +20,12 @@ test('Date Manager form defaults to Uniform mode with all activity types and off
 async function preview(s){const res=response();await s.routes.preview({body:{ticket:ticket(s.routes.form(res),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00'}},res);return res;}
 test('preview ignores submitted creator fields and accepts missing optional LTI identity',async()=>{
  const s=setup(),res=response();await s.routes.preview({body:{ticket:ticket(s.routes.form(res),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00',createdBy:{fullName:'Forged'},fullName:'Forged'}},res);
- assert.equal(res.code,200);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',userId:''});
+ assert.equal(res.code,200);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',email:''});
  const missing=response();missing.locals.token.userInfo={};await s.routes.preview({body:{ticket:ticket(s.routes.form(missing),'preview'),csv:'OrgUnitId,OrgUnitCode\n1,',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-03T09:00'}},missing);
- assert.equal(missing.code,200);assert.deepEqual(s.calls[1].createdBy,{fullName:'',orgDefinedId:'',userId:''});
+ assert.equal(missing.code,200);assert.deepEqual(s.calls[1].createdBy,{fullName:'',orgDefinedId:'',email:''});
 });
 test('bulk preview creates a plan; apply uses saved ID only and cannot repeat',async()=>{
- const s=setup(),p=await preview(s);assert.equal(s.calls.length,1);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',userId:''});assert.match(p.body,/3\. Apply &amp; Update/);assert.doesNotMatch(p.body,/Review your date updates/);assert.doesNotMatch(p.body,/<script>alert/);assert.doesNotMatch(p.body,/CSV validation|Course validation|Job details|My recent jobs|Page 1 of/);
+ const s=setup(),p=await preview(s);assert.equal(s.calls.length,1);assert.deepEqual(s.calls[0].createdBy,{fullName:'Trusted Admin',orgDefinedId:'',email:''});assert.match(p.body,/3\. Apply &amp; Update/);assert.doesNotMatch(p.body,/Review your date updates/);assert.doesNotMatch(p.body,/<script>alert/);assert.doesNotMatch(p.body,/CSV validation|Course validation|Job details|My recent jobs|Page 1 of/);
  const body={ticket:ticket(p.body,'apply'),jobId:'j',dates:'forged',csv:'forged'},r=response();await s.routes.apply({body},r);assert.equal(s.calls[1].id,'j');assert.equal(s.calls[1].dates,undefined);
  const repeat=response();await s.routes.apply({body},repeat);assert.equal(repeat.code,409);
 });
@@ -48,9 +48,9 @@ test('report escapes CSV and neutralizes spreadsheet formulas',()=>{
  assert.match(csv,/'=HYPERLINK\(""bad""\)/);assert.match(csv,/'@formula/);
 });
 test('Date Manager CSV appends creator identity on every row and protects formulas',()=>{
- const csv=report({createdBy:{fullName:'=2+2',orgDefinedId:'ORG-1',userId:'42'},dates:{},rows:[{row:2,status:'invalid'}],courses:[],tasks:[]});
+ const csv=report({createdBy:{fullName:'=2+2',orgDefinedId:'',email:'user@example.test'},dates:{},rows:[{row:2,status:'invalid'}],courses:[],tasks:[]});
  const lines=csv.replace(/^\uFEFF/,'').split('\r\n').map(line=>line.match(/"((?:[^"]|"")*)"/g).map(cell=>cell.slice(1,-1).replace(/""/g,'"')));
- assert.deepEqual(lines[0].slice(-3),['Full Name','User Org Code','User ID']);assert.deepEqual(lines[1].slice(-3),["'=2+2",'ORG-1','42']);
+ assert.deepEqual(lines[0].slice(-3),['User Full Name','User Org Defined ID','User Email']);assert.deepEqual(lines[1].slice(-3),["'=2+2",'','user@example.test']);
  const legacy=report({dates:{},rows:[{row:3,status:'invalid'}],courses:[],tasks:[]});assert.deepEqual(legacy.replace(/^\uFEFF/,'').split('\r\n')[1].match(/"((?:[^"]|"")*)"/g).slice(-3),['""','""','""']);
 });
 test('Date Manager CSV includes specific sanitized resolution failures while the page stays concise',()=>{
@@ -70,8 +70,8 @@ test('Creator reconciliation action is signed, permission-gated, owner-bound, an
 });
 test('rule CSV reports effective dates, rule label, and unmatched counts by course',()=>{
  const csv=report({scheduleMode:'rules',rules:[{id:'week1',label:'Week One'}],rows:[],courses:[{orgUnitId:'9',row:3,code:'BIO',coverage:{unmatched:4}}],tasks:[{orgUnitId:'9',ruleId:'week1',dates:{start:'s',due:'d',end:'e'},activity:{type:'assignment',id:'2'},name:'W01 Task',preview:{status:'ready'}}]});
- assert.match(csv,/"Activity","3","9","BIO","assignment","2","W01 Task","ready","week1","Week One","s","d","e"/);
- assert.match(csv,/"Course summary","3","9","BIO","","","","unmatched excluded"/);assert.match(csv,/4 unmatched activities excluded from updates/);
+ assert.match(csv,/"Activity","3","9","BIO","","assignment","2","W01 Task","ready","week1","Week One","s","d","e"/);
+ assert.match(csv,/"Course summary","3","9","BIO","","","","","unmatched excluded"/);assert.match(csv,/4 unmatched activities excluded from updates/);
 });
 test('bulk preview converts rule dates in the selected timezone and passes activity types',async()=>{
  const s=setup(),form=response(),html=s.routes.form(form),localRules=[{id:'w1',label:'Week 1',method:'startsWith',pattern:' W01 ',start:'2027-01-01T09:00',due:'2027-01-02T09:00',end:'2027-01-02T09:00'}];
@@ -80,7 +80,7 @@ test('bulk preview converts rule dates in the selected timezone and passes activ
 });
 test('partial cancellation report marks untouched activities pending and not attempted',()=>{
  const csv=report({cancelRequestedAt:10,cancelledDuringStep3:true,dates:{start:'s',due:'d',end:'e'},rows:[],courses:[{orgUnitId:'1',row:2}],tasks:[{orgUnitId:'1',activity:{type:'quiz',id:'1'},name:'Saved',result:{status:'updated',verifiedDates:{start:'s',due:'d',end:'e'}}},{orgUnitId:'1',activity:{type:'quiz',id:'2'},name:'Pending',preview:{status:'ready'}}]});
- assert.match(csv,/"Activity","2","1","","quiz","1","Saved","updated"/);assert.match(csv,/"Activity","2","1","","quiz","2","Pending","pending"/);assert.match(csv,/Not attempted because the job was cancelled/);
+ assert.match(csv,/"Activity","2","1","","","quiz","1","Saved","updated"/);assert.match(csv,/"Activity","2","1","","","quiz","2","Pending","pending"/);assert.match(csv,/Not attempted because the job was cancelled/);
 });
 
 test('completed Date Manager status renders small and large summaries from one metadata read',async()=>{
@@ -107,7 +107,7 @@ test('Date Manager CSV reporting still loads the complete job',async()=>{
  const token=`${tokenData}.${createHmac('sha256','secret').update(tokenData).digest('hex')}`;
  const body={ticket:token,jobId:'j'},res=response();
  await routes.report({body},res);
- assert.equal(fullReads,1);assert.match(res.body,/"Record","CSV row","Course ID"/);assert.equal(res.headers['Content-Type'],'text/csv; charset=utf-8');
+ assert.equal(fullReads,1);assert.match(res.body,/"Record","CSV row","Source Course ID","Source Course Code","Source Course Name"/);assert.equal(res.headers['Content-Type'],'text/csv; charset=utf-8');
 });
 
 test('deployment form requires reset confirmation and rejects cross-workflow tickets',async()=>{

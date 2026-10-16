@@ -26,7 +26,7 @@ test('bulk job interface forwards metadata-only status reads from its store',asy
  assert.equal(await s.jobs.getStatus('completed','owner'),expected);assert.equal(calls,1);assert.equal(fullReads,0);
 });
 test('all four job constructors persist optional creator identity as job metadata',async()=>{
- const createdBy={fullName:'Ada Lovelace',orgDefinedId:'ORG-7',userId:'9001'},deployment={parse:()=>[]},sourceCreation={parse:()=>[]};
+ const createdBy={fullName:'Ada Lovelace',orgDefinedId:'',email:'ada@example.test'},deployment={parse:()=>[]},sourceCreation={parse:()=>[]};
  const s=setup({deployment,sourceCreation});
  const jobs=[
   await s.jobs.create({owner:'owner',createdBy,csv:'OrgUnitId,OrgUnitCode\n1,',dates}),
