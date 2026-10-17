@@ -7,7 +7,7 @@ function createCoursesClient({ api, baseUrl, lpVersion, sourceClient, orgResolve
     async prepare(rows,check){
       if(!orgResolver)return undefined;
       const codes=await orgResolver.prepare(rows.map(r=>r.orgUnitCode),check);
-      const byId=await orgResolver.lookupByIds(rows.map(r=>r.orgUnitId).filter(Boolean));
+      const byId=await orgResolver.lookupByIds(rows.map(r=>r.orgUnitId).filter(value=>value&&Number.isSafeInteger(Number(value))));
       return {resolve:(...args)=>codes.resolve(...args),byId};
     },
     async get(orgUnitId) {

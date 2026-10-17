@@ -70,7 +70,7 @@ function createDeploymentJobs({client,enabled,resolveCode,orgResolver,now=Date.n
     }
    });
    if(orgResolver?.lookupByIds){
-    const records=await orgResolver.lookupByIds(job.rows.flatMap(row=>[row.sourceId,row.targetId]).filter(Boolean));
+    const records=await orgResolver.lookupByIds(job.rows.flatMap(row=>[row.sourceId,row.targetId]).filter(value=>value&&Number.isSafeInteger(Number(value))));
     for(const row of job.rows)for(const [side,identifier] of [['source',row.sourceId],['target',row.targetId]]){
      const record=records.get(identifier);if(!record)continue;
      row[side+'Code']=row[side+'Code']||record.Code||'';row[side+'Name']=row[side+'Name']||record.Name||'';

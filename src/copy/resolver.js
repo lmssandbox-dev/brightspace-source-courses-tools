@@ -20,7 +20,7 @@ function createCopyResolver({api,root,sourceClient,orgResolver}){
   const originalCheck=check;check=async()=>{try{await originalCheck();}catch(e){e.persistenceFailure=true;throw e;}};
   const originalProgress=progress;progress=async(...args)=>{try{await originalProgress(...args);}catch(e){e.persistenceFailure=true;throw e;}};
   const session=orgResolver?await orgResolver.prepare(rows.flatMap(r=>[r.originCode,r.destinationCode]),check):null;
-  const byId=orgResolver?.lookupByIds?await orgResolver.lookupByIds(rows.flatMap(row=>[row.originId,row.destinationId]).filter(Boolean)):new Map();
+  const byId=orgResolver?.lookupByIds?await orgResolver.lookupByIds(rows.flatMap(row=>[row.originId,row.destinationId]).filter(value=>value&&Number.isSafeInteger(Number(value)))):new Map();
   const codeCache=new Map(),idCache=new Map(),validated=new Map();
   const readCode=code=>{
    if(session)return session.resolve(code).then(record=>[record]);
